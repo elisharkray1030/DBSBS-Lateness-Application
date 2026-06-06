@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Lateness Tracker Dashboard</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 40px;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #1a1a1a;
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .tab-link {
+            padding: 12px 18px;
+            border: none;
+            background: transparent;
+            color: #495057;
+            font-weight: 600;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab-link:hover {
+            color: #007bff;
+        }
+        .tab-link.active {
+            color: #007bff;
+            border-bottom-color: #007bff;
+        }
+        .panel {
+            display: none;
+        }
+        .panel.active {
+            display: block;
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 12px;
+            align-items: flex-end;
+        }
+        .upload-panel,
+        .history-panel,
+        .reports-panel {
+            background: #e9ecef;
+            padding: 24px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .form-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        input[type="text"],
+        input[type="file"] {
+            padding: 10px 12px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #28a745;
+            color: white;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background-color: #218838;
+        }
+        .download-btn {
+            background-color: #007BFF;
+            color: white;
+            padding: 8px 14px;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .download-btn:hover {
+            background-color: #0056b3;
+        }
+        .message {
+            margin-bottom: 16px;
+            padding: 14px 18px;
+            border-radius: 8px;
+            background: #d1e7dd;
+            color: #0f5132;
+        }
+        .error {
+            margin-bottom: 16px;
+            padding: 14px 18px;
+            border-radius: 8px;
+            background: #f8d7da;
+            color: #842029;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: white;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+        th {
+            background-color: #343a40;
+            color: white;
+        }
+        tr:hover {
+            background-color: #f1f3f5;
+        }
+        .badge-late {
+            background-color: #dc3545;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        .months-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 12px;
+            margin-top: 20px;
+        }
+        .month-card {
+            background: white;
+            border: 2px solid #dee2e6;
+            padding: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .month-card:hover {
+            background: #f8f9fa;
+            border-color: #007bff;
+            box-shadow: 0 2px 8px rgba(0, 123, 255, 0.2);
+        }
+        .month-card.active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        .month-name {
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .month-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            flex-direction: column;
+        }
+        .month-actions button {
+            padding: 6px 10px;
+            font-size: 0.85em;
+        }
+        .no-data-message {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        .modal.show {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            text-align: center;
+            max-width: 400px;
+        }
+        .modal-title {
+            margin: 0 0 15px 0;
+            color: #1a1a1a;
+            font-size: 1.3em;
+        }
+        .modal-message {
+            margin-bottom: 25px;
+            color: #666;
+            font-size: 0.95em;
+        }
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+        .modal-buttons button {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .modal-buttons .btn-confirm {
+            background-color: #dc3545;
+            color: white;
+        }
+        .modal-buttons .btn-confirm:hover {
+            background-color: #c82333;
+        }
+        .modal-buttons .btn-cancel {
+            background-color: #6c757d;
+            color: white;
+        }
+        .modal-buttons .btn-cancel:hover {
+            background-color: #5a6268;
+        }
+        .delete-btn {
+            background-color: #dc3545 !important;
+            color: white;
+        }
+        .delete-btn:hover {
+            background-color: #c82333 !important;
+        }
+        th {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+        }
+        th::after {
+            content: ' ⇅';
+            opacity: 0.5;
+            font-size: 0.8em;
+        }
+        th.sort-asc::after {
+            content: ' ↑';
+            opacity: 1;
+            color: #007bff;
+        }
+        th.sort-desc::after {
+            content: ' ↓';
+            opacity: 1;
+            color: #007bff;
+        }
+        @media print {
+
+            .tabs, .upload-panel, .history-panel, .reports-panel, .download-btn, .month-actions {
+                display: none !important;
+            }
+            body { margin: 0; }
+            .container { box-shadow: none; max-width: 100%; padding: 0; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Lateness Disciplinary Dashboard</h1>
+    <p class="subtitle">Upload monthly logs, search boarder history, and review historical reports.</p>
+
+    {% if message %}
+        <div class="message">{{ message }}</div>
+    {% endif %}
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <div class="tabs">
+        <button class="tab-link {% if selected_tab == 'upload' %}active{% endif %}" data-tab="upload">Upload Monthly Report</button>
+        <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
+        <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">View Reports in Database</button>
+    </div>
+
+    <!-- Upload Panel -->
+    <section id="upload" class="panel {% if selected_tab == 'upload' %}active{% endif %} upload-panel">
+        <h2>Upload Monthly Log</h2>
+        <form action="/" method="POST" enctype="multipart/form-data">
+            <div class="form-row">
+                <div class="form-field">
+                    <label for="log_file"><strong>Select Monthly Log CSV</strong></label>
+                    <input type="file" id="log_file" name="log_file" required>
+                </div>
+                <div class="form-field">
+                    <label for="report_month"><strong>Report Month</strong></label>
+                    <input type="text" id="report_month" name="report_month" placeholder="2026-03 or March 2026" required>
+                </div>
+                <div>
+                    <button type="submit">Generate and Save</button>
+                </div>
+            </div>
+        </form>
+
+        {% if boarders is not none %}
+            <div style="margin-top: 30px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3>Current Report</h3>
+                    {% if current_month %}
+                        <a href="/download_month/{{ current_month|urlencode }}" class="download-btn">⬇ Download CSV</a>
+                    {% endif %}
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th onclick="sortCurrentReport('bed')">Bed</th>
+                            <th onclick="sortCurrentReport('name')">Boarder Name</th>
+                            <th onclick="sortCurrentReport('frequency')">Frequency</th>
+                            <th onclick="sortCurrentReport('minutes')">Minutes Late</th>
+                            <th onclick="sortCurrentReport('points')">Total Demerit Points</th>
+                        </tr>
+                    </thead>
+                    <tbody id="current-report-body">
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </section>
+
+    <!-- History Search Panel -->
+    <section id="history" class="panel {% if selected_tab == 'history' %}active{% endif %} history-panel">
+        <h2>Search Boarder History</h2>
+        <div class="form-row">
+            <div class="form-field">
+                <label for="search_name"><strong>Boarder Name</strong></label>
+                <input type="text" id="search_name" placeholder="Enter name or partial name">
+            </div>
+            <div>
+                <button type="button" onclick="performSearch()">Search History</button>
+            </div>
+        </div>
+
+        {% if history_results is not none %}
+            <div style="margin-top: 30px;">
+                <h3>Search Results</h3>
+                {% if history_results %}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Boarder Name</th>
+                                <th>Bed</th>
+                                <th>Month</th>
+                                <th>Frequency</th>
+                                <th>Minutes Late</th>
+                                <th>Total Points</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in history_results %}
+                            <tr>
+                                <td>{{ row.display_name }}</td>
+                                <td>{{ row.bed }}</td>
+                                <td>{{ row.month }}</td>
+                                <td>{{ row.frequency }}</td>
+                                <td>{{ row.total_minutes }}</td>
+                                <td>{{ row.total_points }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <div class="no-data-message">No history records matched your search.</div>
+                {% endif %}
+            </div>
+        {% endif %}
+    </section>
+
+    <!-- Reports Database Panel -->
+    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
+        <h2>Historical Reports</h2>
+        {% if all_months %}
+            <p>Click on a month to view or download that report.</p>
+            <div class="months-list" id="months-container">
+                {% for month in all_months %}
+                    <div class="month-card" data-month="{{ month }}">
+                        <div class="month-name">{{ month }}</div>
+                        <div class="month-actions">
+                            <button type="button" class="view-month-btn" onclick='viewMonth({{ month|tojson }})'>View</button>
+                            <a href="/download_month/{{ month|urlencode }}" class="download-btn" style="text-align: center; display: block;">Download</a>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+            <div id="month-detail" style="margin-top: 40px; display: none;">
+                <div style="display: flex; gap: 10px; margin-bottom: 20px; align-items: center;">
+                    <h3 id="month-detail-title" style="flex: 1; margin: 0;"></h3>
+                    <a id="month-detail-download" href="#" class="download-btn">⬇ Download</a>
+                    <button id="month-detail-delete" type="button" class="delete-btn">🗑 Delete</button>
+                    <button type="button" onclick="closeMonthDetail()" style="background: #6c757d;">Close</button>
+                </div>
+                <table id="month-detail-table">
+                    <thead>
+                        <tr>
+                            <th onclick="sortMonthDetail('bed')">Bed</th>
+                            <th onclick="sortMonthDetail('name')">Boarder Name</th>
+                            <th onclick="sortMonthDetail('frequency')">Frequency</th>
+                            <th onclick="sortMonthDetail('minutes')">Minutes Late</th>
+                            <th onclick="sortMonthDetail('points')">Total Points</th>
+                        </tr>
+                    </thead>
+                    <tbody id="month-detail-body">
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="no-data-message">
+                <p>No reports have been saved yet. Upload a monthly log to get started!</p>
+            </div>
+        {% endif %}
+    </section>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div id="deleteModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title">Delete Report?</h2>
+        <p class="modal-message">Are you sure you want to delete this report? This action cannot be undone.</p>
+        <div class="modal-buttons">
+            <button class="btn-confirm" onclick="confirmDelete()">Yes, Delete</button>
+            <button class="btn-cancel" onclick="cancelDelete()">No, Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Helper function to convert string to title case
+    function toTitleCase(str) {
+        return str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    }
+
+    // Natural sort for bed numbers (e.g., 601A < 601B < 602A)
+    function bedComparator(a, b) {
+        const regex = /(\d+)([A-E])/;
+        const matchA = a.match(regex);
+        const matchB = b.match(regex);
+
+        if (!matchA || !matchB) return a.localeCompare(b);
+
+        const numA = parseInt(matchA[1]);
+        const numB = parseInt(matchB[1]);
+
+        if (numA !== numB) return numA - numB;
+        return matchA[2].localeCompare(matchB[2]);
+    }
+
+    // Data storage for tables
+    let currentReportData = {};
+    let currentReportSort = { field: 'bed', direction: 'asc' };
+    let monthDetailData = {};
+    let monthDetailSort = { field: 'bed', direction: 'asc' };
+
+    const initialCurrentReportData = {{ boarders|tojson }};
+
+    // Populate current report from server-provided JSON
+    function initCurrentReport() {
+        currentReportData = initialCurrentReportData || {};
+        if (Object.keys(currentReportData).length > 0) {
+            renderCurrentReport('bed', 'asc');
+        } else {
+            const tbody = document.getElementById('current-report-body');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#666;">No late boarders found in this report.</td></tr>';
+            }
+        }
+    }
+
+    // Sort and render current report table
+    function sortCurrentReport(field) {
+        // If clicking the same field, toggle direction
+        if (currentReportSort.field === field) {
+            currentReportSort.direction = currentReportSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentReportSort.field = field;
+            currentReportSort.direction = 'asc';
+        }
+        renderCurrentReport(field, currentReportSort.direction);
+    }
+
+    function renderCurrentReport(field, direction) {
+        const tbody = document.getElementById('current-report-body');
+        const rows = Object.entries(currentReportData).map(([name, data]) => ({
+            name: name,
+            bed: data.bed,
+            frequency: data.frequency,
+            total_minutes: data.total_minutes,
+            points: data.frequency + data.total_minutes
+        }));
+
+        // Sort rows
+        rows.sort((a, b) => {
+            let compareResult = 0;
+            if (field === 'bed') {
+                compareResult = bedComparator(a.bed, b.bed);
+            } else if (field === 'name') {
+                compareResult = a.name.localeCompare(b.name);
+            } else if (field === 'frequency' || field === 'minutes' || field === 'points') {
+                const aVal = field === 'frequency' ? a.frequency : field === 'minutes' ? a.total_minutes : a.points;
+                const bVal = field === 'frequency' ? b.frequency : field === 'minutes' ? b.total_minutes : b.points;
+                compareResult = aVal - bVal;
+            }
+            return direction === 'asc' ? compareResult : -compareResult;
+        });
+
+        // Update header indicators
+        document.querySelectorAll('#current-report-body').parentElement.parentElement.querySelectorAll('th').forEach((th, idx) => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+        const headers = tbody.parentElement.parentElement.querySelectorAll('th');
+        headers.forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
+        if (field === 'bed') headers[0].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        else if (field === 'name') headers[1].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        else if (field === 'frequency') headers[2].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        else if (field === 'minutes') headers[3].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        else if (field === 'points') headers[4].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Render rows
+        tbody.innerHTML = '';
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            const points = row.points;
+            const pointsHtml = points > 0
+                ? `<span class="badge-late">${points}</span>`
+                : `<span style="color: #28a745; font-weight: bold;">0</span>`;
+
+            tr.innerHTML = `
+                <td><strong>${row.bed}</strong></td>
+                <td>${toTitleCase(row.name)}</td>
+                <td>${row.frequency}</td>
+                <td>${row.total_minutes} mins</td>
+                <td>${pointsHtml}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Sort and render month detail table
+    function sortMonthDetail(field) {
+        if (monthDetailSort.field === field) {
+            monthDetailSort.direction = monthDetailSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            monthDetailSort.field = field;
+            monthDetailSort.direction = 'asc';
+        }
+        renderMonthDetail(monthDetailSort.direction);
+    }
+
+    function renderMonthDetail(direction) {
+        const tbody = document.getElementById('month-detail-body');
+        const rows = Object.entries(monthDetailData).map(([name, data]) => ({
+            name: name,
+            bed: data.bed,
+            frequency: data.frequency,
+            total_minutes: data.total_minutes,
+            points: data.frequency + data.total_minutes
+        }));
+
+        // Sort rows
+        rows.sort((a, b) => {
+            let compareResult = 0;
+            if (monthDetailSort.field === 'bed') {
+                compareResult = bedComparator(a.bed, b.bed);
+            } else if (monthDetailSort.field === 'name') {
+                compareResult = a.name.localeCompare(b.name);
+            } else if (monthDetailSort.field === 'frequency' || monthDetailSort.field === 'minutes' || monthDetailSort.field === 'points') {
+                const aVal = monthDetailSort.field === 'frequency' ? a.frequency : monthDetailSort.field === 'minutes' ? a.total_minutes : a.points;
+                const bVal = monthDetailSort.field === 'frequency' ? b.frequency : monthDetailSort.field === 'minutes' ? b.total_minutes : b.points;
+                compareResult = aVal - bVal;
+            }
+            return direction === 'asc' ? compareResult : -compareResult;
+        });
+
+        // Update header indicators
+        const headers = tbody.parentElement.parentElement.querySelectorAll('th');
+        headers.forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
+        if (monthDetailSort.field === 'bed') headers[0].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        else if (monthDetailSort.field === 'name') headers[1].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        else if (monthDetailSort.field === 'frequency') headers[2].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        else if (monthDetailSort.field === 'minutes') headers[3].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        else if (monthDetailSort.field === 'points') headers[4].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Render rows
+        tbody.innerHTML = '';
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${row.bed}</strong></td>
+                <td>${toTitleCase(row.name)}</td>
+                <td>${row.frequency}</td>
+                <td>${row.total_minutes} mins</td>
+                <td>${row.points}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Tab switching logic
+    const tabButtons = document.querySelectorAll('.tab-link');
+    const panels = document.querySelectorAll('.panel');
+
+    tabButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const tabName = this.getAttribute('data-tab');
+
+            // Remove active class from all buttons and panels
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            panels.forEach(panel => panel.classList.remove('active'));
+
+            // Add active class to clicked button and corresponding panel
+            this.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+        });
+    });
+
+    // Search history function - stays on history tab
+    function performSearch() {
+        const searchName = document.getElementById('search_name').value.trim();
+        if (!searchName) {
+            alert('Please enter a boarder name to search.');
+            return;
+        }
+
+        // Create a hidden form and submit it
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/';
+
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'search_name';
+        input.value = searchName;
+
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+    }
+
+    // Allow Enter key to trigger search
+    document.getElementById('search_name').addEventListener('keypress', function(event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            performSearch();
+        }
+    });
+
+    // Global variable to store month for delete confirmation
+    let monthToDelete = null;
+
+    // Month detail view
+    function viewMonth(month) {
+        fetch(`/api/month/${encodeURIComponent(month)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                // Store data and reset sort
+                monthDetailData = data.boarders;
+                monthDetailSort = { field: 'bed', direction: 'asc' };
+
+                document.getElementById('month-detail-title').textContent = `Report for ${month}`;
+                document.getElementById('month-detail-download').href = `/download_month/${encodeURIComponent(month)}`;
+                document.getElementById('month-detail-delete').onclick = function() {
+                    showDeleteModal(month);
+                };
+                document.getElementById('month-detail').style.display = 'block';
+
+                // Render with default bed sort
+                renderMonthDetail('asc');
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to load month details.');
+            });
+    }
+
+    function closeMonthDetail() {
+        document.getElementById('month-detail').style.display = 'none';
+    }
+
+    // Delete confirmation modal functions
+    function showDeleteModal(month) {
+        monthToDelete = month;
+        document.getElementById('deleteModal').classList.add('show');
+    }
+
+    function cancelDelete() {
+        monthToDelete = null;
+        document.getElementById('deleteModal').classList.remove('show');
+    }
+
+    function confirmDelete() {
+        if (!monthToDelete) return;
+
+        fetch(`/delete_month/${monthToDelete}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                cancelDelete();
+                closeMonthDetail();
+                // Redirect to upload tab
+                document.querySelector('[data-tab="upload"]').click();
+                // Reload the page to reflect the deletion
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to delete report'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Failed to delete report.');
+        });
+    }
+
+    // Initialize current report if boarders data exists
+    document.addEventListener('DOMContentLoaded', function() {
+        initCurrentReport();
+    });
+</script>
+</body>
+</html>
