@@ -183,10 +183,9 @@ init_db()
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
-    boarders_data = {}
     current_month = None
     history_results = None
-    selected_tab = 'upload'
+    selected_tab = 'reports'
     message = None
     error = None
     all_months = get_all_months()
@@ -210,6 +209,7 @@ def home():
                 if boarders_data:
                     save_monthly_history(boarders_data, month_label)
                     current_month = month_label
+                    selected_tab = 'reports'
                     all_months = get_all_months()
                     message = f"Monthly report saved for '{month_label}'."
                 else:
@@ -229,12 +229,8 @@ def home():
                     message = f"No history found for '{search_name}'."
         all_months = get_all_months()
 
-    if not boarders_data and request.method == 'GET' and current_month is None:
-        current_month = all_months[0] if all_months else None
-
     return render_template(
         'index.html',
-        boarders=boarders_data,
         history_results=history_results,
         selected_tab=selected_tab,
         message=message,

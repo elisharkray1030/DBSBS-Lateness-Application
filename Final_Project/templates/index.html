@@ -293,7 +293,7 @@
 <body>
 <div class="container">
     <h1>Lateness Disciplinary Dashboard</h1>
-    <p class="subtitle">Upload monthly logs, search boarder history, and review historical reports.</p>
+    <p class="subtitle">Search boarder history and review historical reports.</p>
 
     {% if message %}
         <div class="message">{{ message }}</div>
@@ -303,54 +303,9 @@
     {% endif %}
 
     <div class="tabs">
-        <button class="tab-link {% if selected_tab == 'upload' %}active{% endif %}" data-tab="upload">Upload Monthly Report</button>
         <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
         <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">View Reports in Database</button>
     </div>
-
-    <!-- Upload Panel -->
-    <section id="upload" class="panel {% if selected_tab == 'upload' %}active{% endif %} upload-panel">
-        <h2>Upload Monthly Log</h2>
-        <form action="/" method="POST" enctype="multipart/form-data">
-            <div class="form-row">
-                <div class="form-field">
-                    <label for="log_file"><strong>Select Monthly Log CSV</strong></label>
-                    <input type="file" id="log_file" name="log_file" required>
-                </div>
-                <div class="form-field">
-                    <label for="report_month"><strong>Report Month</strong></label>
-                    <input type="text" id="report_month" name="report_month" placeholder="2026-03 or March 2026" required>
-                </div>
-                <div>
-                    <button type="submit">Generate and Save</button>
-                </div>
-            </div>
-        </form>
-
-        {% if boarders is not none %}
-            <div style="margin-top: 30px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h3>Current Report</h3>
-                    {% if current_month %}
-                        <a href="/download_month/{{ current_month|urlencode }}" class="download-btn">⬇ Download CSV</a>
-                    {% endif %}
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th onclick="sortCurrentReport('bed')">Bed</th>
-                            <th onclick="sortCurrentReport('name')">Boarder Name</th>
-                            <th onclick="sortCurrentReport('frequency')">Frequency</th>
-                            <th onclick="sortCurrentReport('minutes')">Minutes Late</th>
-                            <th onclick="sortCurrentReport('points')">Total Demerit Points</th>
-                        </tr>
-                    </thead>
-                    <tbody id="current-report-body">
-                    </tbody>
-                </table>
-            </div>
-        {% endif %}
-    </section>
 
     <!-- History Search Panel -->
     <section id="history" class="panel {% if selected_tab == 'history' %}active{% endif %} history-panel">
@@ -403,6 +358,24 @@
     <!-- Reports Database Panel -->
     <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
         <h2>Historical Reports</h2>
+        <div style="margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 12px; background: #fafafa;">
+            <h3 style="margin-top: 0;">Import Monthly Log</h3>
+            <form action="/" method="POST" enctype="multipart/form-data">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="log_file"><strong>Select Monthly Log CSV</strong></label>
+                        <input type="file" id="log_file" name="log_file" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="report_month"><strong>Report Month</strong></label>
+                        <input type="text" id="report_month" name="report_month" placeholder="2026-03 or March 2026" required>
+                    </div>
+                    <div>
+                        <button type="submit">Generate and Save</button>
+                    </div>
+                </div>
+            </form>
+        </div>
         {% if all_months %}
             <p>Click on a month to view or download that report.</p>
             <div class="months-list" id="months-container">
@@ -479,94 +452,8 @@
     }
 
     // Data storage for tables
-    let currentReportData = {};
-    let currentReportSort = { field: 'bed', direction: 'asc' };
     let monthDetailData = {};
     let monthDetailSort = { field: 'bed', direction: 'asc' };
-
-    const initialCurrentReportData = {{ boarders|tojson }};
-
-    // Populate current report from server-provided JSON
-    function initCurrentReport() {
-        currentReportData = initialCurrentReportData || {};
-        if (Object.keys(currentReportData).length > 0) {
-            renderCurrentReport('bed', 'asc');
-        } else {
-            const tbody = document.getElementById('current-report-body');
-            if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#666;">No late boarders found in this report.</td></tr>';
-            }
-        }
-    }
-
-    // Sort and render current report table
-    function sortCurrentReport(field) {
-        // If clicking the same field, toggle direction
-        if (currentReportSort.field === field) {
-            currentReportSort.direction = currentReportSort.direction === 'asc' ? 'desc' : 'asc';
-        } else {
-            currentReportSort.field = field;
-            currentReportSort.direction = 'asc';
-        }
-        renderCurrentReport(field, currentReportSort.direction);
-    }
-
-    function renderCurrentReport(field, direction) {
-        const tbody = document.getElementById('current-report-body');
-        const rows = Object.entries(currentReportData).map(([name, data]) => ({
-            name: name,
-            bed: data.bed,
-            frequency: data.frequency,
-            total_minutes: data.total_minutes,
-            points: data.frequency + data.total_minutes
-        }));
-
-        // Sort rows
-        rows.sort((a, b) => {
-            let compareResult = 0;
-            if (field === 'bed') {
-                compareResult = bedComparator(a.bed, b.bed);
-            } else if (field === 'name') {
-                compareResult = a.name.localeCompare(b.name);
-            } else if (field === 'frequency' || field === 'minutes' || field === 'points') {
-                const aVal = field === 'frequency' ? a.frequency : field === 'minutes' ? a.total_minutes : a.points;
-                const bVal = field === 'frequency' ? b.frequency : field === 'minutes' ? b.total_minutes : b.points;
-                compareResult = aVal - bVal;
-            }
-            return direction === 'asc' ? compareResult : -compareResult;
-        });
-
-        // Update header indicators
-        document.querySelectorAll('#current-report-body').parentElement.parentElement.querySelectorAll('th').forEach((th, idx) => {
-            th.classList.remove('sort-asc', 'sort-desc');
-        });
-        const headers = tbody.parentElement.parentElement.querySelectorAll('th');
-        headers.forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
-        if (field === 'bed') headers[0].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (field === 'name') headers[1].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (field === 'frequency') headers[2].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (field === 'minutes') headers[3].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (field === 'points') headers[4].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-
-        // Render rows
-        tbody.innerHTML = '';
-        rows.forEach(row => {
-            const tr = document.createElement('tr');
-            const points = row.points;
-            const pointsHtml = points > 0
-                ? `<span class="badge-late">${points}</span>`
-                : `<span style="color: #28a745; font-weight: bold;">0</span>`;
-
-            tr.innerHTML = `
-                <td><strong>${row.bed}</strong></td>
-                <td>${toTitleCase(row.name)}</td>
-                <td>${row.frequency}</td>
-                <td>${row.total_minutes} mins</td>
-                <td>${pointsHtml}</td>
-            `;
-            tbody.appendChild(tr);
-        });
-    }
 
     // Sort and render month detail table
     function sortMonthDetail(field) {
@@ -737,8 +624,6 @@
             if (data.success) {
                 cancelDelete();
                 closeMonthDetail();
-                // Redirect to upload tab
-                document.querySelector('[data-tab="upload"]').click();
                 // Reload the page to reflect the deletion
                 location.reload();
             } else {
@@ -751,9 +636,15 @@
         });
     }
 
-    // Initialize current report if boarders data exists
     document.addEventListener('DOMContentLoaded', function() {
-        initCurrentReport();
+        const initialMonthToOpen = {{ current_month|tojson }};
+        if (initialMonthToOpen) {
+            const reportsTab = document.querySelector('[data-tab="reports"]');
+            if (reportsTab) {
+                reportsTab.click();
+            }
+            viewMonth(initialMonthToOpen);
+        }
     });
 </script>
 </body>
