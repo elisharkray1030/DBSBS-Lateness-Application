@@ -109,6 +109,13 @@
         .download-btn:hover {
             background-color: #0056b3;
         }
+        .print-btn {
+            background-color: #6f42c1;
+            color: white;
+        }
+        .print-btn:hover {
+            background-color: #59339d;
+        }
         .message {
             margin-bottom: 16px;
             padding: 14px 18px;
@@ -281,10 +288,33 @@
             color: #007bff;
         }
         @media print {
-
-            .tabs, .upload-panel, .history-panel, .reports-panel, .download-btn, .month-actions {
+            .tabs,
+            .upload-panel,
+            .history-panel,
+            .reports-panel > :not(#month-detail),
+            .month-actions,
+            #month-detail-download,
+            #month-detail-delete,
+            #month-detail-close,
+            .print-btn {
                 display: none !important;
             }
+
+            #month-detail {
+                display: block !important;
+                margin-top: 0 !important;
+            }
+
+            #month-detail table {
+                margin-top: 0;
+            }
+
+            #month-detail th,
+            #month-detail td {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
             body { margin: 0; }
             .container { box-shadow: none; max-width: 100%; padding: 0; }
         }
@@ -392,9 +422,10 @@
             <div id="month-detail" style="margin-top: 40px; display: none;">
                 <div style="display: flex; gap: 10px; margin-bottom: 20px; align-items: center;">
                     <h3 id="month-detail-title" style="flex: 1; margin: 0;"></h3>
+                    <button id="month-detail-print" type="button" class="print-btn" onclick="printCurrentMonthReport()">🖨 Print</button>
                     <a id="month-detail-download" href="#" class="download-btn">⬇ Download</a>
                     <button id="month-detail-delete" type="button" class="delete-btn">🗑 Delete</button>
-                    <button type="button" onclick="closeMonthDetail()" style="background: #6c757d;">Close</button>
+                    <button id="month-detail-close" type="button" onclick="closeMonthDetail()" style="background: #6c757d;">Close</button>
                 </div>
                 <table id="month-detail-table">
                     <thead>
@@ -454,6 +485,7 @@
     // Data storage for tables
     let monthDetailData = {};
     let monthDetailSort = { field: 'bed', direction: 'asc' };
+    let activeMonthReport = null;
 
     // Sort and render month detail table
     function sortMonthDetail(field) {
@@ -579,6 +611,7 @@
                 }
 
                 // Store data and reset sort
+                activeMonthReport = month;
                 monthDetailData = data.boarders;
                 monthDetailSort = { field: 'bed', direction: 'asc' };
 
@@ -599,7 +632,17 @@
     }
 
     function closeMonthDetail() {
+        activeMonthReport = null;
         document.getElementById('month-detail').style.display = 'none';
+    }
+
+    function printCurrentMonthReport() {
+        if (!activeMonthReport || document.getElementById('month-detail').style.display === 'none') {
+            alert('Open a report before printing.');
+            return;
+        }
+
+        window.print();
     }
 
     // Delete confirmation modal functions
@@ -644,6 +687,29 @@
                 reportsTab.click();
             }
             viewMonth(initialMonthToOpen);
+        }
+    });
+
+    window.addEventListener('keydown', function(event) {
+        const isPrintShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p';
+        if (!isPrintShortcut) {
+            return;
+        }
+
+        const reportsPanel = document.getElementById('reports');
+        const monthDetail = document.getElementById('month-detail');
+        const reportsActive = reportsPanel && reportsPanel.classList.contains('active');
+        const reportOpen = monthDetail && monthDetail.style.display !== 'none' && !!activeMonthReport;
+
+        if (reportsActive && reportOpen) {
+            event.preventDefault();
+            printCurrentMonthReport();
+        }
+    });
+
+    window.addEventListener('afterprint', function() {
+        if (activeMonthReport) {
+            document.getElementById('month-detail').style.display = 'block';
         }
     });
 </script>
