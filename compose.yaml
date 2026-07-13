@@ -1,0 +1,12 @@
+services:
+  lateness-app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DB_PATH: /data/lateness_history.db
+      NAMELIST_PATH: /data/namelist.csv
+    volumes:
+      - ./data:/data
+      - ./namelist.csv:/data/namelist.csv:ro
+    restart: unless-stopped

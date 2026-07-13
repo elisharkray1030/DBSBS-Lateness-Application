@@ -45,29 +45,24 @@ python -m flask --app app run
 ### Docker setup
 
 1. Install and start Docker Desktop.
-2. Create a host folder for persistent data, for example `C:\lateness-data`.
-3. Put your current `namelist.csv` in that folder.
-4. Build the image:
+2. Keep `namelist.csv` in the project root.
+3. Start the stack:
 
 ```bash
-docker build -t lateness-app .
+docker compose up -d --build
 ```
 
-5. Run the container with the data folder mounted. In PowerShell, use backticks for line continuation:
+4. Open `http://127.0.0.1:8000/` in your browser.
+
+5. Stop the stack when you are done:
 
 ```bash
-docker run --rm -p 8000:8000 `
-  -e DB_PATH=/data/lateness_history.db `
-  -e NAMELIST_PATH=/data/namelist.csv `
-  -v C:/lateness-data:/data `
-  lateness-app
+docker compose down
 ```
-
-6. Open `http://127.0.0.1:8000/` in your browser.
 
 ## Updating the namelist after setup
 
-If you are using Docker, update the `namelist.csv` file in the mounted data folder and restart the container. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
+If you are using Docker Compose, update the root `namelist.csv` file and restart the stack. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
 
 If you are running locally, replace the `namelist.csv` in the project folder before restarting the app.
 
@@ -130,5 +125,5 @@ The template renders the dashboard, search tab, month cards, month detail table,
 ## Troubleshooting
 
 - If the app starts but no boarders are found, confirm that the `namelist.csv` file has the expected column names.
-- If Docker starts but changes do not persist, check that the volume mount path is correct and writable.
-- If the container cannot find `namelist.csv`, confirm that `NAMELIST_PATH` points to the mounted file.
+- If Docker Compose starts but changes do not persist, check that the `data` folder is present and writable.
+- If the container cannot find `namelist.csv`, confirm that the file exists in the project root and that `NAMELIST_PATH` points to the mounted file.
