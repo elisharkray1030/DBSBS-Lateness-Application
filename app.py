@@ -9,7 +9,8 @@ from parser import load_namelist, process_lateness
 
 app = Flask(__name__)
 
-DB_PATH = "lateness_history.db"
+DB_PATH = os.environ.get("DB_PATH", "lateness_history.db")
+NAMELIST_PATH = os.environ.get("NAMELIST_PATH", "namelist.csv")
 
 
 def init_db():
@@ -203,7 +204,7 @@ def home():
                 temp_log_path = "temp_monthly_log.csv"
                 file.save(temp_log_path)
 
-                master_list = load_namelist("namelist.csv")
+                master_list = load_namelist(NAMELIST_PATH)
                 boarders_data = process_lateness(temp_log_path, master_list)
 
                 if boarders_data:

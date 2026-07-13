@@ -1,159 +1,134 @@
 # Lateness Application
 
-#### Description
+Flask-based disciplinary reporting dashboard for tracking boarder lateness from CSV logs.
 
-Lateness Application is a Flask-based disciplinary reporting dashboard used to track
-boarder lateness. The system ingests monthly CSV transaction logs, matches each entry
-against a canonical master list (`namelist.csv`), computes lateness occurrences and
-penalty points (frequency + minutes late), and persists month-level summaries in an
-SQLite database for review, search, and export.
+The app matches uploaded monthly attendance logs against a boarder master list, calculates lateness frequency and minutes late, stores month summaries in SQLite, and lets you view, search, download, and delete saved reports.
 
-Key features
-- Upload monthly CSV attendance logs and generate a summarized monthly report
-- Match entries against a master boarder list (`namelist.csv`) with normalization to
-	reduce casing/spacing mismatches
-- Compute lateness frequency and total late minutes per boarder
-- Persist monthly summaries in `lateness_history.db` using SQLite
-- Search historical boarder reports by partial or full name
-- View, download (CSV), and delete saved monthly reports via the UI
+## What it does
 
----
+- Upload monthly CSV attendance logs from the web UI
+- Match boarder names against a canonical master list
+- Calculate lateness frequency, total minutes late, and total points
+- Save month summaries in SQLite for later review
+- Search historical boarder records by name
+- View, download, and delete saved month reports
+
+## Project Layout
+
+- [app.py](app.py) - Flask app, routes, and SQLite persistence
+- [parser.py](parser.py) - CSV parsing and lateness calculation logic
+- [templates/index.html](templates/index.html) - dashboard UI
+- [namelist.csv](namelist.csv) - master boarder list used for matching
+- [requirements.txt](requirements.txt) - runtime dependencies
+- [Dockerfile](Dockerfile) - container image definition
+
+## Setup From Scratch
+
+### Local Python setup
+
+1. Install Python 3.9+.
+2. Open a terminal in the project folder.
+3. Install dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+4. Start the app:
+
+```bash
+python -m flask --app app run
+```
+
+5. Open `http://127.0.0.1:5000/` in your browser.
+
+### Docker setup
+
+1. Install and start Docker Desktop.
+2. Create a host folder for persistent data, for example `C:\lateness-data`.
+3. Put your current `namelist.csv` in that folder.
+4. Build the image:
+
+```bash
+docker build -t lateness-app .
+```
+
+5. Run the container with the data folder mounted. In PowerShell, use backticks for line continuation:
+
+```bash
+docker run --rm -p 8000:8000 `
+  -e DB_PATH=/data/lateness_history.db `
+  -e NAMELIST_PATH=/data/namelist.csv `
+  -v C:/lateness-data:/data `
+  lateness-app
+```
+
+6. Open `http://127.0.0.1:8000/` in your browser.
+
+## Updating the namelist after setup
+
+If you are using Docker, update the `namelist.csv` file in the mounted data folder and restart the container. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
+
+If you are running locally, replace the `namelist.csv` in the project folder before restarting the app.
+
+## Using the application
+
+1. Go to the Reports tab.
+2. Upload a monthly CSV log file.
+3. Enter a month label such as `2026-03`.
+4. Save the report.
+5. Use the month cards to view, download, or delete saved reports.
+6. Use the History tab to search boarder records by name.
+
+## Data expectations
+
+- `namelist.csv` should contain at least `Name` and `Bed` columns.
+- Monthly log CSV files should contain at least `Name` and `Transaction Time` columns.
+- The SQLite database file is created automatically on first run if it does not already exist.
+
+## Persistence and deployment notes
+
+- The app stores month summaries in SQLite using the path from `DB_PATH`.
+- For Docker, keep the database file in a mounted folder so reports survive container restarts.
+- For Docker, keep `namelist.csv` in that same mounted folder if it changes over time.
+- Monthly upload files are temporary and are not stored permanently by the app.
+
+## Development notes
+
+- Run `python parser.py` for a quick parser check.
+- The lateness window is hard-coded in `parser.py`.
+- The app currently uses SQLite, so it is well suited to a single-user or small-team deployment.
 
 ## Files and Components
 
-### `app.py` — Flask application and persistence layer
+### `app.py` - Flask application and persistence layer
 
-Overview
-`app.py` is the primary backend for the application. It exposes web routes for
-uploading logs, searching history, rendering the UI template, providing month JSON
-data for client rendering, serving CSV downloads, and deleting month records.
+`app.py` exposes the web routes for uploading logs, searching history, rendering the dashboard, returning month JSON data, serving CSV downloads, and deleting month records.
 
-How it works (important functions)
-- `init_db()`
-	- Ensures the SQLite table `boarder_history` exists with columns: `id`,
-		`normalized_name`, `display_name`, `bed`, `month`, `frequency`, `total_minutes`,
-		`total_points`, and `imported_at`.
-	- Called at import and on app start to guarantee schema availability.
-- `save_monthly_history(boarders_dict, month_label)`
-	- Persists aggregated per-boarder data for a month.
-	- Uses `INSERT ... ON CONFLICT(normalized_name, month) DO UPDATE` to upsert rows
-		so an import can be safely re-run to replace a previous month summary.
-- `get_all_months()` and `get_month_report(month_label)`
-	- `get_all_months()` returns available month labels used to populate the UI list.
-	- `get_month_report()` returns a mapping of normalized_name to bed, frequency, and
-		total_minutes for the requested month.
-- `search_history(name_query)`
-	- Performs a case-insensitive partial-match search against `normalized_name`.
-	- Returns entries with display name, bed, month, frequency, total minutes, and
-		total points.
+Important behavior:
 
-Routes and endpoints
-- `GET /` — Renders `index.html`. The template receives `all_months`, current
-	messages, and optionally `history_results` when a search is run.
-- `POST /` — Handles two forms:
-	- File upload (`log_file`) with `report_month` label: saves a temporary file,
-		calls parser utilities to compute metrics, then persists via `save_monthly_history()`.
-	- Search form (`search_name`): runs `search_history()` and shows results.
-- `GET /api/month/<month>` — Returns JSON detail for the month used by client JS.
-- `GET /download_month/<month>` — Streams a CSV file for the month using an in-memory
-	buffer and `send_file()`.
-- `DELETE /delete_month/<month>` — Deletes all rows for the given month label.
+- `init_db()` creates the `boarder_history` table if it does not exist.
+- `save_monthly_history(boarders_dict, month_label)` upserts each boarder row by month.
+- `get_all_months()` returns the saved month list used in the UI.
+- `get_month_report(month_label)` returns one month's stored boarder rows.
+- `search_history(name_query)` performs a partial match against stored names.
 
-Behavioral notes
-- Uploads are saved temporarily (e.g., `temp_monthly_log.csv`) and removed after
-	processing.
-- `normalized_name` (uppercase) is used as the primary join key between the master
-	list and monthly logs to reduce matching errors.
+### `parser.py` - CSV parsing and lateness calculation
 
-### `parser.py` — CSV parsing and lateness calculation
+`parser.py` loads the master boarder list and calculates lateness metrics from uploaded CSV logs.
 
-Overview
-`parser.py` encapsulates logic to load the master boarder list and compute lateness
-statistics from CSV transaction logs.
+Important behavior:
 
-Key functions and flow
-- `load_namelist(namelist_filename)`
-	- Loads a CSV (expected headers `Name` and `Bed`) and returns a dictionary keyed by
-		`NAME.strip().upper()` with values `{"bed": <bed>, "frequency": 0, "total_minutes": 0}`.
-	- Missing `namelist.csv` returns `None` and prints a helpful error message.
-- `process_lateness(log_filename, boarders_dict)`
-	- Scans the monthly log CSV (expects fields `Name` and `Transaction Time`).
-	- Normalizes the `Name` from the log and skips entries not present in `boarders_dict`.
-	- Parses `Transaction Time` supporting `HH:MM` and `HH:MM:SS` formats and converts
-		to seconds.
-	- Defines a lateness window with `START_SECONDS` (7:41) and `END_SECONDS` (8:00).
-	- If a timestamp is later than `START_SECONDS` and up to `END_SECONDS`, computes
-		minutes late using `math.ceil(seconds_late / 60)`, increments `frequency`, and
-		accumulates `total_minutes` for that boarder.
-	- Returns the updated `boarders_dict`.
-- `export_to_csv(output_filename, boarders_dict)`
-	- Simple helper to write computed results to a local CSV (used when running the
-		parser module as a script).
+- `load_namelist(namelist_filename)` reads the master list and normalizes names.
+- `process_lateness(log_filename, boarders_dict)` scans transaction times and updates boarder totals.
+- `export_to_csv(output_filename, boarders_dict)` writes the results to a CSV file.
 
-Design considerations
-- Name normalization (uppercasing and trimming) is critical to maintain consistent
-	joins between the master list and transaction logs.
-- The lateness window is hard-coded; consider parameterizing it for configurability.
+### `templates/index.html` - User interface and client scripting
 
-### `templates/index.html` — User interface and client scripting
+The template renders the dashboard, search tab, month cards, month detail table, delete confirmation modal, and client-side sorting and fetch behavior.
 
-Overview
-The template renders two main panels (History and Reports). It relies on Jinja2 to
-populate server-side results and provides client-side JavaScript to fetch month
-details, sort table columns, handle deletion with confirmation, and print reports.
+## Troubleshooting
 
-Key UI features
-- Upload form — Accepts a CSV and `report_month` label. Submits via POST to `/`.
-- Months list — Displays month cards for each saved month (`all_months`). Cards
-	provide `View` (AJAX fetch) and `Download` actions.
-- Month detail area — Fetched via `/api/month/<month>`. Rendered client-side with
-	sorting and print-friendly styles.
-- History panel — Server-side rendered search results returned by posting `search_name`.
-
-Client-side behavior
-- Sorting: supports a natural comparator for bed identifiers (e.g., `601A, 601B`).
-- Search: submits a hidden POST form to stay on the history tab and show results.
-- Delete: shows modal confirmation, sends `DELETE` request to `/delete_month/<month>`,
-	and reloads the page on successful deletion.
-
----
-
-## Usage
-
-Prerequisites
-- Python 3.9+ and `pip`.
-
-Install dependencies and run
-
-```bash
-python -m pip install flask
-python Final_Project/app.py
-# then open http://127.0.0.1:5000/
-```
-
-Data expectations
-- `namelist.csv` — required master list of boarders. Expected columns: `Name`, `Bed`.
-- Monthly logs — CSV files with at least `Name` and `Transaction Time` columns.
-
-Workflow summary
-1. Verify `namelist.csv` is present in the working directory.
-2. Open the web UI and go to the Reports tab.
-3. Upload a monthly log CSV and give it a `Report Month` label (e.g., `2026-03`).
-4. Generate and save the report; view or download the month as needed.
-
----
-
-## Development & Testing Recommendations
-
-- Run `parser.py` directly for quick parsing checks:
-
-```bash
-python Final_Project/parser.py
-```
-
-- Add unit tests for `process_lateness()` to cover time parsing edge cases and
-	partial name matches.
-- Consider creating a `requirements.txt` and adding a small `docker` or `Makefile`
-	workflow for reproducible execution.
-
----
+- If the app starts but no boarders are found, confirm that the `namelist.csv` file has the expected column names.
+- If Docker starts but changes do not persist, check that the volume mount path is correct and writable.
+- If the container cannot find `namelist.csv`, confirm that `NAMELIST_PATH` points to the mounted file.
