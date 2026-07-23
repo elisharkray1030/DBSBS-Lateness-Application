@@ -1,0 +1,25 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+.env
+
+# Databases
+lateness_history.db
+data/*.db
+/data/*.db
+
+# Temp / test
+test_data.csv
+temp_monthly_log.csv
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
