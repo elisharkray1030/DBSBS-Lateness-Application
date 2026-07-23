@@ -3,7 +3,18 @@ import io
 import os
 import sqlite3
 from datetime import datetime
-from flask import Flask, jsonify, render_template, request, send_file
+
+try:
+    from flask import Flask, jsonify, render_template, request, send_file
+except ModuleNotFoundError as exc:
+    if exc.name != 'flask':
+        raise
+    raise SystemExit(
+        'Flask is not installed in the current Python environment.\n'
+        'Install dependencies with: python -m pip install -r requirements.txt\n'
+        'On Windows, prefer: py -3 -m pip install -r requirements.txt\n'
+        'Then start the app with: python -m flask --app app run'
+    ) from exc
 
 from parser import load_namelist, process_lateness
 
