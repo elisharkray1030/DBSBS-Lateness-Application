@@ -28,16 +28,26 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 
 1. Install Python 3.9+.
 2. Open a terminal in the project folder.
-3. Install dependencies:
+3. Install dependencies in the Python environment you will use to run the app:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
+On Windows, `python3` may point to the Microsoft Store stub instead of a real interpreter. If that happens, use `py -3 -m pip install -r requirements.txt` instead.
+
 4. Start the app:
 
 ```bash
 python -m flask --app app run
+```
+
+If you are using the Windows launcher, `py -3 -m flask --app app run` is also a safe option.
+
+On Windows, you can also run the bundled launcher script from the project root:
+
+```powershell
+./run.ps1
 ```
 
 5. Open `http://127.0.0.1:5000/` in your browser.
