@@ -1,6 +1,7 @@
 import csv
 import math
 
+
 def load_namelist(namelist_filename):
     """Loads valid boarders into a dictionary, ignoring casing and spacing errors."""
     boarders_master = {}

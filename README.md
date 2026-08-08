@@ -47,7 +47,7 @@ If you are using the Windows launcher, `py -3 -m flask --app app run` is also a 
 On Windows, you can also run the bundled launcher script from the project root:
 
 ```powershell
-./run.ps1
+./start-windows.ps1
 ```
 
 5. Open `http://127.0.0.1:5000/` in your browser.

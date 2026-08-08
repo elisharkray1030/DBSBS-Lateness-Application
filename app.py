@@ -2,7 +2,7 @@ import csv
 import io
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 
 try:
     from flask import Flask, jsonify, render_template, request, send_file
@@ -53,7 +53,7 @@ def save_monthly_history(boarders_dict, month_label):
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    imported_at = datetime.utcnow().isoformat()
+    imported_at = datetime.now(tz=timezone.utc).isoformat()
 
     for boarder_name, data in boarders_dict.items():
         display_name = boarder_name.title()
