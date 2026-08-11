@@ -14,6 +14,7 @@ data/*.db
 
 # Raw input data (samples / source files)
 data/raw/
+/namelist.csv
 
 # Temp / test
 test_data.csv
