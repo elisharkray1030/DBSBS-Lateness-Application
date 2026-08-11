@@ -18,7 +18,7 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 - [app.py](app.py) - Flask app, routes, and SQLite persistence
 - [parser.py](parser.py) - CSV parsing and lateness calculation logic
 - [templates/index.html](templates/index.html) - dashboard UI
-- [namelist.csv](namelist.csv) - master boarder list used for matching
+- [namelist.csv](namelist.csv) - master boarder list used for matching (local-only: gitignored for privacy, not in the repo)
 - [requirements.txt](requirements.txt) - runtime dependencies
 - [Dockerfile](Dockerfile) - container image definition
 
