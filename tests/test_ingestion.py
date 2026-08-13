@@ -1,0 +1,216 @@
+﻿import io
+
+from helpers import month_labels, record
+
+import storage
+from parser import RejectedOutcome, SavedOutcome, ingest_log
+
+MASTER = {"ALICE": "101", "BOB": "102", "CAROL": "103"}
+LOG_HEADER = "Name,Transaction Time\n"
+
+
+def ingest(text, month="2026-03", master=MASTER, conn=None):
+    return ingest_log(io.StringIO(text), month, master, conn)
+
+
+class TestIngestLog:
+    def test_fully_matched_log_saves(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:42\n" + "ALICE,07:44:30\n" + "BOB,08:00\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.diagnostics.rows_read == 3
+        assert outcome.diagnostics.matched_rows == 3
+        assert outcome.diagnostics.unmatched_names == []
+        assert outcome.diagnostics.unparseable_rows == []
+        assert outcome.boarders_count == 3
+
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 2
+        assert by_name["ALICE"].total_minutes == 5
+        assert by_name["ALICE"].total_points == 7
+        assert by_name["BOB"].total_minutes == 19
+        assert by_name["BOB"].total_points == 20
+        assert by_name["CAROL"].frequency == 0
+
+        saved = storage.get_month_report(conn, "2026-03")
+        assert {r.name for r in saved} == {"ALICE", "BOB", "CAROL"}
+
+    def test_mixed_matched_and_unmatched_names(self, conn):
+        outcome = ingest(
+            LOG_HEADER
+            + "ALICE,07:42\n"
+            + "GHOST,07:43\n"
+            + "BOB,07:45\n"
+            + "GHOST,07:44\n"
+            + "ALICE,07:50\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.diagnostics.rows_read == 5
+        assert outcome.diagnostics.matched_rows == 3
+        assert outcome.diagnostics.unmatched_names == ["GHOST"]
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 2
+        assert by_name["ALICE"].total_minutes == 10
+        assert by_name["BOB"].total_minutes == 4
+
+    def test_unmatched_only_rejected_with_names(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "GHOST,07:43\n" + "GHOST,07:44\n" + "GHOST,07:45\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert outcome.diagnostics.unmatched_names == ["GHOST"]
+
+    def test_mixed_parseable_and_unparseable_times(self, conn):
+        outcome = ingest(
+            LOG_HEADER
+            + "ALICE,07:42\n"
+            + "BOB,7:45\n"
+            + "CAROL,07:99\n"
+            + "ALICE,not a time\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.diagnostics.rows_read == 4
+        assert outcome.diagnostics.matched_rows == 4
+        raw = [(r.name, r.raw_value) for r in outcome.diagnostics.unparseable_rows]
+        assert raw == [("BOB", "7:45"), ("CAROL", "07:99"), ("ALICE", "not a time")]
+
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 1
+        assert by_name["ALICE"].total_minutes == 1
+
+    def test_clean_month_with_zero_lateness_saves(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:40\n" + "BOB,07:41:00\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.diagnostics.matched_rows == 2
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 0
+        assert by_name["BOB"].total_minutes == 0
+
+    def test_boarder_arriving_at_08_00_is_late(self, conn):
+        outcome = ingest(LOG_HEADER + "ALICE,08:00\n", conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 1
+        assert by_name["ALICE"].total_minutes == 19
+
+    def test_empty_log_rejected(self, conn):
+        outcome = ingest("", conn=conn)
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert "empty or has no data rows" in outcome.reason
+        assert storage.list_months(conn) == []
+
+    def test_missing_master_list_rejected(self, conn):
+        outcome = ingest(LOG_HEADER + "ALICE,07:42\n", master=None, conn=conn)
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert "master list is missing or empty" in outcome.reason
+        assert storage.list_months(conn) == []
+
+    def test_empty_master_list_rejected(self, conn):
+        outcome = ingest(LOG_HEADER + "ALICE,07:42\n", master={}, conn=conn)
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert "master list is missing or empty" in outcome.reason
+
+    def test_no_rows_match_any_boarder_rejected(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "GHOST,07:43\n" + "SPECTRE,07:44\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert "GHOST" in outcome.reason
+        assert "SPECTRE" in outcome.reason
+        assert storage.list_months(conn) == []
+
+    def test_header_mismatch_rejected(self, conn):
+        outcome = ingest(
+            "Employee,Clock Time\n" + "ALICE,07:42\n" + "BOB,08:00\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert "Name" in outcome.reason
+        assert "Transaction Time" in outcome.reason
+
+    def test_all_times_unparseable_rejected(self, conn):
+        outcome = ingest(LOG_HEADER + "ALICE,7:42\n" + "BOB,bad\n", conn=conn)
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert "ALICE" in outcome.reason
+        assert "7:42" in outcome.reason
+        assert storage.list_months(conn) == []
+
+    def test_four_failure_causes_produce_distinct_reasons(self, conn):
+        cases = [
+            ingest("", conn=conn),
+            ingest(LOG_HEADER + "GHOST,07:43\n", conn=conn),
+            ingest(LOG_HEADER + "ALICE,7:42\n", conn=conn),
+            ingest(LOG_HEADER + "ALICE,07:42\n", master=None, conn=conn),
+        ]
+        reasons = {o.reason for o in cases}
+        assert len(reasons) == 4
+        assert all(isinstance(o, RejectedOutcome) for o in cases)
+
+    def test_does_not_mutate_master_list(self, conn):
+        master = {"ALICE": "101", "BOB": "102"}
+        outcome = ingest(LOG_HEADER + "ALICE,07:42\n", master=master, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        assert master == {"ALICE": "101", "BOB": "102"}
+
+    def test_rejected_ingestion_leaves_store_untouched(self, conn):
+        storage.save_month(
+            conn,
+            [record("ALICE", "101", 2, 5, 7)],
+            "2026-01",
+        )
+
+        outcome = ingest(LOG_HEADER + "GHOST,07:43\n", month="2026-02", conn=conn)
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert "2026-02" not in month_labels(storage.list_months(conn))
+        assert "2026-01" in month_labels(storage.list_months(conn))
+        saved = storage.get_month_report(conn, "2026-01")
+        assert saved[0].frequency == 2
+
+    def test_saved_outcome_message_reports_diagnostics(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:42\n" + "GHOST,07:43\n" + "BOB,7:45\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "2026-03" in outcome.message
+        assert "3 boarders recorded" in outcome.message
+        assert "GHOST" in outcome.message
+        assert "BOB ('7:45')" in outcome.message
+
+    def test_end_to_end_month_appears_in_list_and_get(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:42\n" + "BOB,08:00\n",
+            month="2026-03",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "2026-03" in month_labels(storage.list_months(conn))
+        saved = storage.get_month_report(conn, "2026-03")
+        assert {r.name for r in saved} == {"ALICE", "BOB", "CAROL"}
+        assert {r.bed for r in saved} == {"101", "102", "103"}
+

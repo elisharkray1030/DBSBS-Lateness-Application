@@ -2,204 +2,386 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Lateness Tracker Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DBS Boarding School — Lateness Dashboard</title>
+    <link rel="icon" href="{{ url_for('static', filename='dbslogoF-B.png') }}">
     <style>
+        :root {
+            /* Design tokens — the single source for the navy/white/red palette. */
+            --navy: #1d2b53;
+            --deep-navy: #141f3d;
+            --brand-red: #E51A3C;
+            --page-bg: #f8f9fa;
+            --surface: #ffffff;
+            --text: #1a1a1a;
+            --text-muted: #5b6470;
+            --border: #e2e6ea;
+            --neutral: #6c757d;
+            --success-bg: #d1e7dd;
+            --success-text: #0f5132;
+            --error-bg: #f8d7da;
+            --error-text: #842029;
+            /* TODO: dark mode — map these tokens to a dark palette on a later theme hook. */
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 40px;
-            background-color: #f8f9fa;
-            color: #333;
+            margin: 0;
+            background-color: var(--page-bg);
+            color: var(--text);
         }
+
+        a {
+            color: var(--navy);
+        }
+
+        .site-header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            background: var(--surface);
+            border-bottom: 2px solid var(--navy);
+            padding: 10px 40px;
+        }
+
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+        }
+
+        .brand-logo {
+            height: 52px;
+            width: auto;
+        }
+
+        .brand-name {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--navy);
+            letter-spacing: 0.02em;
+        }
+
         .container {
-            background: white;
-            padding: 30px;
+            background: var(--surface);
+            padding: 30px 40px;
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
             max-width: 1000px;
-            margin: 0 auto;
+            margin: 30px auto;
         }
+
         h1 {
-            color: #1a1a1a;
+            color: var(--text);
             margin-bottom: 5px;
         }
+
         .subtitle {
-            color: #666;
+            color: var(--text-muted);
             margin-bottom: 20px;
         }
+
         .tabs {
             display: flex;
             gap: 8px;
             margin-bottom: 20px;
-            border-bottom: 2px solid #dee2e6;
+            border-bottom: 2px solid var(--border);
         }
+
         .tab-link {
             padding: 12px 18px;
             border: none;
             background: transparent;
-            color: #495057;
+            color: var(--text-muted);
             font-weight: 600;
             cursor: pointer;
             border-bottom: 3px solid transparent;
             transition: all 0.2s;
         }
+
         .tab-link:hover {
-            color: #007bff;
+            color: var(--navy);
         }
+
         .tab-link.active {
-            color: #007bff;
-            border-bottom-color: #007bff;
+            color: var(--navy);
+            border-bottom-color: var(--navy);
         }
+
         .panel {
             display: none;
         }
+
         .panel.active {
             display: block;
         }
+
         .form-row {
             display: grid;
             grid-template-columns: 1fr auto;
             gap: 12px;
             align-items: flex-end;
         }
-        .upload-panel,
-        .history-panel,
-        .reports-panel {
-            background: #e9ecef;
-            padding: 24px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
+
         .form-field {
             display: flex;
             flex-direction: column;
             gap: 6px;
         }
+
         input[type="text"],
         input[type="file"] {
             padding: 10px 12px;
             border-radius: 6px;
-            border: 1px solid #ccc;
+            border: 1px solid var(--border);
             width: 100%;
-            box-sizing: border-box;
+            background: var(--surface);
         }
-        button {
-            background-color: #28a745;
-            color: white;
+
+        .upload-panel,
+        .history-panel,
+        .reports-panel {
+            background: var(--page-bg);
+            padding: 24px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .upload-panel h3.upload-title {
+            margin-top: 0;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
             padding: 10px 16px;
             border: none;
             border-radius: 6px;
-            font-weight: bold;
+            font-weight: 600;
+            font-size: 0.95em;
             cursor: pointer;
-            transition: background 0.2s;
+            text-decoration: none;
+            transition: background-color 0.2s, filter 0.2s;
         }
-        button:hover {
-            background-color: #218838;
+
+        .btn svg {
+            width: 16px;
+            height: 16px;
         }
-        .download-btn {
-            background-color: #007BFF;
-            color: white;
-            padding: 8px 14px;
-            border: none;
-            border-radius: 4px;
-            font-weight: bold;
+
+        .btn-primary {
+            background-color: var(--navy);
+            color: var(--surface);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--deep-navy);
+        }
+
+        .btn-danger {
+            background-color: var(--brand-red);
+            color: var(--surface);
+        }
+
+        .btn-danger:hover {
+            filter: brightness(0.9);
+        }
+
+        .btn-neutral {
+            background-color: var(--neutral);
+            color: var(--surface);
+        }
+
+        .btn-neutral:hover {
+            filter: brightness(1.1);
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
             font-size: 0.85em;
-            cursor: pointer;
-            transition: background 0.2s;
         }
-        .download-btn:hover {
-            background-color: #0056b3;
-        }
-        .print-btn {
-            background-color: #6f42c1;
-            color: white;
-        }
-        .print-btn:hover {
-            background-color: #59339d;
-        }
-        .message {
+
+        .banner {
             margin-bottom: 16px;
             padding: 14px 18px;
             border-radius: 8px;
-            background: #d1e7dd;
-            color: #0f5132;
         }
-        .error {
-            margin-bottom: 16px;
-            padding: 14px 18px;
-            border-radius: 8px;
-            background: #f8d7da;
-            color: #842029;
+
+        .banner-success {
+            background: var(--success-bg);
+            color: var(--success-text);
         }
-        table {
+
+        .banner-error {
+            background: var(--error-bg);
+            color: var(--error-text);
+        }
+
+        .results-section {
+            margin-top: 30px;
+        }
+
+        .table-scroll {
+            overflow: auto;
+        }
+
+        .month-report-scroll {
+            max-height: 70vh;
+        }
+
+        .table-scroll table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
-            background: white;
+            background: var(--surface);
         }
-        th, td {
+
+        th,
+        td {
             padding: 12px 15px;
             text-align: left;
-            border-bottom: 1px solid #dee2e6;
+            border-bottom: 1px solid var(--border);
         }
+
         th {
-            background-color: #343a40;
-            color: white;
+            background-color: var(--surface);
+            color: var(--navy);
+            font-weight: 600;
+            white-space: nowrap;
         }
+
         tr:hover {
-            background-color: #f1f3f5;
+            background-color: var(--page-bg);
         }
-        .badge-late {
-            background-color: #dc3545;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 999px;
-            font-size: 0.9em;
-            font-weight: bold;
+
+        .month-report-table th {
+            cursor: pointer;
+            user-select: none;
         }
+
+        .month-report-scroll thead th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        .sort-indicator {
+            margin-left: 4px;
+            vertical-align: -2px;
+        }
+
+        .month-report-table th .sort-up,
+        .month-report-table th .sort-down {
+            opacity: 0.35;
+        }
+
+        .month-report-table th.sort-asc .sort-up {
+            opacity: 1;
+        }
+
+        .month-report-table th.sort-desc .sort-down {
+            opacity: 1;
+        }
+
         .months-list {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
             gap: 12px;
             margin-top: 20px;
         }
+
         .month-card {
-            background: white;
-            border: 2px solid #dee2e6;
+            background: var(--surface);
+            border: 2px solid var(--border);
             padding: 16px;
             border-radius: 8px;
             cursor: pointer;
             transition: all 0.2s;
             text-align: center;
         }
+
         .month-card:hover {
-            background: #f8f9fa;
-            border-color: #007bff;
-            box-shadow: 0 2px 8px rgba(0, 123, 255, 0.2);
+            background: var(--page-bg);
+            border-color: var(--navy);
+            box-shadow: 0 2px 8px rgba(29, 43, 83, 0.2);
         }
+
         .month-card.active {
-            background: #007bff;
-            color: white;
-            border-color: #007bff;
+            background: var(--navy);
+            color: var(--surface);
+            border-color: var(--navy);
         }
+
+        .month-card.active .month-name,
+        .month-card.active .month-summary {
+            color: var(--surface);
+        }
+
         .month-name {
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 4px;
         }
+
+        .month-summary {
+            color: var(--text-muted);
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+
         .month-actions {
             display: flex;
             gap: 8px;
             margin-top: 10px;
             flex-direction: column;
         }
-        .month-actions button {
-            padding: 6px 10px;
-            font-size: 0.85em;
+
+        .month-actions form {
+            width: 100%;
         }
-        .no-data-message {
+
+        .month-actions .btn {
+            width: 100%;
+        }
+
+        .empty-state {
             text-align: center;
             padding: 40px 20px;
-            color: #666;
+            color: var(--text-muted);
+            border: 1px dashed var(--border);
+            border-radius: 8px;
         }
+
+        .month-detail {
+            margin-top: 40px;
+        }
+
+        .month-detail-toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .month-detail-toolbar h3 {
+            flex: 1;
+            margin: 0;
+            color: var(--navy);
+        }
+
+        .hidden {
+            display: none;
+        }
+
         .modal {
             display: none;
             position: fixed;
@@ -210,94 +392,103 @@
             height: 100%;
             background-color: rgba(0, 0, 0, 0.5);
         }
+
         .modal.show {
             display: flex;
             justify-content: center;
             align-items: center;
         }
+
         .modal-content {
-            background-color: white;
+            background-color: var(--surface);
             padding: 30px;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             text-align: center;
             max-width: 400px;
         }
+
         .modal-title {
             margin: 0 0 15px 0;
-            color: #1a1a1a;
+            color: var(--text);
             font-size: 1.3em;
         }
+
         .modal-message {
             margin-bottom: 25px;
-            color: #666;
+            color: var(--text-muted);
             font-size: 0.95em;
         }
+
         .modal-buttons {
             display: flex;
             gap: 12px;
             justify-content: center;
         }
-        .modal-buttons button {
-            padding: 10px 24px;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background 0.2s;
+
+        .print-brand {
+            display: none;
         }
-        .modal-buttons .btn-confirm {
-            background-color: #dc3545;
-            color: white;
+
+        @media (max-width: 768px) {
+            .site-header {
+                padding: 10px 16px;
+            }
+
+            .brand-logo {
+                height: 40px;
+            }
+
+            .brand-name {
+                font-size: 1.1rem;
+            }
+
+            .container {
+                margin: 16px auto;
+                padding: 20px 16px;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .month-detail-toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .month-detail-toolbar h3 {
+                flex: none;
+            }
         }
-        .modal-buttons .btn-confirm:hover {
-            background-color: #c82333;
-        }
-        .modal-buttons .btn-cancel {
-            background-color: #6c757d;
-            color: white;
-        }
-        .modal-buttons .btn-cancel:hover {
-            background-color: #5a6268;
-        }
-        .delete-btn {
-            background-color: #dc3545 !important;
-            color: white;
-        }
-        .delete-btn:hover {
-            background-color: #c82333 !important;
-        }
-        th {
-            cursor: pointer;
-            user-select: none;
-            position: relative;
-        }
-        th::after {
-            content: ' ⇅';
-            opacity: 0.5;
-            font-size: 0.8em;
-        }
-        th.sort-asc::after {
-            content: ' ↑';
-            opacity: 1;
-            color: #007bff;
-        }
-        th.sort-desc::after {
-            content: ' ↓';
-            opacity: 1;
-            color: #007bff;
-        }
+
         @media print {
+            .site-header,
             .tabs,
             .upload-panel,
             .history-panel,
             .reports-panel > :not(#month-detail),
             .month-actions,
-            #month-detail-download,
-            #month-detail-delete,
-            #month-detail-close,
-            .print-btn {
+            .month-detail-toolbar,
+            .banner {
                 display: none !important;
+            }
+
+            .print-brand {
+                display: flex !important;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 16px;
+            }
+
+            .print-brand img {
+                height: 28px;
+            }
+
+            .print-brand span {
+                font-size: 1.1rem;
+                font-weight: 700;
+                color: var(--navy);
             }
 
             #month-detail {
@@ -309,27 +500,72 @@
                 margin-top: 0;
             }
 
+            .table-scroll {
+                overflow: visible;
+                max-height: none;
+            }
+
+            .table-scroll thead th {
+                position: static;
+            }
+
             #month-detail th,
             #month-detail td {
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
 
-            body { margin: 0; }
-            .container { box-shadow: none; max-width: 100%; padding: 0; }
+            body {
+                margin: 0;
+            }
+
+            .container {
+                box-shadow: none;
+                max-width: 100%;
+                padding: 0;
+            }
         }
     </style>
 </head>
 <body>
+<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+    <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+    </symbol>
+    <symbol id="icon-print" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 6 2 18 2 18 9"/>
+        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+        <rect x="6" y="14" width="12" height="8"/>
+    </symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+    </symbol>
+    <symbol id="icon-sort-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 15l6-6 6 6"/>
+    </symbol>
+    <symbol id="icon-sort-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 9l6 6 6-6"/>
+    </symbol>
+</svg>
+<header class="site-header">
+    <a class="brand" href="/">
+        <img class="brand-logo" src="{{ url_for('static', filename='dbslogoF-B.png') }}" alt="DBS Boarding School logo">
+        <span class="brand-name">DBS Boarding School</span>
+    </a>
+</header>
+
 <div class="container">
     <h1>Lateness Disciplinary Dashboard</h1>
     <p class="subtitle">Search boarder history and review historical reports.</p>
 
     {% if message %}
-        <div class="message">{{ message }}</div>
+        <div class="banner banner-success">{{ message }}</div>
     {% endif %}
     {% if error %}
-        <div class="error">{{ error }}</div>
+        <div class="banner banner-error">{{ error }}</div>
     {% endif %}
 
     <div class="tabs">
@@ -346,40 +582,42 @@
                 <input type="text" id="search_name" placeholder="Enter name or partial name">
             </div>
             <div>
-                <button type="button" onclick="performSearch()">Search History</button>
+                <button type="button" class="btn btn-primary" onclick="performSearch()">Search History</button>
             </div>
         </div>
 
         {% if history_results is not none %}
-            <div style="margin-top: 30px;">
+            <div class="results-section">
                 <h3>Search Results</h3>
                 {% if history_results %}
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Boarder Name</th>
-                                <th>Bed</th>
-                                <th>Month</th>
-                                <th>Frequency</th>
-                                <th>Minutes Late</th>
-                                <th>Total Points</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for row in history_results %}
-                            <tr>
-                                <td>{{ row.display_name }}</td>
-                                <td>{{ row.bed }}</td>
-                                <td>{{ row.month }}</td>
-                                <td>{{ row.frequency }}</td>
-                                <td>{{ row.total_minutes }}</td>
-                                <td>{{ row.total_points }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                    <div class="table-scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Boarder Name</th>
+                                    <th>Bed</th>
+                                    <th>Month</th>
+                                    <th>Frequency</th>
+                                    <th>Minutes Late</th>
+                                    <th>Total Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in history_results %}
+                                <tr>
+                                    <td>{{ row.display_name }}</td>
+                                    <td>{{ row.bed }}</td>
+                                    <td>{{ row.month }}</td>
+                                    <td>{{ row.frequency }}</td>
+                                    <td>{{ row.total_minutes }}</td>
+                                    <td>{{ row.total_points }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 {% else %}
-                    <div class="no-data-message">No history records matched your search.</div>
+                    <div class="empty-state">No history records matched your search.</div>
                 {% endif %}
             </div>
         {% endif %}
@@ -388,8 +626,8 @@
     <!-- Reports Database Panel -->
     <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
         <h2>Historical Reports</h2>
-        <div style="margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 12px; background: #fafafa;">
-            <h3 style="margin-top: 0;">Import Monthly Log</h3>
+        <div class="upload-panel">
+            <h3 class="upload-title">Import Monthly Log</h3>
             <form action="/" method="POST" enctype="multipart/form-data">
                 <div class="form-row">
                     <div class="form-field">
@@ -401,7 +639,7 @@
                         <input type="text" id="report_month" name="report_month" placeholder="2026-03 or March 2026" required>
                     </div>
                     <div>
-                        <button type="submit">Generate and Save</button>
+                        <button type="submit" class="btn btn-primary">Generate and Save</button>
                     </div>
                 </div>
             </form>
@@ -410,39 +648,60 @@
             <p>Click on a month to view or download that report.</p>
             <div class="months-list" id="months-container">
                 {% for month in all_months %}
-                    <div class="month-card" data-month="{{ month }}">
-                        <div class="month-name">{{ month }}</div>
+                    <div class="month-card" data-month="{{ month.month }}">
+                        <div class="month-name">{{ month.month }}</div>
+                        <div class="month-summary">{{ month.boarder_count }} boarders &middot; {{ month.total_minutes }} min late</div>
                         <div class="month-actions">
-                            <button type="button" class="view-month-btn" onclick='viewMonth({{ month|tojson }})'>View</button>
-                            <a href="/download_month/{{ month|urlencode }}" class="download-btn" style="text-align: center; display: block;">Download</a>
+                            <button type="button" class="btn btn-primary btn-sm view-month-btn" onclick='viewMonth({{ month.month|tojson }})'>View</button>
+                            <form action="/download_month/{{ month.month|urlencode }}" method="get">
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
+                                    Download
+                                </button>
+                            </form>
                         </div>
                     </div>
                 {% endfor %}
             </div>
-            <div id="month-detail" style="margin-top: 40px; display: none;">
-                <div style="display: flex; gap: 10px; margin-bottom: 20px; align-items: center;">
-                    <h3 id="month-detail-title" style="flex: 1; margin: 0;"></h3>
-                    <button id="month-detail-print" type="button" class="print-btn" onclick="printCurrentMonthReport()">🖨 Print</button>
-                    <a id="month-detail-download" href="#" class="download-btn">⬇ Download</a>
-                    <button id="month-detail-delete" type="button" class="delete-btn">🗑 Delete</button>
-                    <button id="month-detail-close" type="button" onclick="closeMonthDetail()" style="background: #6c757d;">Close</button>
+            <div id="month-detail" class="month-detail hidden">
+                <div class="print-brand">
+                    <img src="{{ url_for('static', filename='dbslogoF-B.png') }}" alt="DBS Boarding School logo">
+                    <span>DBS Boarding School</span>
                 </div>
-                <table id="month-detail-table">
-                    <thead>
-                        <tr>
-                            <th onclick="sortMonthDetail('bed')">Bed</th>
-                            <th onclick="sortMonthDetail('name')">Boarder Name</th>
-                            <th onclick="sortMonthDetail('frequency')">Frequency</th>
-                            <th onclick="sortMonthDetail('minutes')">Minutes Late</th>
-                            <th onclick="sortMonthDetail('points')">Total Points</th>
-                        </tr>
-                    </thead>
-                    <tbody id="month-detail-body">
-                    </tbody>
-                </table>
+                <div class="month-detail-toolbar">
+                    <h3 id="month-detail-title"></h3>
+                    <button id="month-detail-print" type="button" class="btn btn-primary" onclick="printCurrentMonthReport()">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-print"/></svg>
+                        Print
+                    </button>
+                    <button id="month-detail-download" type="button" class="btn btn-primary">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
+                        Download
+                    </button>
+                    <button id="month-detail-delete" type="button" class="btn btn-danger">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
+                        Delete
+                    </button>
+                    <button id="month-detail-close" type="button" class="btn btn-neutral" onclick="closeMonthDetail()">Close</button>
+                </div>
+                <div class="table-scroll month-report-scroll">
+                    <table id="month-detail-table" class="month-report-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortMonthDetail('bed')">Bed<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th onclick="sortMonthDetail('name')">Boarder Name<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th onclick="sortMonthDetail('frequency')">Frequency<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th onclick="sortMonthDetail('minutes')">Minutes Late<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th onclick="sortMonthDetail('points')">Total Points<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                            </tr>
+                        </thead>
+                        <tbody id="month-detail-body">
+                        </tbody>
+                    </table>
+                </div>
             </div>
         {% else %}
-            <div class="no-data-message">
+            <div class="empty-state">
                 <p>No reports have been saved yet. Upload a monthly log to get started!</p>
             </div>
         {% endif %}
@@ -455,8 +714,8 @@
         <h2 class="modal-title">Delete Report?</h2>
         <p class="modal-message">Are you sure you want to delete this report? This action cannot be undone.</p>
         <div class="modal-buttons">
-            <button class="btn-confirm" onclick="confirmDelete()">Yes, Delete</button>
-            <button class="btn-cancel" onclick="cancelDelete()">No, Cancel</button>
+            <button class="btn btn-danger" onclick="confirmDelete()">Yes, Delete</button>
+            <button class="btn btn-neutral" onclick="cancelDelete()">No, Cancel</button>
         </div>
     </div>
 </div>
@@ -505,7 +764,7 @@
             bed: data.bed,
             frequency: data.frequency,
             total_minutes: data.total_minutes,
-            points: data.frequency + data.total_minutes
+            points: data.total_points
         }));
 
         // Sort rows
@@ -616,11 +875,13 @@
                 monthDetailSort = { field: 'bed', direction: 'asc' };
 
                 document.getElementById('month-detail-title').textContent = `Report for ${month}`;
-                document.getElementById('month-detail-download').href = `/download_month/${encodeURIComponent(month)}`;
+                document.getElementById('month-detail-download').onclick = function() {
+                    window.location.href = `/download_month/${encodeURIComponent(month)}`;
+                };
                 document.getElementById('month-detail-delete').onclick = function() {
                     showDeleteModal(month);
                 };
-                document.getElementById('month-detail').style.display = 'block';
+                document.getElementById('month-detail').classList.remove('hidden');
 
                 // Render with default bed sort
                 renderMonthDetail('asc');
@@ -631,13 +892,21 @@
             });
     }
 
+    // Clicking a month card opens its report detail
+    document.querySelectorAll('.month-card').forEach(card => {
+        card.addEventListener('click', function(event) {
+            if (event.target.closest('button, a, form')) return;
+            viewMonth(this.dataset.month);
+        });
+    });
+
     function closeMonthDetail() {
         activeMonthReport = null;
-        document.getElementById('month-detail').style.display = 'none';
+        document.getElementById('month-detail').classList.add('hidden');
     }
 
     function printCurrentMonthReport() {
-        if (!activeMonthReport || document.getElementById('month-detail').style.display === 'none') {
+        if (!activeMonthReport || document.getElementById('month-detail').classList.contains('hidden')) {
             alert('Open a report before printing.');
             return;
         }
@@ -699,17 +968,11 @@
         const reportsPanel = document.getElementById('reports');
         const monthDetail = document.getElementById('month-detail');
         const reportsActive = reportsPanel && reportsPanel.classList.contains('active');
-        const reportOpen = monthDetail && monthDetail.style.display !== 'none' && !!activeMonthReport;
+        const reportOpen = monthDetail && !monthDetail.classList.contains('hidden') && !!activeMonthReport;
 
         if (reportsActive && reportOpen) {
             event.preventDefault();
             printCurrentMonthReport();
-        }
-    });
-
-    window.addEventListener('afterprint', function() {
-        if (activeMonthReport) {
-            document.getElementById('month-detail').style.display = 'block';
         }
     });
 </script>

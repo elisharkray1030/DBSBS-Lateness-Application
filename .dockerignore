@@ -6,7 +6,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 lateness_history.db
-temp_monthly_log.csv
 *.log
 *.csv
 !namelist.csv
