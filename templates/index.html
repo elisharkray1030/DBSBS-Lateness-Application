@@ -528,6 +528,28 @@
     </style>
 </head>
 <body>
+<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+    <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+    </symbol>
+    <symbol id="icon-print" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 6 2 18 2 18 9"/>
+        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+        <rect x="6" y="14" width="12" height="8"/>
+    </symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+    </symbol>
+    <symbol id="icon-sort-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 15l6-6 6 6"/>
+    </symbol>
+    <symbol id="icon-sort-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 9l6 6 6-6"/>
+    </symbol>
+</svg>
 <header class="site-header">
     <a class="brand" href="/">
         <img class="brand-logo" src="{{ url_for('static', filename='dbslogoF-B.png') }}" alt="DBS Boarding School logo">
@@ -633,7 +655,7 @@
                             <button type="button" class="btn btn-primary btn-sm view-month-btn" onclick='viewMonth({{ month.month|tojson }})'>View</button>
                             <form action="/download_month/{{ month.month|urlencode }}" method="get">
                                 <button type="submit" class="btn btn-primary btn-sm">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
                                     Download
                                 </button>
                             </form>
@@ -649,15 +671,15 @@
                 <div class="month-detail-toolbar">
                     <h3 id="month-detail-title"></h3>
                     <button id="month-detail-print" type="button" class="btn btn-primary" onclick="printCurrentMonthReport()">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-print"/></svg>
                         Print
                     </button>
                     <button id="month-detail-download" type="button" class="btn btn-primary">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
                         Download
                     </button>
                     <button id="month-detail-delete" type="button" class="btn btn-danger">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
                         Delete
                     </button>
                     <button id="month-detail-close" type="button" class="btn btn-neutral" onclick="closeMonthDetail()">Close</button>
@@ -666,11 +688,11 @@
                     <table id="month-detail-table" class="month-report-table">
                         <thead>
                             <tr>
-                                <th onclick="sortMonthDetail('bed')">Bed<svg class="sort-indicator" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="sort-up" d="M6 15l6-6 6 6"/><path class="sort-down" d="M6 9l6 6 6-6"/></svg></th>
-                                <th onclick="sortMonthDetail('name')">Boarder Name<svg class="sort-indicator" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="sort-up" d="M6 15l6-6 6 6"/><path class="sort-down" d="M6 9l6 6 6-6"/></svg></th>
-                                <th onclick="sortMonthDetail('frequency')">Frequency<svg class="sort-indicator" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="sort-up" d="M6 15l6-6 6 6"/><path class="sort-down" d="M6 9l6 6 6-6"/></svg></th>
-                                <th onclick="sortMonthDetail('minutes')">Minutes Late<svg class="sort-indicator" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="sort-up" d="M6 15l6-6 6 6"/><path class="sort-down" d="M6 9l6 6 6-6"/></svg></th>
-                                <th onclick="sortMonthDetail('points')">Total Points<svg class="sort-indicator" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="sort-up" d="M6 15l6-6 6 6"/><path class="sort-down" d="M6 9l6 6 6-6"/></svg></th>
+                                <th onclick="sortMonthDetail('bed')">Bed<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th onclick="sortMonthDetail('name')">Boarder Name<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th onclick="sortMonthDetail('frequency')">Frequency<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th onclick="sortMonthDetail('minutes')">Minutes Late<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th onclick="sortMonthDetail('points')">Total Points<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
                             </tr>
                         </thead>
                         <tbody id="month-detail-body">

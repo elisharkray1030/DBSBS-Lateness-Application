@@ -1,6 +1,6 @@
 ﻿import io
 
-from helpers import record
+from helpers import month_labels, record
 
 import storage
 from parser import RejectedOutcome, SavedOutcome, ingest_log
@@ -184,8 +184,8 @@ class TestIngestLog:
         outcome = ingest(LOG_HEADER + "GHOST,07:43\n", month="2026-02", conn=conn)
 
         assert isinstance(outcome, RejectedOutcome)
-        assert "2026-02" not in [s.month for s in storage.list_months(conn)]
-        assert "2026-01" in [s.month for s in storage.list_months(conn)]
+        assert "2026-02" not in month_labels(storage.list_months(conn))
+        assert "2026-01" in month_labels(storage.list_months(conn))
         saved = storage.get_month_report(conn, "2026-01")
         assert saved[0].frequency == 2
 
@@ -209,7 +209,7 @@ class TestIngestLog:
         )
 
         assert isinstance(outcome, SavedOutcome)
-        assert "2026-03" in [s.month for s in storage.list_months(conn)]
+        assert "2026-03" in month_labels(storage.list_months(conn))
         saved = storage.get_month_report(conn, "2026-03")
         assert {r.name for r in saved} == {"ALICE", "BOB", "CAROL"}
         assert {r.bed for r in saved} == {"101", "102", "103"}

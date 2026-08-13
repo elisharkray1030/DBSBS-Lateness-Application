@@ -1,6 +1,6 @@
 import sqlite3
 
-from helpers import record
+from helpers import month_labels, record
 
 import storage
 
@@ -43,14 +43,14 @@ class TestListMonths:
         storage.save_month(conn, [record("ALICE")], "2026-02")
 
         summaries = storage.list_months(conn)
-        assert [s.month for s in summaries] == ["2026-03", "2026-02", "2026-01"]
+        assert month_labels(summaries) == ["2026-03", "2026-02", "2026-01"]
 
     def test_distinct_months_only(self, conn):
         storage.save_month(conn, [record("ALICE")], "2026-03")
         storage.save_month(conn, [record("BOB")], "2026-03")
 
         summaries = storage.list_months(conn)
-        assert [s.month for s in summaries] == ["2026-03"]
+        assert month_labels(summaries) == ["2026-03"]
 
     def test_summarizes_boarder_count_across_boarders(self, conn):
         storage.save_month(
@@ -87,7 +87,7 @@ class TestListMonths:
         storage.save_month(conn, [record("ALICE", total_minutes=3)], "2026-04")
 
         summaries = storage.list_months(conn)
-        assert [s.month for s in summaries] == ["2026-04", "2026-03"]
+        assert month_labels(summaries) == ["2026-04", "2026-03"]
         assert summaries[0].boarder_count == 1
         assert summaries[0].total_minutes == 3
         assert summaries[1].boarder_count == 2
@@ -147,7 +147,7 @@ class TestDeleteMonth:
         storage.save_month(conn, [record("ALICE")], "2026-03")
 
         assert storage.delete_month(conn, "2026-03") == 1
-        assert [s.month for s in storage.list_months(conn)] == []
+        assert month_labels(storage.list_months(conn)) == []
 
     def test_returns_zero_for_unknown_month(self, conn):
         assert storage.delete_month(conn, "nope") == 0
@@ -157,4 +157,4 @@ class TestDeleteMonth:
         storage.save_month(conn, [record("ALICE")], "2026-04")
 
         storage.delete_month(conn, "2026-03")
-        assert [s.month for s in storage.list_months(conn)] == ["2026-04"]
+        assert month_labels(storage.list_months(conn)) == ["2026-04"]
