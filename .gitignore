@@ -6,6 +6,9 @@ __pycache__/
 venv/
 .venv/
 .env
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
 # Databases
 lateness_history.db
@@ -18,7 +21,6 @@ data/raw/
 
 # Temp / test
 test_data.csv
-temp_monthly_log.csv
 
 # IDE / editor
 .vscode/

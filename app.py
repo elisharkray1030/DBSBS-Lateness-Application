@@ -1,7 +1,7 @@
 import io
 import os
 import sqlite3
-from datetime import datetime, timezone
+from contextlib import closing
 
 try:
     from flask import Flask, jsonify, render_template, request, send_file
@@ -15,12 +15,8 @@ except ModuleNotFoundError as exc:
         'Then start the app with: python -m flask --app app run'
     ) from exc
 
-from parser import (
-    boarders_to_csv,
-    ingestion_rejection_message,
-    load_namelist,
-    process_lateness,
-)
+import storage
+from parser import RejectedOutcome, boarders_to_csv, ingest_log, load_namelist
 
 app = Flask(__name__)
 
@@ -28,122 +24,30 @@ DB_PATH = os.environ.get("DB_PATH", "lateness_history.db")
 NAMELIST_PATH = os.environ.get("NAMELIST_PATH", "namelist.csv")
 
 
+def connect():
+    """Opens a file-backed history store connection for the current call site."""
+    return closing(sqlite3.connect(DB_PATH))
+
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS boarder_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            normalized_name TEXT NOT NULL,
-            display_name TEXT NOT NULL,
-            bed TEXT NOT NULL,
-            month TEXT NOT NULL,
-            frequency INTEGER NOT NULL,
-            total_minutes INTEGER NOT NULL,
-            total_points INTEGER NOT NULL,
-            imported_at TEXT NOT NULL,
-            UNIQUE(normalized_name, month)
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        storage.create_schema(conn)
 
 
-def save_monthly_history(boarders_dict, month_label):
-    if not boarders_dict or not month_label:
-        return
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    imported_at = datetime.now(tz=timezone.utc).isoformat()
-
-    for boarder_name, data in boarders_dict.items():
-        display_name = boarder_name.title()
-        total_points = data['total_points']
-
-        cursor.execute(
-            """
-            INSERT INTO boarder_history (
-                normalized_name,
-                display_name,
-                bed,
-                month,
-                frequency,
-                total_minutes,
-                total_points,
-                imported_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(normalized_name, month) DO UPDATE SET
-                bed = excluded.bed,
-                frequency = excluded.frequency,
-                total_minutes = excluded.total_minutes,
-                total_points = excluded.total_points,
-                imported_at = excluded.imported_at
-            """,
-            (
-                boarder_name,
-                display_name,
-                data['bed'],
-                month_label,
-                data['frequency'],
-                data['total_minutes'],
-                total_points,
-                imported_at,
-            ),
-        )
-
-    conn.commit()
-    conn.close()
-
-
-def get_all_months():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT DISTINCT month
-        FROM boarder_history
-        ORDER BY month DESC
-        """
-    )
-    months = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return months
-
-
-def get_month_report(month_label):
-    if not month_label:
-        return {}
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT normalized_name, bed, frequency, total_minutes, total_points
-        FROM boarder_history
-        WHERE month = ?
-        ORDER BY bed ASC, display_name ASC
-        """,
-        (month_label,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-
+def serialize_boarders(boarders):
     return {
-        row[0]: {
-            'bed': row[1],
-            'frequency': row[2],
-            'total_minutes': row[3],
-            'total_points': row[4],
+        record.name: {
+            'bed': record.bed,
+            'frequency': record.frequency,
+            'total_minutes': record.total_minutes,
+            'total_points': record.total_points,
         }
-        for row in rows
+        for record in boarders
     }
 
 
-def build_csv_response(boarders_dict, download_name):
-    csv_bytes = io.BytesIO(boarders_to_csv(boarders_dict).encode('utf-8'))
+def build_csv_response(boarders, download_name):
+    csv_bytes = io.BytesIO(boarders_to_csv(boarders).encode('utf-8'))
     csv_bytes.seek(0)
     return send_file(
         csv_bytes,
@@ -151,38 +55,6 @@ def build_csv_response(boarders_dict, download_name):
         download_name=download_name,
         mimetype='text/csv',
     )
-
-
-def search_history(name_query):
-    if not name_query:
-        return []
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    normalized_query = f"%{name_query.strip().upper()}%"
-    cursor.execute(
-        """
-        SELECT display_name, bed, month, frequency, total_minutes, total_points
-        FROM boarder_history
-        WHERE normalized_name LIKE ?
-        ORDER BY display_name, month ASC
-        """,
-        (normalized_query,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-
-    return [
-        {
-            'display_name': row[0],
-            'bed': row[1],
-            'month': row[2],
-            'frequency': row[3],
-            'total_minutes': row[4],
-            'total_points': row[5],
-        }
-        for row in rows
-    ]
 
 
 # Ensure database schema exists before handling any requests.
@@ -196,7 +68,9 @@ def home():
     selected_tab = 'reports'
     message = None
     error = None
-    all_months = get_all_months()
+
+    with connect() as conn:
+        all_months = storage.list_months(conn)
 
     if request.method == 'POST':
         if 'log_file' in request.files:
@@ -208,33 +82,21 @@ def home():
             elif not month_label:
                 error = "Please enter a valid month label for this report. Example: '2026-03'."
             else:
-                temp_log_path = "temp_monthly_log.csv"
-                file.save(temp_log_path)
+                master_list = load_namelist(NAMELIST_PATH)
+                with connect() as conn:
+                    log_stream = io.TextIOWrapper(file.stream, encoding='utf-8-sig')
+                    try:
+                        outcome = ingest_log(log_stream, month_label, master_list, conn)
+                    finally:
+                        log_stream.detach()
 
-                try:
-                    master_list = load_namelist(NAMELIST_PATH)
-                    result = process_lateness(temp_log_path, master_list)
-
-                    rejection = ingestion_rejection_message(result, master_list)
-                    if rejection is not None:
-                        error = f"Error: {rejection}"
+                    if isinstance(outcome, RejectedOutcome):
+                        error = f"Error: {outcome.reason}"
                     else:
-                        save_monthly_history(result.boarders, month_label)
                         current_month = month_label
                         selected_tab = 'reports'
-                        all_months = get_all_months()
-                        recorded = len(result.boarders)
-                        message = f"Monthly report saved for '{month_label}' with {recorded} boarders recorded."
-                        if result.unmatched_names:
-                            message += " Unmatched names: " + ', '.join(result.unmatched_names) + "."
-                        if result.unparseable_rows:
-                            failing = ', '.join(
-                                f"{row.name} ('{row.raw_value}')" for row in result.unparseable_rows
-                            )
-                            message += f" Rows not counted (unparseable time): {failing}."
-                finally:
-                    if os.path.exists(temp_log_path):
-                        os.remove(temp_log_path)
+                        all_months = storage.list_months(conn)
+                        message = outcome.message
 
         elif request.form.get('search_name') is not None:
             selected_tab = 'history'
@@ -242,10 +104,13 @@ def home():
             if not search_name:
                 error = "Please enter a boarder name to search the history."
             else:
-                history_results = search_history(search_name)
+                with connect() as conn:
+                    history_results = storage.search_history(conn, search_name)
                 if not history_results:
                     message = f"No history found for '{search_name}'."
-        all_months = get_all_months()
+        else:
+            with connect() as conn:
+                all_months = storage.list_months(conn)
 
     return render_template(
         'index.html',
@@ -260,16 +125,18 @@ def home():
 
 @app.route('/api/month/<path:month>')
 def api_month(month):
-    boarders = get_month_report(month)
+    with connect() as conn:
+        boarders = storage.get_month_report(conn, month)
     if not boarders:
         return jsonify({'error': f'No report found for {month}.'}), 404
 
-    return jsonify({'month': month, 'boarders': boarders})
+    return jsonify({'month': month, 'boarders': serialize_boarders(boarders)})
 
 
 @app.route('/download_month/<path:month>')
 def download_month(month):
-    boarders = get_month_report(month)
+    with connect() as conn:
+        boarders = storage.get_month_report(conn, month)
     if not boarders:
         return f"Error: No report found for {month}.", 404
 
@@ -279,12 +146,8 @@ def download_month(month):
 
 @app.route('/delete_month/<path:month>', methods=['DELETE'])
 def delete_month(month):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM boarder_history WHERE month = ?", (month,))
-    deleted_count = cursor.rowcount
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        deleted_count = storage.delete_month(conn, month)
 
     if deleted_count == 0:
         return jsonify({'error': f'No report found for {month}.'}), 404
