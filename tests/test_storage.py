@@ -42,13 +42,56 @@ class TestListMonths:
         storage.save_month(conn, [record("ALICE")], "2026-03")
         storage.save_month(conn, [record("ALICE")], "2026-02")
 
-        assert storage.list_months(conn) == ["2026-03", "2026-02", "2026-01"]
+        summaries = storage.list_months(conn)
+        assert [s.month for s in summaries] == ["2026-03", "2026-02", "2026-01"]
 
     def test_distinct_months_only(self, conn):
         storage.save_month(conn, [record("ALICE")], "2026-03")
         storage.save_month(conn, [record("BOB")], "2026-03")
 
-        assert storage.list_months(conn) == ["2026-03"]
+        summaries = storage.list_months(conn)
+        assert [s.month for s in summaries] == ["2026-03"]
+
+    def test_summarizes_boarder_count_across_boarders(self, conn):
+        storage.save_month(
+            conn,
+            [record("ALICE"), record("BOB"), record("CAROL")],
+            "2026-03",
+        )
+
+        summaries = storage.list_months(conn)
+        assert len(summaries) == 1
+        assert summaries[0].month == "2026-03"
+        assert summaries[0].boarder_count == 3
+
+    def test_summarizes_total_minutes_across_boarders(self, conn):
+        storage.save_month(
+            conn,
+            [
+                record("ALICE", total_minutes=5),
+                record("BOB", total_minutes=19),
+                record("CAROL", total_minutes=0),
+            ],
+            "2026-03",
+        )
+
+        summaries = storage.list_months(conn)
+        assert summaries[0].total_minutes == 24
+
+    def test_orders_multiple_month_summaries_newest_first(self, conn):
+        storage.save_month(
+            conn,
+            [record("ALICE", total_minutes=5), record("BOB", total_minutes=19)],
+            "2026-03",
+        )
+        storage.save_month(conn, [record("ALICE", total_minutes=3)], "2026-04")
+
+        summaries = storage.list_months(conn)
+        assert [s.month for s in summaries] == ["2026-04", "2026-03"]
+        assert summaries[0].boarder_count == 1
+        assert summaries[0].total_minutes == 3
+        assert summaries[1].boarder_count == 2
+        assert summaries[1].total_minutes == 24
 
 
 class TestGetMonthReport:
@@ -104,7 +147,7 @@ class TestDeleteMonth:
         storage.save_month(conn, [record("ALICE")], "2026-03")
 
         assert storage.delete_month(conn, "2026-03") == 1
-        assert "2026-03" not in storage.list_months(conn)
+        assert [s.month for s in storage.list_months(conn)] == []
 
     def test_returns_zero_for_unknown_month(self, conn):
         assert storage.delete_month(conn, "nope") == 0
@@ -114,4 +157,4 @@ class TestDeleteMonth:
         storage.save_month(conn, [record("ALICE")], "2026-04")
 
         storage.delete_month(conn, "2026-03")
-        assert storage.list_months(conn) == ["2026-04"]
+        assert [s.month for s in storage.list_months(conn)] == ["2026-04"]

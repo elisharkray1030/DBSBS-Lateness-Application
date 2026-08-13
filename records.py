@@ -34,3 +34,12 @@ class HistoryEntry:
     frequency: int
     total_minutes: int
     total_points: int
+
+
+@dataclass
+class MonthSummary:
+    """One month's dashboard card: how many boarders and total minutes late."""
+
+    month: str
+    boarder_count: int
+    total_minutes: int

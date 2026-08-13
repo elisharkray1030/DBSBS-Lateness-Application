@@ -2,7 +2,7 @@ import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
-from records import BoarderRecord, HistoryEntry
+from records import BoarderRecord, HistoryEntry, MonthSummary
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -69,11 +69,19 @@ def save_month(
     conn.commit()
 
 
-def list_months(conn: sqlite3.Connection) -> list[str]:
+def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     cursor = conn.execute(
-        "SELECT DISTINCT month FROM boarder_history ORDER BY month DESC"
+        """
+        SELECT month, COUNT(*), SUM(total_minutes)
+        FROM boarder_history
+        GROUP BY month
+        ORDER BY month DESC
+        """
     )
-    return [row[0] for row in cursor.fetchall()]
+    return [
+        MonthSummary(month=row[0], boarder_count=row[1], total_minutes=row[2])
+        for row in cursor.fetchall()
+    ]
 
 
 def get_month_report(conn: sqlite3.Connection, month_label: str) -> list[BoarderRecord]:

@@ -154,7 +154,7 @@ Important behavior:
 
 - `create_schema(conn)` creates the `boarder_history` table if it does not exist.
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
-- `list_months(conn)` returns the saved month list used in the UI.
+- `list_months(conn)` returns the month summaries used in the UI (month label, boarder count, total minutes late), ordered newest-first.
 - `get_month_report(conn, month_label)` returns one month's stored `BoarderRecord` rows.
 - `search_history(conn, name_query)` performs a partial match against stored names.
 - `delete_month(conn, month_label)` removes a month and returns the deleted row count.
