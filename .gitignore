@@ -22,6 +22,12 @@ data/raw/
 # Temp / test
 test_data.csv
 
+# Scratch folder
+.gitignore_files/
+
+# Logs
+*.log
+
 # IDE / editor
 .vscode/
 .idea/
