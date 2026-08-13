@@ -16,10 +16,12 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 ## Project Layout
 
 - [app.py](app.py) - Flask app, routes, and SQLite persistence
-- [parser.py](parser.py) - CSV parsing and lateness calculation logic
+- [parser.py](parser.py) - CSV parsing, lateness calculation, and the single CSV writer
 - [templates/index.html](templates/index.html) - dashboard UI
+- [tests/](tests/) - pytest suite for the ingestion module (no server or browser needed)
 - [namelist.csv](namelist.csv) - master boarder list used for matching (local-only: gitignored for privacy, not in the repo)
 - [requirements.txt](requirements.txt) - runtime dependencies
+- [requirements-dev.txt](requirements-dev.txt) - development dependencies (pytest), includes runtime deps
 - [Dockerfile](Dockerfile) - container image definition
 
 ## Setup From Scratch
@@ -89,7 +91,12 @@ If you are running locally, replace the `namelist.csv` in the project folder bef
 
 - `namelist.csv` should contain at least `Name` and `Bed` columns.
 - Monthly log CSV files should contain at least `Name` and `Transaction Time` columns.
+- `Transaction Time` values must be strict `HH:MM` or `HH:MM:SS` (24-hour) times. Anything else is rejected with the offending rows surfaced, never silently dropped.
 - The SQLite database file is created automatically on first run if it does not already exist.
+
+## Upload behaviour
+
+A month report is only saved when the uploaded log produced at least one row for a known boarder with a parseable time. Uploads that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful upload reports how many boarders were recorded.
 
 ## Persistence and deployment notes
 
@@ -100,8 +107,12 @@ If you are running locally, replace the `namelist.csv` in the project folder bef
 
 ## Development notes
 
-- Run `python parser.py` for a quick parser check.
+- Install dev dependencies (pytest) with `python -m pip install -r requirements-dev.txt`.
+- Run `python -m pytest tests` to run the ingestion test suite (synthetic CSVs, no server or browser required).
+- Run `python parser.py` for a quick parser check: it reads `namelist.csv` plus `test_data.csv`, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows).
 - The lateness window is hard-coded in `parser.py`.
+- Lateness frequency, total minutes late, and total points are computed once in the ingestion module and carried in the ingestion result; the month view, the download, and the CSV export all use that one definition.
+- The CSV export, the month download, and `export_to_csv` all share the single CSV writer in `parser.py`, so their output is identical.
 - The app currently uses SQLite, so it is well suited to a single-user or small-team deployment.
 
 ## Files and Components
@@ -118,15 +129,17 @@ Important behavior:
 - `get_month_report(month_label)` returns one month's stored boarder rows.
 - `search_history(name_query)` performs a partial match against stored names.
 
-### `parser.py` - CSV parsing and lateness calculation
+### `parser.py` - CSV parsing, lateness calculation, and the CSV writer
 
-`parser.py` loads the master boarder list and calculates lateness metrics from uploaded CSV logs.
+`parser.py` loads the master boarder list and calculates lateness metrics from uploaded CSV logs. It is the single ingestion seam: one structured result carries per-boarder metrics (bed, frequency, total minutes late, total points) plus diagnostics (rows read, rows matched, unmatched names, unparseable rows, and whether any parseable data was produced), and the same module owns all CSV writing.
 
 Important behavior:
 
-- `load_namelist(namelist_filename)` reads the master list and normalizes names.
-- `process_lateness(log_filename, boarders_dict)` scans transaction times and updates boarder totals.
-- `export_to_csv(output_filename, boarders_dict)` writes the results to a CSV file.
+- `load_namelist(namelist_filename)` reads the master list and normalizes names; returns `None` if the file is missing.
+- `process_lateness(log_filename, master_list)` returns an `IngestionResult` with per-boarder metrics and diagnostics.
+- `ingestion_rejection_message(result, master_list)` returns a specific error message for a log that cannot be saved, or `None` when it can.
+- `boarders_to_csv(boarders)` renders a boarders mapping to CSV text (used by the download route and the export).
+- `export_to_csv(output_filename, boarders)` writes the results to a CSV file.
 
 ### `templates/index.html` - User interface and client scripting
 

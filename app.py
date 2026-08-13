@@ -1,4 +1,3 @@
-import csv
 import io
 import os
 import sqlite3
@@ -16,7 +15,12 @@ except ModuleNotFoundError as exc:
         'Then start the app with: python -m flask --app app run'
     ) from exc
 
-from parser import load_namelist, process_lateness
+from parser import (
+    boarders_to_csv,
+    ingestion_rejection_message,
+    load_namelist,
+    process_lateness,
+)
 
 app = Flask(__name__)
 
@@ -57,7 +61,7 @@ def save_monthly_history(boarders_dict, month_label):
 
     for boarder_name, data in boarders_dict.items():
         display_name = boarder_name.title()
-        total_points = data['frequency'] + data['total_minutes']
+        total_points = data['total_points']
 
         cursor.execute(
             """
@@ -117,7 +121,7 @@ def get_month_report(month_label):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT normalized_name, bed, frequency, total_minutes
+        SELECT normalized_name, bed, frequency, total_minutes, total_points
         FROM boarder_history
         WHERE month = ?
         ORDER BY bed ASC, display_name ASC
@@ -132,22 +136,14 @@ def get_month_report(month_label):
             'bed': row[1],
             'frequency': row[2],
             'total_minutes': row[3],
+            'total_points': row[4],
         }
         for row in rows
     }
 
 
 def build_csv_response(boarders_dict, download_name):
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['Bed', 'Name', 'Frequency', 'Total Minutes Late', 'Total Points'])
-
-    for boarder_name, data in boarders_dict.items():
-        freq = data['frequency']
-        mins = data['total_minutes']
-        writer.writerow([data['bed'], boarder_name, freq, mins, freq + mins])
-
-    csv_bytes = io.BytesIO(output.getvalue().encode('utf-8'))
+    csv_bytes = io.BytesIO(boarders_to_csv(boarders_dict).encode('utf-8'))
     csv_bytes.seek(0)
     return send_file(
         csv_bytes,
@@ -215,20 +211,30 @@ def home():
                 temp_log_path = "temp_monthly_log.csv"
                 file.save(temp_log_path)
 
-                master_list = load_namelist(NAMELIST_PATH)
-                boarders_data = process_lateness(temp_log_path, master_list)
+                try:
+                    master_list = load_namelist(NAMELIST_PATH)
+                    result = process_lateness(temp_log_path, master_list)
 
-                if boarders_data:
-                    save_monthly_history(boarders_data, month_label)
-                    current_month = month_label
-                    selected_tab = 'reports'
-                    all_months = get_all_months()
-                    message = f"Monthly report saved for '{month_label}'."
-                else:
-                    error = "No late boarders were found in that log file."
-
-                if os.path.exists(temp_log_path):
-                    os.remove(temp_log_path)
+                    rejection = ingestion_rejection_message(result, master_list)
+                    if rejection is not None:
+                        error = f"Error: {rejection}"
+                    else:
+                        save_monthly_history(result.boarders, month_label)
+                        current_month = month_label
+                        selected_tab = 'reports'
+                        all_months = get_all_months()
+                        recorded = len(result.boarders)
+                        message = f"Monthly report saved for '{month_label}' with {recorded} boarders recorded."
+                        if result.unmatched_names:
+                            message += " Unmatched names: " + ', '.join(result.unmatched_names) + "."
+                        if result.unparseable_rows:
+                            failing = ', '.join(
+                                f"{row.name} ('{row.raw_value}')" for row in result.unparseable_rows
+                            )
+                            message += f" Rows not counted (unparseable time): {failing}."
+                finally:
+                    if os.path.exists(temp_log_path):
+                        os.remove(temp_log_path)
 
         elif request.form.get('search_name') is not None:
             selected_tab = 'history'
