@@ -559,7 +559,7 @@
 
 <div class="container">
     <h1>Lateness Disciplinary Dashboard</h1>
-    <p class="subtitle">Search boarder history and review historical reports.</p>
+    <p class="subtitle">Search boarder history and manage saved reports.</p>
 
     {% if message %}
         <div class="banner banner-success">{{ message }}</div>
@@ -569,8 +569,8 @@
     {% endif %}
 
     <div class="tabs">
-        <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
         <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">View Reports in Database</button>
+        <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
     </div>
 
     <!-- History Search Panel -->
@@ -625,7 +625,6 @@
 
     <!-- Reports Database Panel -->
     <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
-        <h2>Historical Reports</h2>
         <div class="upload-panel">
             <h3 class="upload-title">Import Monthly Log</h3>
             <form action="/" method="POST" enctype="multipart/form-data">
