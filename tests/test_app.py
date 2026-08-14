@@ -47,9 +47,9 @@ class TestHomeRender:
         html = home_html()
         assert "Historical Reports" not in html
 
-    def test_page_subtitle_describes_both_capabilities(self):
+    def test_page_contains_no_subtitle_text(self):
         html = home_html()
-        assert "Search boarder history and manage saved reports." in html
+        assert "Search boarder history and manage saved reports." not in html
 
     def test_history_panel_keeps_its_heading(self):
         html = home_html()
