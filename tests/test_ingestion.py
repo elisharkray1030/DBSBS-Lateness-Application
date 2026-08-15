@@ -1,5 +1,6 @@
 ﻿import io
 
+import pytest
 from helpers import month_labels, record
 
 import storage
@@ -25,7 +26,7 @@ class TestIngestLog:
         assert outcome.diagnostics.matched_rows == 3
         assert outcome.diagnostics.unmatched_names == []
         assert outcome.diagnostics.unparseable_rows == []
-        assert outcome.boarders_count == 3
+        assert outcome.boarders_count == 2
 
         by_name = {r.name: r for r in outcome.boarders}
         assert by_name["ALICE"].frequency == 2
@@ -138,6 +139,28 @@ class TestIngestLog:
         assert "SPECTRE" in outcome.reason
         assert storage.list_months(conn) == []
 
+    @pytest.mark.parametrize("bad_month", ["March 2026", "2026/03", "2026-3", "202603", "march-2026", ""])
+    def test_rejects_non_canonical_month_label(self, conn, bad_month):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:42\n",
+            month=bad_month,
+            conn=conn,
+        )
+
+        assert isinstance(outcome, RejectedOutcome)
+        assert "YYYY-MM" in outcome.reason
+        assert storage.list_months(conn) == []
+
+    def test_accepts_canonical_month_label(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:42\n",
+            month="2026-03",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "2026-03" in month_labels(storage.list_months(conn))
+
     def test_header_mismatch_rejected(self, conn):
         outcome = ingest(
             "Employee,Clock Time\n" + "ALICE,07:42\n" + "BOB,08:00\n",
@@ -197,9 +220,28 @@ class TestIngestLog:
 
         assert isinstance(outcome, SavedOutcome)
         assert "2026-03" in outcome.message
-        assert "3 boarders recorded" in outcome.message
+        assert "1 boarder recorded" in outcome.message
         assert "GHOST" in outcome.message
         assert "BOB ('7:45')" in outcome.message
+
+    def test_clean_month_saves_and_reports_zero_boarders(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:40\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "0 boarders recorded" in outcome.message
+        assert "2026-03" in month_labels(storage.list_months(conn))
+
+    def test_only_late_boarders_counted_in_message(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:42\n" + "CAROL,08:00\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "2 boarders recorded" in outcome.message
 
     def test_end_to_end_month_appears_in_list_and_get(self, conn):
         outcome = ingest(

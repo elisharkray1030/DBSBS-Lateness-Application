@@ -4,6 +4,7 @@ import math
 import re
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import storage
 from records import BoarderRecord, UnparsedTimeRow
@@ -12,6 +13,8 @@ START_SECONDS = (7 * 3600) + (41 * 60)
 END_SECONDS = (8 * 3600) + (0 * 60)
 
 TIME_PATTERN = re.compile(r"^\d{2}:\d{2}(?::\d{2})?$")
+
+MONTH_LABEL_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
 CSV_HEADERS = ['Bed', 'Name', 'Frequency', 'Total Minutes Late', 'Total Points']
 
@@ -43,13 +46,14 @@ class SavedOutcome:
 
     @property
     def boarders_count(self) -> int:
-        return len(self.boarders)
+        return sum(1 for b in self.boarders if b.frequency > 0)
 
     @property
     def message(self) -> str:
+        boarder_word = "boarder" if self.boarders_count == 1 else "boarders"
         text = (
             f"Monthly report saved for '{self.month_label}' "
-            f"with {self.boarders_count} boarders recorded."
+            f"with {self.boarders_count} {boarder_word} recorded as late."
         )
         if self.diagnostics.unmatched_names:
             text += " Unmatched names: " + ", ".join(self.diagnostics.unmatched_names) + "."
@@ -203,6 +207,16 @@ def ingest_log(log_stream, month_label, master_list, conn):
     """
     diagnostics, boarders = parse_log_stream(log_stream, master_list)
 
+    if not MONTH_LABEL_PATTERN.match(month_label):
+        return RejectedOutcome(
+            month_label=month_label,
+            reason=(
+                f"Invalid month label '{month_label}'. Use a canonical YYYY-MM "
+                "label, e.g. '2026-03'."
+            ),
+            diagnostics=diagnostics,
+        )
+
     reason = _rejection_reason(diagnostics, master_list)
     if reason is not None:
         return RejectedOutcome(month_label=month_label, reason=reason, diagnostics=diagnostics)
@@ -238,8 +252,14 @@ def export_to_csv(output_filename, boarders):
         file.write(boarders_to_csv(boarders))
 
 
-def cli_ingest(log_path, master_list, month_label='cli'):
-    """Runs the shared ingestion path over a log file, returning the outcome."""
+def cli_ingest(log_path, master_list, month_label=None):
+    """Runs the shared ingestion path over a log file, returning the outcome.
+
+    Defaults the month label to the current month so the CLI can stay on the
+    canonical YYYY-MM path without asking the operator for a month.
+    """
+    if month_label is None:
+        month_label = datetime.now().strftime("%Y-%m")
     with open(log_path, mode='r', encoding='utf-8-sig') as log_stream:
         conn = sqlite3.connect(':memory:')
         try:

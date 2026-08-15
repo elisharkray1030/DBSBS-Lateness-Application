@@ -113,7 +113,7 @@ The web upload and the parser CLI run the exact same ingestion module, so the tw
 
 - Install dev dependencies (pytest, mypy) with `python -m pip install -r requirements-dev.txt`.
 - Run `python -m pytest tests` to run the suite across the ingestion and storage seams (synthetic CSVs and an in-memory SQLite connection, no server or browser required).
-- Run `python -m mypy app.py parser.py storage.py records.py` for typechecking.
+- Run `python -m mypy app.py parser.py storage.py records.py punishments.py` for typechecking.
 - Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.
 - Lateness frequency, total minutes late, and total points are computed once in the ingestion module and carried on the typed boarder record; the month view, the download, and the CSV export all use that one definition.

@@ -25,6 +25,7 @@ test_data.csv
 
 # Scratch folder
 .gitignore_files/
+.scratch/
 
 # Logs
 *.log

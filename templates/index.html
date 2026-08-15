@@ -377,6 +377,84 @@
             display: none;
         }
 
+        .assign-panel {
+            background: var(--page-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .assign-panel h4 {
+            margin-top: 0;
+            color: var(--navy);
+        }
+
+        .assign-boarders {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 8px;
+            margin: 12px 0;
+        }
+
+        .assign-boarder {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .due-badge {
+            display: inline-block;
+            background: var(--brand-red);
+            color: var(--surface);
+            font-size: 0.75em;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            margin-left: 6px;
+        }
+
+        .late-badge {
+            display: inline-block;
+            background: var(--neutral);
+            color: var(--surface);
+            font-size: 0.75em;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            margin-left: 6px;
+        }
+
+        .consequences-filters {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .consequences-filters label {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 0.9em;
+        }
+
+        .consequences-group {
+            margin-bottom: 24px;
+        }
+
+        .consequences-group-title {
+            margin: 0 0 6px;
+            color: var(--navy);
+            text-transform: capitalize;
+        }
+
+        .consequences-panel select {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
         .modal {
             display: none;
             position: fixed;
@@ -565,6 +643,7 @@
     <div class="tabs">
         <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">View Reports in Database</button>
         <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
+        <button class="tab-link {% if selected_tab == 'consequences' %}active{% endif %}" data-tab="consequences">Consequences</button>
     </div>
 
     <!-- History Search Panel -->
@@ -617,9 +696,107 @@
         {% endif %}
     </section>
 
+    <!-- Consequences Panel -->
+    <section id="consequences" class="panel {% if selected_tab == 'consequences' %}active{% endif %} consequences-panel">
+        <h2>Consequences</h2>
+        <div class="month-detail-toolbar">
+            <h3>Punishments</h3>
+            <form action="/consequences" method="get" class="consequences-filters">
+                <label for="consequences-month"><strong>Month</strong></label>
+                <select id="consequences-month" name="month">
+                    <option value="">All months</option>
+                    {% for m in all_months %}
+                        <option value="{{ m.month }}" {% if consequences_month == m.month %}selected{% endif %}>{{ m.month }}</option>
+                    {% endfor %}
+                </select>
+                <label for="consequences-status"><strong>Status</strong></label>
+                <select id="consequences-status" name="status">
+                    <option value="">In-flight only</option>
+                    {% for s in ['assigned', 'overdue', 'phone_held', 'submitted', 'voided'] %}
+                        <option value="{{ s }}" {% if consequences_status == s %}selected{% endif %}>{{ s }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+            </form>
+            <a class="btn btn-neutral btn-sm" href="/consequences{% if not consequences_show_all %}?show_all=1{% endif %}">
+                {% if consequences_show_all %}Show in-flight only{% else %}Show all{% endif %}
+            </a>
+        </div>
+        {% if punishments %}
+            {% for group in punishments|groupby('status') %}
+            <div class="consequences-group">
+                <h4 class="consequences-group-title">{{ group.grouper }}</h4>
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Boarder</th>
+                                <th>Bed</th>
+                                <th>Month</th>
+                                <th>Points Owed</th>
+                                <th>Deadline</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in group.list %}
+                            <tr>
+                                <td>{{ p.display_name }}{% if p.is_due %} <span class="due-badge">due</span>{% endif %}</td>
+                                <td>{{ p.bed }}</td>
+                                <td>{{ p.month }}</td>
+                                <td>{{ p.points_owed }}</td>
+                                <td>{{ p.deadline }}{% if p.was_late %} <span class="late-badge">late</span>{% endif %}</td>
+                                <td>{{ p.status }}</td>
+                                <td>
+                                    {% if p.status == 'assigned' %}
+                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
+                                            <input type="hidden" name="to" value="overdue">
+                                            <button type="submit" class="btn btn-primary btn-sm">Mark overdue</button>
+                                        </form>
+                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
+                                            <input type="hidden" name="to" value="submitted">
+                                            <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
+                                        </form>
+                                    {% endif %}
+                                    {% if p.status == 'overdue' %}
+                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
+                                            <input type="hidden" name="to" value="phone_held">
+                                            <button type="submit" class="btn btn-primary btn-sm">Phone held</button>
+                                        </form>
+                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
+                                            <input type="hidden" name="to" value="submitted">
+                                            <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
+                                        </form>
+                                    {% endif %}
+                                    {% if p.status == 'phone_held' %}
+                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
+                                            <input type="hidden" name="to" value="submitted">
+                                            <button type="submit" class="btn btn-primary btn-sm">Submitted (release phone)</button>
+                                        </form>
+                                    {% endif %}
+                                    {% if p.status in ['assigned', 'overdue', 'phone_held'] %}
+                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
+                                            <input type="hidden" name="to" value="voided">
+                                            <input type="text" name="void_reason" placeholder="Reason (optional)">
+                                            <button type="submit" class="btn btn-neutral btn-sm">Void</button>
+                                        </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">No punishments to show.</div>
+        {% endif %}
+    </section>
+
     <!-- Reports Database Panel -->
-    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
-        <div class="upload-panel">
+    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">        <div class="upload-panel">
             <h3 class="upload-title">Import Monthly Log</h3>
             <form action="/" method="POST" enctype="multipart/form-data">
                 <div class="form-row">
@@ -629,7 +806,7 @@
                     </div>
                     <div class="form-field">
                         <label for="report_month"><strong>Report Month</strong></label>
-                        <input type="text" id="report_month" name="report_month" placeholder="2026-03 or March 2026" required>
+                        <input type="month" id="report_month" name="report_month" required>
                     </div>
                     <div>
                         <button type="submit" class="btn btn-primary">Generate and Save</button>
@@ -671,11 +848,23 @@
                         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
                         Download
                     </button>
+                    <button id="month-detail-assign-btn" type="button" class="btn btn-primary">Assign Punishments</button>
                     <button id="month-detail-delete" type="button" class="btn btn-danger">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
                         Delete
                     </button>
                     <button id="month-detail-close" type="button" class="btn btn-neutral" onclick="closeMonthDetail()">Close</button>
+                </div>
+                <div id="month-detail-assign" class="assign-panel hidden">
+                    <h4>Assign Punishments</h4>
+                    <form id="assign-form" action="" method="post">
+                        <div class="form-field">
+                            <label for="assign-deadline"><strong>Deadline</strong></label>
+                            <input type="date" id="assign-deadline" name="deadline" required>
+                        </div>
+                        <div id="assign-boarders" class="assign-boarders"></div>
+                        <button type="submit" class="btn btn-primary">Assign</button>
+                    </form>
                 </div>
                 <div class="table-scroll month-report-scroll">
                     <table id="month-detail-table" class="month-report-table">
@@ -875,6 +1064,9 @@
                     showDeleteModal(month);
                 };
                 document.getElementById('month-detail').classList.remove('hidden');
+                document.getElementById('month-detail-assign').classList.add('hidden');
+                const assignBtn = document.getElementById('month-detail-assign-btn');
+                assignBtn.onclick = function() { showAssignPanel(month, data.boarders); };
 
                 // Render with default bed sort
                 renderMonthDetail('asc');
@@ -896,6 +1088,53 @@
     function closeMonthDetail() {
         activeMonthReport = null;
         document.getElementById('month-detail').classList.add('hidden');
+        document.getElementById('month-detail-assign').classList.add('hidden');
+    }
+
+    function showAssignPanel(month, boarders) {
+        const panel = document.getElementById('month-detail-assign');
+        const container = document.getElementById('assign-boarders');
+        const form = document.getElementById('assign-form');
+        form.action = `/assign/${encodeURIComponent(month)}`;
+
+        const lateBoarders = Object.entries(boarders).filter(([, data]) => data.total_points > 0);
+        container.innerHTML = '';
+        const checkboxes = [];
+        lateBoarders.forEach(([name, data]) => {
+            const label = document.createElement('label');
+            label.className = 'assign-boarder';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = 'exempt';
+            checkbox.value = name;
+            checkbox.checked = true;
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(` ${name} (${data.total_points} pts)`));
+            container.appendChild(label);
+            checkboxes.push(checkbox);
+        });
+
+        if (lateBoarders.length === 0) {
+            container.innerHTML = '<p>No boarders with points in this month.</p>';
+        }
+
+        form.onsubmit = function(event) {
+            const exempted = checkboxes.filter(function(cb) { return !cb.checked; })
+                                        .map(function(cb) { return cb.value; });
+            const exemptInputs = form.querySelectorAll('input[name="exempt"]');
+            exemptInputs.forEach(function(input) { input.remove(); });
+            exempted.forEach(function(name) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'exempt';
+                input.value = name;
+                form.appendChild(input);
+            });
+            return true;
+        };
+
+        panel.classList.remove('hidden');
+        panel.scrollIntoView({ behavior: 'smooth' });
     }
 
     function printCurrentMonthReport() {

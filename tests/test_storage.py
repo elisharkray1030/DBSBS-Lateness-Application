@@ -1,5 +1,6 @@
 import sqlite3
 
+import pytest
 from helpers import month_labels, record
 
 import storage
@@ -55,14 +56,24 @@ class TestListMonths:
     def test_summarizes_boarder_count_across_boarders(self, conn):
         storage.save_month(
             conn,
-            [record("ALICE"), record("BOB"), record("CAROL")],
+            [record("ALICE", frequency=2), record("BOB", frequency=1), record("CAROL")],
             "2026-03",
         )
 
         summaries = storage.list_months(conn)
         assert len(summaries) == 1
         assert summaries[0].month == "2026-03"
-        assert summaries[0].boarder_count == 3
+        assert summaries[0].boarder_count == 2
+
+    def test_zero_lateness_boarders_not_counted(self, conn):
+        storage.save_month(
+            conn,
+            [record("ALICE"), record("BOB")],
+            "2026-03",
+        )
+
+        summaries = storage.list_months(conn)
+        assert summaries[0].boarder_count == 0
 
     def test_summarizes_total_minutes_across_boarders(self, conn):
         storage.save_month(
@@ -81,10 +92,13 @@ class TestListMonths:
     def test_orders_multiple_month_summaries_newest_first(self, conn):
         storage.save_month(
             conn,
-            [record("ALICE", total_minutes=5), record("BOB", total_minutes=19)],
+            [
+                record("ALICE", frequency=1, total_minutes=5),
+                record("BOB", frequency=2, total_minutes=19),
+            ],
             "2026-03",
         )
-        storage.save_month(conn, [record("ALICE", total_minutes=3)], "2026-04")
+        storage.save_month(conn, [record("ALICE", frequency=3, total_minutes=3)], "2026-04")
 
         summaries = storage.list_months(conn)
         assert month_labels(summaries) == ["2026-04", "2026-03"]
@@ -158,3 +172,71 @@ class TestDeleteMonth:
 
         storage.delete_month(conn, "2026-03")
         assert month_labels(storage.list_months(conn)) == ["2026-04"]
+
+
+class TestAssignPunishments:
+    def test_assigns_one_row_per_boarder_with_frozen_fields(self, conn):
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[
+                record("ALICE", "101", 2, 5, 7),
+                record("BOB", "102", 1, 19, 20),
+            ],
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+
+        rows = storage.list_punishments(conn)
+        assert len(rows) == 2
+        alice = next(r for r in rows if r.normalized_name == "ALICE")
+        assert alice.display_name == "Alice"
+        assert alice.bed == "101"
+        assert alice.points_owed == 7
+        assert alice.month == "2026-03"
+        assert alice.deadline == "2026-04-10"
+        assert alice.status == "assigned"
+        assert alice.assigned_at == "2026-04-01T09:00:00+00:00"
+
+    def test_partial_unique_index_rejects_second_active_per_month(self, conn):
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[record("ALICE", "101", 2, 5, 7)],
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 3, 8, 11)],
+                deadline="2026-04-20",
+                assigned_at="2026-04-02T09:00:00+00:00",
+            )
+
+    def test_reassignment_allowed_after_void(self, conn):
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[record("ALICE", "101", 2, 5, 7)],
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+        row = storage.list_punishments(conn)[0]
+        storage.transition_punishment(
+            conn, row.id, "voided", timestamp="2026-04-05T09:00:00+00:00", void_reason="exempt"
+        )
+
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[record("ALICE", "101", 3, 8, 11)],
+            deadline="2026-04-20",
+            assigned_at="2026-04-06T09:00:00+00:00",
+        )
+
+        rows = storage.list_punishments(conn, statuses=("assigned",))
+        assert len(rows) == 1
+        assert rows[0].points_owed == 11

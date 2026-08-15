@@ -2,9 +2,10 @@ import io
 import os
 import sqlite3
 from contextlib import closing
+from urllib.parse import urlencode
 
 try:
-    from flask import Flask, jsonify, render_template, request, send_file
+    from flask import Flask, jsonify, redirect, render_template, request, send_file
 except ModuleNotFoundError as exc:
     if exc.name != 'flask':
         raise
@@ -17,6 +18,13 @@ except ModuleNotFoundError as exc:
 
 import storage
 from parser import RejectedOutcome, boarders_to_csv, ingest_log, load_namelist
+from punishments import (
+    AssignmentRejected,
+    TransitionRejected,
+    assign_batch,
+    list_consequences,
+    transition,
+)
 
 app = Flask(__name__)
 
@@ -112,6 +120,12 @@ def home():
             with connect() as conn:
                 all_months = storage.list_months(conn)
 
+    if request.args.get('message'):
+        message = request.args['message']
+    if request.args.get('month'):
+        current_month = request.args['month']
+        selected_tab = 'reports'
+
     return render_template(
         'index.html',
         history_results=history_results,
@@ -120,6 +134,10 @@ def home():
         error=error,
         all_months=all_months,
         current_month=current_month,
+        punishments=[],
+        consequences_show_all=False,
+        consequences_month=None,
+        consequences_status=None,
     )
 
 
@@ -153,6 +171,76 @@ def delete_month(month):
         return jsonify({'error': f'No report found for {month}.'}), 404
 
     return jsonify({'success': True, 'deleted': deleted_count})
+
+
+@app.route('/assign/<path:month>', methods=['POST'])
+def assign_month(month):
+    deadline = request.form.get('deadline', '').strip()
+    if not deadline:
+        return "Error: a deadline is required to assign punishments.", 400
+
+    exempted = set(request.form.getlist('exempt'))
+    with connect() as conn:
+        boarders = storage.get_month_report(conn, month)
+        if not boarders:
+            return f"Error: No report found for {month}.", 404
+
+        outcome = assign_batch(
+            conn,
+            month=month,
+            boarders=boarders,
+            exemptions=exempted,
+            deadline=deadline,
+        )
+
+    if isinstance(outcome, AssignmentRejected):
+        return f"Error: {outcome.reason}", 400
+
+    query = urlencode({'month': month, 'message': outcome.message})
+    return redirect(f"/?{query}")
+
+
+@app.route('/consequences')
+def consequences():
+    show_all = request.args.get('show_all') == '1'
+    month = request.args.get('month') or None
+    status = request.args.get('status') or None
+    with connect() as conn:
+        punishments = list_consequences(conn, show_all=show_all, month=month, status=status)
+        all_months = storage.list_months(conn)
+
+    return render_template(
+        'index.html',
+        history_results=None,
+        selected_tab='consequences',
+        message=None,
+        error=None,
+        all_months=all_months,
+        current_month=None,
+        punishments=punishments,
+        consequences_show_all=show_all,
+        consequences_month=month,
+        consequences_status=status,
+    )
+
+
+@app.route('/punishment/<int:punishment_id>/transition', methods=['POST'])
+def transition_punishment(punishment_id):
+    target = request.form.get('to', '').strip()
+    void_reason = request.form.get('void_reason', '').strip() or None
+
+    with connect() as conn:
+        outcome = transition(
+            conn,
+            punishment_id=punishment_id,
+            target=target,
+            void_reason=void_reason,
+        )
+
+    if isinstance(outcome, TransitionRejected):
+        return f"Error: {outcome.reason}", 400
+
+    return redirect("/consequences")
 
 
 if __name__ == '__main__':
