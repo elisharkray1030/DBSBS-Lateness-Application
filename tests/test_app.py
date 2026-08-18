@@ -78,6 +78,95 @@ class TestImportMonthPicker:
         assert "YYYY-MM" in html
 
 
+@pytest.fixture()
+def fresh_client(tmp_path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+    app_module.init_db()
+    namelist = tmp_path / "namelist.csv"
+    namelist.write_text(
+        "Bed,Name\n601A,ALICE\n601B,BOB\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+    return app_module.app.test_client()
+
+
+LOG_CSV = "Name,Transaction Time\nALICE,07:45\n"
+
+
+class TestImportPostRedirectGet:
+    def _import(self, client, month="2026-07", body=LOG_CSV, filename="log.csv"):
+        return client.post(
+            "/",
+            data={
+                "report_month": month,
+                "log_file": (io.BytesIO(body.encode("utf-8")), filename),
+            },
+            content_type="multipart/form-data",
+        )
+
+    def test_successful_import_redirects_with_month_query(self, fresh_client):
+        resp = self._import(fresh_client)
+
+        assert resp.status_code == 302
+        assert "month=2026-07" in resp.headers["Location"]
+
+    def test_redirect_target_renders_archive_with_message_and_auto_open(self, fresh_client):
+        resp = self._import(fresh_client)
+
+        page = fresh_client.get(resp.headers["Location"])
+        html = page.get_data(as_text=True)
+        assert page.status_code == 200
+        assert "Monthly report saved for" in html
+        assert "with 1 boarder recorded as late" in html
+        assert 'const initialMonthToOpen = "2026-07";' in html
+
+    def test_following_redirect_does_not_duplicate_the_import(self, fresh_client):
+        resp = self._import(fresh_client)
+        fresh_client.get(resp.headers["Location"])
+
+        with app_module.connect() as conn:
+            months = storage.list_months(conn)
+        assert len(months) == 1
+        assert months[0].month == "2026-07"
+
+    def test_rejected_import_renders_inline_without_redirect(self, fresh_client):
+        resp = self._import(fresh_client, body="")
+
+        assert resp.status_code == 200
+        assert "Error" in resp.get_data(as_text=True)
+        with app_module.connect() as conn:
+            assert storage.list_months(conn) == []
+
+    def test_missing_month_label_renders_inline_without_redirect(self, fresh_client):
+        resp = self._import(fresh_client, month="")
+
+        assert resp.status_code == 200
+        assert "Error" in resp.get_data(as_text=True)
+        with app_module.connect() as conn:
+            assert storage.list_months(conn) == []
+
+    def test_stale_month_param_loads_gracefully(self, fresh_client):
+        page = fresh_client.get("/?month=2020-01")
+        html = page.get_data(as_text=True)
+
+        assert page.status_code == 200
+        assert "const initialMonthToOpen = null;" in html
+
+    def test_browser_refresh_of_redirect_target_shows_no_import_form_resubmit(self, fresh_client):
+        resp = self._import(fresh_client)
+        location = resp.headers["Location"]
+
+        fresh_client.get(location)
+        again = fresh_client.get(location)
+
+        assert again.status_code == 200
+        with app_module.connect() as conn:
+            months = storage.list_months(conn)
+        assert len(months) == 1
+
+
 class TestAssignRoute:
     @pytest.fixture(autouse=True)
     def _seed_month(self):

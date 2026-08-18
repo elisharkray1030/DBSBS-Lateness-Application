@@ -101,10 +101,8 @@ def home():
                     if isinstance(outcome, RejectedOutcome):
                         error = f"Error: {outcome.reason}"
                     else:
-                        current_month = month_label
-                        selected_tab = 'reports'
-                        all_months = storage.list_months(conn)
-                        message = outcome.message
+                        query = urlencode({'month': month_label, 'message': outcome.message})
+                        return redirect(f"/?{query}")
 
         elif request.form.get('search_name') is not None:
             selected_tab = 'history'
@@ -123,8 +121,11 @@ def home():
     if request.args.get('message'):
         message = request.args['message']
     if request.args.get('month'):
-        current_month = request.args['month']
-        selected_tab = 'reports'
+        month_param = request.args['month']
+        with connect() as conn:
+            if storage.get_month_report(conn, month_param):
+                current_month = month_param
+                selected_tab = 'reports'
 
     return render_template(
         'index.html',
