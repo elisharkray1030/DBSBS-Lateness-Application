@@ -19,10 +19,10 @@ except ModuleNotFoundError as exc:
 import storage
 from parser import (
     RejectedOutcome,
-    boarder_list_to_csv,
     boarders_to_csv,
     ingest_log,
     load_namelist_rows,
+    master_list_to_csv,
     parse_namelist_stream,
 )
 from punishments import (
@@ -32,6 +32,7 @@ from punishments import (
     list_consequences,
     transition,
 )
+from records import normalize_name
 
 app = Flask(__name__)
 
@@ -44,13 +45,21 @@ def connect():
     return closing(sqlite3.connect(DB_PATH))
 
 
+SEED_FLAG = "boarders_seeded"
+
+
 def init_db():
     with connect() as conn:
         storage.create_schema(conn)
-        if not storage.list_boarders(conn):
-            rows = load_namelist_rows(NAMELIST_PATH)
-            if rows:
-                storage.replace_boarders(conn, rows)
+        if storage.get_meta(conn, SEED_FLAG) is not None:
+            return
+        if storage.list_boarders(conn):
+            storage.set_meta(conn, SEED_FLAG, "1")
+            return
+        rows = load_namelist_rows(NAMELIST_PATH)
+        if rows:
+            storage.replace_boarders(conn, rows)
+        storage.set_meta(conn, SEED_FLAG, "1")
 
 
 def serialize_boarders(boarders):
@@ -157,40 +166,28 @@ def home():
 
 @app.route('/boarders')
 def boarders():
-    with connect() as conn:
-        boarders_list = storage.list_boarders(conn)
-        all_months = storage.list_months(conn)
-    return render_template(
-        'index.html',
-        history_results=None,
-        selected_tab='boarders',
-        message=None,
-        error=None,
-        all_months=all_months,
-        current_month=None,
-        boarders=boarders_list,
-        punishments=[],
-        consequences_show_all=False,
-        consequences_month=None,
-        consequences_status=None,
-    )
+    return _render_boarders()
+
+
+def _validate_boarder(display_name, bed, exclude_id=None):
+    if not display_name:
+        return "Error: A boarder name is required."
+    if not bed:
+        return "Error: A bed is required."
+    if _boarder_name_taken(display_name, exclude_id=exclude_id):
+        return f"Error: A boarder named '{display_name}' is already on the list."
+    return None
 
 
 @app.route('/boarders/add', methods=['POST'])
 def add_boarder():
     display_name = request.form.get('name', '').strip()
     bed = request.form.get('bed', '').strip()
-    error = None
-    if not display_name:
-        error = "Error: A boarder name is required."
-    elif not bed:
-        error = "Error: A bed is required."
-    elif _boarder_name_taken(display_name):
-        error = f"Error: A boarder named '{display_name}' is already on the list."
+    error = _validate_boarder(display_name, bed)
     if error:
         return _render_boarders(error=error)
     with connect() as conn:
-        storage.add_boarder(conn, display_name.upper(), display_name, bed)
+        storage.add_boarder(conn, normalize_name(display_name), display_name, bed)
     return redirect('/boarders')
 
 
@@ -198,17 +195,11 @@ def add_boarder():
 def edit_boarder(boarder_id):
     display_name = request.form.get('name', '').strip()
     bed = request.form.get('bed', '').strip()
-    error = None
-    if not display_name:
-        error = "Error: A boarder name is required."
-    elif not bed:
-        error = "Error: A bed is required."
-    elif _boarder_name_taken(display_name, exclude_id=boarder_id):
-        error = f"Error: A boarder named '{display_name}' is already on the list."
+    error = _validate_boarder(display_name, bed, exclude_id=boarder_id)
     if error:
         return _render_boarders(error=error)
     with connect() as conn:
-        storage.update_boarder(conn, boarder_id, display_name.upper(), display_name, bed)
+        storage.update_boarder(conn, boarder_id, normalize_name(display_name), display_name, bed)
     return redirect('/boarders')
 
 
@@ -232,11 +223,8 @@ def import_boarders():
         finally:
             log_stream.detach()
 
-        if not rows:
-            return _render_boarders(
-                error="Error: The uploaded CSV has no boarders. Expected 'Name' and 'Bed' columns."
-            )
-        storage.replace_boarders(conn, rows)
+        deduped = {boarder.normalized_name: boarder for boarder in rows}
+        storage.replace_boarders(conn, list(deduped.values()))
     return redirect('/boarders')
 
 
@@ -244,7 +232,7 @@ def import_boarders():
 def export_boarders():
     with connect() as conn:
         boarders = storage.list_boarders(conn)
-    csv_text = boarder_list_to_csv(boarders)
+    csv_text = master_list_to_csv(boarders)
     csv_bytes = io.BytesIO(csv_text.encode('utf-8'))
     csv_bytes.seek(0)
     return send_file(
@@ -257,7 +245,7 @@ def export_boarders():
 
 def _boarder_name_taken(display_name, exclude_id=None):
     with connect() as conn:
-        return storage.boarder_exists(conn, display_name.upper(), exclude_id=exclude_id)
+        return storage.boarder_exists(conn, normalize_name(display_name), exclude_id=exclude_id)
 
 
 def _render_boarders(error=None, message=None):

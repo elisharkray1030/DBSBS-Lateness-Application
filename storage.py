@@ -54,12 +54,39 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_punishments_active
         ON punishments(normalized_name, month)
         WHERE status != 'voided'
         """
     )
     conn.commit()
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Stores one key/value row in the meta table, overwriting an existing key."""
+    conn.execute(
+        """
+        INSERT INTO meta (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+    conn.commit()
+
+
+def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    """Returns the stored value for a meta key, or None if the key is absent."""
+    cursor = conn.execute("SELECT value FROM meta WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    return row[0] if row is not None else None
 
 
 def list_boarders(conn: sqlite3.Connection) -> list[Boarder]:
@@ -162,17 +189,17 @@ def delete_boarder(conn: sqlite3.Connection, boarder_id: int) -> None:
 
 def replace_boarders(
     conn: sqlite3.Connection,
-    rows: Iterable[tuple[str, str, str]],
+    rows: Iterable[Boarder],
 ) -> None:
-    """Replaces the entire master list with (normalized_name, display_name, bed) rows."""
+    """Replaces the entire master list with the given boarders."""
     conn.execute("DELETE FROM boarders")
-    for normalized_name, display_name, bed in rows:
+    for boarder in rows:
         conn.execute(
             """
             INSERT INTO boarders (normalized_name, display_name, bed)
             VALUES (?, ?, ?)
             """,
-            (normalized_name, display_name, bed),
+            (boarder.normalized_name, boarder.display_name, boarder.bed),
         )
     conn.commit()
 

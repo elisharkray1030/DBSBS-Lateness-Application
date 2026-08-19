@@ -5,6 +5,7 @@ import tempfile
 
 import pytest
 from helpers import record
+from records import Boarder
 
 import app as app_module
 import storage
@@ -114,7 +115,7 @@ class TestBoarderSeeding:
         monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
         app_module.init_db()
         with app_module.connect() as conn:
-            storage.replace_boarders(conn, [("ALICE", "Alice", "601A")])
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
         namelist = tmp_path / "namelist.csv"
         namelist.write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
         monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
@@ -130,12 +131,53 @@ class TestBoarderSeeding:
         with app_module.connect() as conn:
             assert storage.boarder_master_list(conn) == {}
 
+    def test_seed_does_not_resurrect_after_emptying_roster(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "seed.db"
+        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+        namelist = tmp_path / "namelist.csv"
+        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
+        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+        app_module.init_db()
+        with app_module.connect() as conn:
+            assert storage.boarder_master_list(conn) == {"ALICE": "601A"}
+            conn.execute("DELETE FROM boarders")
+            conn.commit()
+        app_module.init_db()
+        with app_module.connect() as conn:
+            assert storage.boarder_master_list(conn) == {}
+
+    def test_no_namelist_forfeits_seed_forever(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "seed.db"
+        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
+        app_module.init_db()
+        namelist = tmp_path / "namelist.csv"
+        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
+        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+        app_module.init_db()
+        with app_module.connect() as conn:
+            assert storage.boarder_master_list(conn) == {}
+
+    def test_populated_deployment_marks_seeded_without_wipe(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "seed.db"
+        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+        with app_module.connect() as conn:
+            storage.create_schema(conn)
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+        namelist = tmp_path / "namelist.csv"
+        namelist.write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
+        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+        app_module.init_db()
+        with app_module.connect() as conn:
+            assert storage.boarder_master_list(conn) == {"ALICE": "601A"}
+
 
 class TestImportUsesDbBoarders:
     def test_import_matches_boarder_known_only_to_db(self, fresh_client):
         with app_module.connect() as conn:
             storage.replace_boarders(
-                conn, [("ALICE", "Alice", "601A"), ("GHOST", "Ghost", "999")]
+                conn,
+                [Boarder("ALICE", "Alice", "601A"), Boarder("GHOST", "Ghost", "999")],
             )
         resp = fresh_client.post(
             "/",
@@ -152,7 +194,7 @@ class TestImportUsesDbBoarders:
 
     def test_import_does_not_match_csv_only_boarder(self, fresh_client):
         with app_module.connect() as conn:
-            storage.replace_boarders(conn, [("ALICE", "Alice", "601A")])
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
         resp = fresh_client.post(
             "/",
             data={
@@ -311,7 +353,7 @@ class TestBoarderBulkImport:
         assert "Dana" in html
         assert "ALICE" not in html
 
-    def test_import_rejects_empty_roster(self, fresh_client):
+    def test_import_empty_csv_replaces_roster_with_empty(self, fresh_client):
         resp = fresh_client.post(
             "/boarders/import",
             data={
@@ -319,15 +361,79 @@ class TestBoarderBulkImport:
             },
             content_type="multipart/form-data",
         )
-        assert resp.status_code == 200
-        html = resp.get_data(as_text=True)
-        assert "no boarders" in html.lower()
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            assert storage.list_boarders(conn) == []
+
+    def test_import_all_skipped_rows_replaces_roster_with_empty(self, fresh_client):
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\n,bad\nNoBed,\n"), "skipped.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            assert storage.list_boarders(conn) == []
+
+    def test_import_exact_duplicate_names_collapse_last_wins(self, fresh_client):
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (
+                    io.BytesIO(b"Name,Bed\nCarol,601C\nCarol,602C\n"),
+                    "roster.csv",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            boarders = storage.list_boarders(conn)
+        assert [(b.display_name, b.bed) for b in boarders] == [("Carol", "602C")]
+
+    def test_import_case_variant_duplicate_names_collapse_last_wins(self, fresh_client):
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (
+                    io.BytesIO(b"Name,Bed\nCarol,601C\ncarol,602C\n"),
+                    "roster.csv",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            boarders = storage.list_boarders(conn)
+        assert [(b.display_name, b.bed) for b in boarders] == [("carol", "602C")]
 
     def test_import_rejects_missing_file(self, fresh_client):
         resp = fresh_client.post("/boarders/import", data={})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "file" in html.lower()
+
+    def test_empty_roster_rejects_monthly_log_import(self, fresh_client):
+        fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        resp = fresh_client.post(
+            "/",
+            data={
+                "report_month": "2026-08",
+                "log_file": (io.BytesIO(b"Name,Transaction Time\nZED,07:42\n"), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "master list is missing or empty" in html
 
     def test_import_roster_used_by_ingestion(self, fresh_client):
         fresh_client.post(

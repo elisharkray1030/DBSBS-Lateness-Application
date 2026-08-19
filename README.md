@@ -78,7 +78,7 @@ docker compose down
 
 The boarder master list lives in the SQLite database (`boarders` table). The **Boarders** tab lets staff view, add, edit, and remove boarders inline, replace the whole roster by uploading a CSV, and download the current roster as a CSV.
 
-On first startup, if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once. After that seed the file is no longer read — all changes happen through the Boarders tab or a CSV upload.
+On first startup, if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once, then sets a seed flag in a `meta` table. After that the file is no longer read — all changes happen through the Boarders tab or a CSV upload. If the roster is later emptied (every Boarder deleted), it stays empty across restarts; the seed never runs again. A fresh start with no `namelist.csv` forfeits the one-time seed — a `namelist.csv` appearing later never silently seeds a roster you did not ask for. (Deployments that emptied every Boarder before this change get one final seed on the first restart after upgrading, then stay stable thereafter.)
 
 If you are using Docker Compose, the root `namelist.csv` is only consulted for that initial seed; edits made in the app persist in the mounted database volume and survive restarts. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
 

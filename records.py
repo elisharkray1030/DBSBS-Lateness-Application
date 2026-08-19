@@ -1,6 +1,16 @@
 from dataclasses import dataclass
 
 
+def normalize_name(name: str) -> str:
+    """Normalizes a boarder name to the uppercased match key."""
+    return name.strip().upper()
+
+
+def boarder_sort_key(boarder: "Boarder") -> tuple[str, str]:
+    """Orders boarders by bed then display name, matching the SQL ordering."""
+    return (boarder.bed, boarder.display_name)
+
+
 @dataclass
 class Boarder:
     """One row of the master list: id, normalized name, display name, and bed."""

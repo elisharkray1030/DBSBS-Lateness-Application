@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 import storage
-from records import BoarderRecord, UnparsedTimeRow
+from records import Boarder, BoarderRecord, UnparsedTimeRow, boarder_sort_key, normalize_name
 
 START_SECONDS = (7 * 3600) + (41 * 60)
 END_SECONDS = (8 * 3600) + (0 * 60)
@@ -82,7 +82,7 @@ def parse_time_seconds(value):
 
 
 def parse_namelist_stream(namelist_stream):
-    """Parses a namelist stream into (normalized_name, display_name, bed) rows.
+    """Parses a namelist stream into Boarder rows.
 
     Preserves the display case of names so the master list can be shown as
     entered while still matching logs case-insensitively via the normalized name.
@@ -97,12 +97,12 @@ def parse_namelist_stream(namelist_stream):
         if not display_name or not bed:
             continue
 
-        rows.append((display_name.upper(), display_name, bed))
+        rows.append(Boarder(normalized_name=normalize_name(display_name), display_name=display_name, bed=bed))
     return rows
 
 
 def load_namelist_rows(namelist_filename):
-    """Loads valid boarders as (normalized_name, display_name, bed) rows, or None."""
+    """Loads valid boarders as Boarder rows, or None."""
     try:
         with open(namelist_filename, mode='r', encoding='utf-8-sig') as file:
             return parse_namelist_stream(file)
@@ -115,16 +115,16 @@ def load_namelist(namelist_filename):
     rows = load_namelist_rows(namelist_filename)
     if rows is None:
         return None
-    return {normalized_name: bed for normalized_name, _display_name, bed in rows}
+    return {boarder.normalized_name: boarder.bed for boarder in rows}
 
 
-def boarder_list_to_csv(boarders):
+def master_list_to_csv(boarders):
     """Renders the master list to CSV text (Name, Bed) with deterministic order."""
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(['Name', 'Bed'])
 
-    for boarder in sorted(boarders, key=lambda b: (b.bed, b.display_name)):
+    for boarder in sorted(boarders, key=boarder_sort_key):
         writer.writerow([boarder.display_name, boarder.bed])
 
     return output.getvalue()
@@ -150,7 +150,7 @@ def parse_log_stream(log_stream, master_list):
 
     for row in csv_reader:
         rows_read += 1
-        name = row.get('Name', '').strip().upper()
+        name = normalize_name(row.get('Name', ''))
 
         if not name:
             continue
@@ -192,7 +192,7 @@ def parse_log_stream(log_stream, master_list):
 def _rejection_reason(diagnostics: ParseDiagnostics, master_list):
     """Returns the exact rejection reason for a log that cannot be saved, else None."""
     if not master_list:
-        return "The boarder master list is missing or empty. Check that 'namelist.csv' exists with 'Name' and 'Bed' columns."
+        return "The boarder master list is missing or empty. Add boarders in the Boarders tab."
 
     if diagnostics.rows_read == 0:
         return "The uploaded log file is empty or has no data rows."

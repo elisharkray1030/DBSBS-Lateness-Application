@@ -2,8 +2,13 @@ import sqlite3
 
 import pytest
 from helpers import month_labels, record
+from records import Boarder, boarder_sort_key
 
 import storage
+
+
+def boarder(normalized_name, display_name, bed):
+    return Boarder(normalized_name=normalized_name, display_name=display_name, bed=bed)
 
 
 class TestCreateSchema:
@@ -18,13 +23,28 @@ class TestCreateSchema:
         assert storage.list_months(conn) == []
 
 
+class TestMeta:
+    def test_set_and_get_meta(self, conn):
+        storage.set_meta(conn, "k", "v")
+        assert storage.get_meta(conn, "k") == "v"
+
+    def test_get_unknown_key_returns_none(self, conn):
+        assert storage.get_meta(conn, "missing") is None
+
+    def test_set_meta_overwrites(self, conn):
+        storage.set_meta(conn, "k", "1")
+        storage.set_meta(conn, "k", "2")
+        assert storage.get_meta(conn, "k") == "2"
+
+
 class TestBoarders:
     def test_create_schema_creates_empty_boarders_table(self, conn):
         assert storage.list_boarders(conn) == []
 
     def test_replace_boarders_sets_the_list(self, conn):
         storage.replace_boarders(
-            conn, [("ALICE", "Alice", "601A"), ("BOB", "Bob", "601B")]
+            conn,
+            [boarder("ALICE", "Alice", "601A"), boarder("BOB", "Bob", "601B")],
         )
         boarders = storage.list_boarders(conn)
         assert [(b.normalized_name, b.display_name, b.bed) for b in boarders] == [
@@ -33,17 +53,17 @@ class TestBoarders:
         ]
 
     def test_replace_boarders_replaces_not_appends(self, conn):
-        storage.replace_boarders(conn, [("ALICE", "Alice", "601A")])
-        storage.replace_boarders(conn, [("BOB", "Bob", "601B")])
+        storage.replace_boarders(conn, [boarder("ALICE", "Alice", "601A")])
+        storage.replace_boarders(conn, [boarder("BOB", "Bob", "601B")])
         assert [b.normalized_name for b in storage.list_boarders(conn)] == ["BOB"]
 
     def test_list_boarders_orders_by_bed_then_display_name(self, conn):
         storage.replace_boarders(
             conn,
             [
-                ("ALICE", "Alice", "102"),
-                ("BOB", "Bob", "101"),
-                ("CAROL", "Carol", "101"),
+                boarder("ALICE", "Alice", "102"),
+                boarder("BOB", "Bob", "101"),
+                boarder("CAROL", "Carol", "101"),
             ],
         )
         assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
@@ -52,9 +72,22 @@ class TestBoarders:
             ("ALICE", "102"),
         ]
 
+    def test_list_boarders_sql_order_matches_boarder_sort_key(self, conn):
+        rows = [
+            boarder("ALICE", "Alice", "102"),
+            boarder("BOB", "Bob", "101"),
+            boarder("CAROL", "Carol", "101"),
+        ]
+        storage.replace_boarders(conn, rows)
+        actual = storage.list_boarders(conn)
+        expected = sorted(rows, key=boarder_sort_key)
+        assert [(b.normalized_name, b.bed) for b in actual] == [
+            (b.normalized_name, b.bed) for b in expected
+        ]
+
     def test_boarder_master_list_maps_normalized_to_bed(self, conn):
         storage.replace_boarders(
-            conn, [("ALICE", "Alice", "601A"), ("BOB", "Bob", "601B")]
+            conn, [boarder("ALICE", "Alice", "601A"), boarder("BOB", "Bob", "601B")]
         )
         assert storage.boarder_master_list(conn) == {"ALICE": "601A", "BOB": "601B"}
 

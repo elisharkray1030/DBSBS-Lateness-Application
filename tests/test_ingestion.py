@@ -120,6 +120,8 @@ class TestIngestLog:
 
         assert isinstance(outcome, RejectedOutcome)
         assert "master list is missing or empty" in outcome.reason
+        assert "Boarders tab" in outcome.reason
+        assert "namelist.csv" not in outcome.reason
         assert storage.list_months(conn) == []
 
     def test_empty_master_list_rejected(self, conn):
