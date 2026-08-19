@@ -263,6 +263,26 @@
             user-select: none;
         }
 
+        .boarders-table td.boarder-cell {
+            cursor: pointer;
+        }
+
+        .boarders-table td.boarder-cell:hover {
+            background-color: var(--page-bg);
+        }
+
+        .boarder-edit-controls {
+            display: inline-flex;
+            gap: 6px;
+            margin-left: 8px;
+        }
+
+        .boarder-inline-error {
+            color: var(--error-text);
+            font-size: 0.85em;
+            margin-top: 6px;
+        }
+
         .month-report-scroll thead th {
             position: sticky;
             top: 0;
@@ -827,29 +847,18 @@
         </div>
         {% if boarders %}
             <div class="table-scroll">
-                <table>
+                <table class="boarders-table" id="boarders-table">
                     <thead>
                         <tr>
                             <th>Bed</th>
                             <th>Boarder Name</th>
-                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for boarder in boarders %}
-                        <tr>
-                            <td>{{ boarder.bed }}</td>
-                            <td>{{ boarder.display_name }}</td>
-                            <td>
-                                <form action="/boarders/{{ boarder.id }}/edit" method="POST" class="inline-edit-form">
-                                    <input type="text" name="name" value="{{ boarder.display_name }}" aria-label="Edit name" required>
-                                    <input type="text" name="bed" value="{{ boarder.bed }}" aria-label="Edit bed" required>
-                                    <button type="submit" class="btn btn-neutral btn-sm">Save</button>
-                                </form>
-                                <form action="/boarders/{{ boarder.id }}/delete" method="POST" style="display:inline">
-                                    <button type="submit" class="btn btn-danger btn-sm">Remove</button>
-                                </form>
-                            </td>
+                        <tr data-boarder-id="{{ boarder.id }}">
+                            <td class="boarder-cell boarder-bed">{{ boarder.bed }}</td>
+                            <td class="boarder-cell boarder-name">{{ boarder.display_name }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -955,14 +964,14 @@
     </section>
 </div>
 
-<!-- Delete Confirmation Modal -->
-<div id="deleteModal" class="modal">
+<!-- Confirm Modal -->
+<div id="confirmModal" class="modal">
     <div class="modal-content">
-        <h2 class="modal-title">Delete Report?</h2>
-        <p class="modal-message">Are you sure you want to delete this report? This action cannot be undone.</p>
+        <h2 class="modal-title" id="confirm-modal-title">Confirm</h2>
+        <p class="modal-message" id="confirm-modal-message"></p>
         <div class="modal-buttons">
-            <button class="btn btn-danger" onclick="confirmDelete()">Yes, Delete</button>
-            <button class="btn btn-neutral" onclick="cancelDelete()">No, Cancel</button>
+            <button class="btn btn-danger" onclick="runConfirmModal()">Yes</button>
+            <button class="btn btn-neutral" onclick="closeConfirmModal()">No, Cancel</button>
         </div>
     </div>
 </div>
@@ -1057,17 +1066,35 @@
     const tabButtons = document.querySelectorAll('.tab-link');
     const panels = document.querySelectorAll('.panel');
 
+    function activateTab(tabName) {
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        panels.forEach(panel => panel.classList.remove('active'));
+
+        const button = document.querySelector(`.tab-link[data-tab="${tabName}"]`);
+        if (button) button.classList.add('active');
+        document.getElementById(tabName).classList.add('active');
+    }
+
     tabButtons.forEach(button => {
         button.addEventListener('click', function() {
             const tabName = this.getAttribute('data-tab');
-
-            // Remove active class from all buttons and panels
-            tabButtons.forEach(btn => btn.classList.remove('active'));
-            panels.forEach(panel => panel.classList.remove('active'));
-
-            // Add active class to clicked button and corresponding panel
-            this.classList.add('active');
-            document.getElementById(tabName).classList.add('active');
+            if (tabName === 'boarders') {
+                activateTab('boarders');
+                return;
+            }
+            if (hasDirtyBoarderRow()) {
+                showConfirmModal({
+                    title: 'Discard changes?',
+                    message: 'You have unsaved edits to a boarder. Discard them and switch tabs?',
+                    confirmLabel: 'Discard',
+                    onConfirm: () => {
+                        discardBoarderEdits();
+                        activateTab(tabName);
+                    }
+                });
+                return;
+            }
+            activateTab(tabName);
         });
     });
 
@@ -1103,8 +1130,27 @@
         }
     });
 
-    // Global variable to store month for delete confirmation
-    let monthToDelete = null;
+    // Reusable confirm modal
+    let confirmAction = null;
+
+    function showConfirmModal({ title, message, confirmLabel = 'Yes', onConfirm }) {
+        document.getElementById('confirm-modal-title').textContent = title;
+        document.getElementById('confirm-modal-message').textContent = message;
+        document.querySelector('#confirmModal .btn-danger').textContent = confirmLabel;
+        confirmAction = onConfirm;
+        document.getElementById('confirmModal').classList.add('show');
+    }
+
+    function closeConfirmModal() {
+        confirmAction = null;
+        document.getElementById('confirmModal').classList.remove('show');
+    }
+
+    function runConfirmModal() {
+        const action = confirmAction;
+        closeConfirmModal();
+        if (action) action();
+    }
 
     // Month detail view
     function viewMonth(month) {
@@ -1126,7 +1172,12 @@
                     window.location.href = `/download_month/${encodeURIComponent(month)}`;
                 };
                 document.getElementById('month-detail-delete').onclick = function() {
-                    showDeleteModal(month);
+                    showConfirmModal({
+                        title: 'Delete Report?',
+                        message: 'Are you sure you want to delete this report? This action cannot be undone.',
+                        confirmLabel: 'Yes, Delete',
+                        onConfirm: () => deleteMonthReport(month)
+                    });
                 };
                 document.getElementById('month-detail').classList.remove('hidden');
                 document.getElementById('month-detail-assign').classList.add('hidden');
@@ -1211,29 +1262,15 @@
         window.print();
     }
 
-    // Delete confirmation modal functions
-    function showDeleteModal(month) {
-        monthToDelete = month;
-        document.getElementById('deleteModal').classList.add('show');
-    }
-
-    function cancelDelete() {
-        monthToDelete = null;
-        document.getElementById('deleteModal').classList.remove('show');
-    }
-
-    function confirmDelete() {
-        if (!monthToDelete) return;
-
-        fetch(`/delete_month/${monthToDelete}`, {
+    // Delete a month report via AJAX (invoked from the confirm modal)
+    function deleteMonthReport(month) {
+        fetch(`/delete_month/${month}`, {
             method: 'DELETE'
         })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                cancelDelete();
                 closeMonthDetail();
-                // Reload the page to reflect the deletion
                 location.reload();
             } else {
                 alert('Error: ' + (data.error || 'Failed to delete report'));
@@ -1244,6 +1281,182 @@
             alert('Failed to delete report.');
         });
     }
+
+    // Boarders tab: click-to-edit, dirty-state, AJAX save/remove, discard guards
+    let editingBoarderRow = null;
+    let boarderOriginal = { name: '', bed: '' };
+
+    function boarderIsDirty(row) {
+        const name = row.querySelector('.boarder-edit-name').value.trim();
+        const bed = row.querySelector('.boarder-edit-bed').value.trim();
+        return name !== boarderOriginal.name || bed !== boarderOriginal.bed;
+    }
+
+    function hasDirtyBoarderRow() {
+        return editingBoarderRow !== null && boarderIsDirty(editingBoarderRow);
+    }
+
+    function renderBoarderStatic(row) {
+        const name = row.querySelector('.boarder-edit-name').value.trim();
+        const bed = row.querySelector('.boarder-edit-bed').value.trim();
+        row.innerHTML = `
+            <td class="boarder-cell boarder-bed">${escapeHtml(bed)}</td>
+            <td class="boarder-cell boarder-name">${escapeHtml(name)}</td>
+        `;
+        if (row === editingBoarderRow) {
+            editingBoarderRow = null;
+            boarderOriginal = { name: '', bed: '' };
+        }
+    }
+
+    function discardBoarderEdits() {
+        if (editingBoarderRow) renderBoarderStatic(editingBoarderRow);
+    }
+
+    function enterBoarderEditMode(row) {
+        const bedCell = row.querySelector('.boarder-bed');
+        const nameCell = row.querySelector('.boarder-name');
+        const bed = bedCell.textContent.trim();
+        const name = nameCell.textContent.trim();
+
+        boarderOriginal = { name, bed };
+        row.innerHTML = `
+            <td class="boarder-bed">
+                <input class="boarder-edit-bed" type="text" value="${escapeAttr(bed)}" aria-label="Edit bed">
+            </td>
+            <td class="boarder-name">
+                <input class="boarder-edit-name" type="text" value="${escapeAttr(name)}" aria-label="Edit name">
+                <span class="boarder-edit-controls">
+                    <button type="button" class="btn btn-primary btn-sm boarder-save" hidden>Save</button>
+                    <button type="button" class="btn btn-neutral btn-sm boarder-cancel">Cancel</button>
+                    <button type="button" class="btn btn-danger btn-sm boarder-remove">Remove</button>
+                </span>
+                <div class="boarder-inline-error" hidden></div>
+            </td>
+        `;
+        editingBoarderRow = row;
+
+        row.querySelector('.boarder-edit-name').addEventListener('input', updateBoarderSave);
+        row.querySelector('.boarder-edit-bed').addEventListener('input', updateBoarderSave);
+        row.querySelector('.boarder-cancel').addEventListener('click', () => renderBoarderStatic(row));
+        row.querySelector('.boarder-remove').addEventListener('click', () => promptBoarderRemove(row));
+        row.querySelector('.boarder-save').addEventListener('click', () => saveBoarderEdit(row));
+        updateBoarderSave();
+    }
+
+    function updateBoarderSave() {
+        if (!editingBoarderRow) return;
+        const saveBtn = editingBoarderRow.querySelector('.boarder-save');
+        const name = editingBoarderRow.querySelector('.boarder-edit-name').value.trim();
+        const bed = editingBoarderRow.querySelector('.boarder-edit-bed').value.trim();
+        const dirty = boarderIsDirty(editingBoarderRow);
+        saveBtn.hidden = !(dirty && name && bed);
+    }
+
+    function saveBoarderEdit(row) {
+        const id = row.dataset.boarderId;
+        const name = row.querySelector('.boarder-edit-name').value.trim();
+        const bed = row.querySelector('.boarder-edit-bed').value.trim();
+        const errorEl = row.querySelector('.boarder-inline-error');
+
+        fetch(`/api/boarders/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, bed })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.ok) {
+                renderBoarderStatic(row);
+            } else {
+                errorEl.textContent = data.error || 'Failed to save boarder.';
+                errorEl.hidden = false;
+            }
+        })
+        .catch(() => {
+            errorEl.textContent = 'Failed to save boarder.';
+            errorEl.hidden = false;
+        });
+    }
+
+    function promptBoarderRemove(row) {
+        const name = row.querySelector('.boarder-edit-name').value.trim();
+        showConfirmModal({
+            title: 'Remove boarder?',
+            message: `${name} will be dropped from the master list. Their history and punishments are kept, and future imports will no longer match them.`,
+            confirmLabel: 'Remove',
+            onConfirm: () => removeBoarder(row)
+        });
+    }
+
+    function removeBoarder(row) {
+        const id = row.dataset.boarderId;
+        const errorEl = row.querySelector('.boarder-inline-error');
+
+        fetch(`/api/boarders/${id}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.ok) {
+                editingBoarderRow = null;
+                row.remove();
+                maybeShowBoarderEmptyState();
+            } else {
+                errorEl.textContent = data.error || 'Failed to remove boarder.';
+                errorEl.hidden = false;
+            }
+        })
+        .catch(() => {
+            errorEl.textContent = 'Failed to remove boarder.';
+            errorEl.hidden = false;
+        });
+    }
+
+    function maybeShowBoarderEmptyState() {
+        const tbody = document.querySelector('#boarders-table tbody');
+        if (tbody && tbody.children.length === 0) {
+            const table = document.getElementById('boarders-table');
+            const container = table.closest('.table-scroll');
+            container.innerHTML = '<div class="empty-state">No boarders on the master list. Add a boarder here, or import a CSV to replace the roster.</div>';
+        }
+    }
+
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function escapeAttr(str) {
+        return escapeHtml(str).replace(/'/g, '&#39;');
+    }
+
+    document.querySelectorAll('.boarders-table tbody tr').forEach(row => {
+        row.addEventListener('click', function(event) {
+            if (event.target.closest('button, input')) return;
+            if (row === editingBoarderRow) return;
+
+            if (hasDirtyBoarderRow()) {
+                showConfirmModal({
+                    title: 'Discard changes?',
+                    message: 'You have unsaved edits to a boarder. Discard them and edit this row?',
+                    confirmLabel: 'Discard',
+                    onConfirm: () => {
+                        discardBoarderEdits();
+                        enterBoarderEditMode(row);
+                    }
+                });
+                return;
+            }
+
+            // A clean editing row is silently reverted so only one row edits at a time.
+            if (editingBoarderRow) renderBoarderStatic(editingBoarderRow);
+            enterBoarderEditMode(row);
+        });
+    });
 
     document.addEventListener('DOMContentLoaded', function() {
         const initialMonthToOpen = {{ current_month|tojson }};

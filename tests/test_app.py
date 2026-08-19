@@ -98,6 +98,23 @@ class TestBoardersTab:
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert "active" in tab_button_class(html, "boarders").split()
 
+    def test_boarders_table_has_no_actions_column(self, fresh_client):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert "Actions" not in html
+
+    def test_boarders_rows_render_static_no_inputs(self, fresh_client):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        table = re.search(r'<table class="boarders-table".*?</table>', html, re.S)
+        assert table is not None
+        assert '<input' not in table.group(0)
+        assert 'boarder-edit-name' not in table.group(0)
+        assert 'boarder-edit-bed' not in table.group(0)
+
+    def test_boarders_table_has_bed_and_name_columns(self, fresh_client):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert '<th>Bed</th>' in html
+        assert '<th>Boarder Name</th>' in html
+
 
 class TestBoarderSeeding:
     def test_startup_seeds_boarders_from_namelist(self, tmp_path, monkeypatch):
@@ -248,56 +265,105 @@ class TestBoarderAdd:
         html = resp.get_data(as_text=True)
         assert "already" in html.lower()
 
+    def test_add_duplicate_bed_is_rejected_inline(self, fresh_client):
+        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601A"})
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "601A" in html
+        assert "already" in html.lower()
 
-class TestBoarderEdit:
+
+class TestBoarderEditApi:
     def _alice_id(self, fresh_client):
         with app_module.connect() as conn:
             return storage.list_boarders(conn)[0].id
 
-    def test_edit_boarder_updates_list(self, fresh_client):
+    def _boarder(self, fresh_client, normalized_name):
+        with app_module.connect() as conn:
+            return next(
+                b for b in storage.list_boarders(conn) if b.normalized_name == normalized_name
+            )
+
+    def test_patch_updates_name_and_bed(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.post(
-            f"/boarders/{boarder_id}/edit",
-            data={"name": "Alicia", "bed": "602A"},
+        resp = fresh_client.patch(
+            f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "602A"}
         )
-        assert resp.status_code == 302
+        assert resp.status_code == 200
+        assert resp.get_json() == {"ok": True}
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert "Alicia" in html
         assert "602A" in html
         assert "ALICE" not in html
 
-    def test_edit_to_duplicate_name_rejected_inline(self, fresh_client):
+    def test_patch_rejects_name_taken_by_another(self, fresh_client):
         fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.post(
-            f"/boarders/{boarder_id}/edit",
-            data={"name": "carol", "bed": "601A"},
+        resp = fresh_client.patch(
+            f"/api/boarders/{boarder_id}", json={"name": "carol", "bed": "601A"}
         )
-        assert resp.status_code == 200
-        html = resp.get_data(as_text=True)
-        assert "already" in html.lower()
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["ok"] is False
+        assert self._boarder(fresh_client, "ALICE").bed == "601A"
 
-    def test_edit_empty_name_rejected_inline(self, fresh_client):
+    def test_patch_rejects_bed_taken_by_another(self, fresh_client):
+        fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.post(
-            f"/boarders/{boarder_id}/edit",
-            data={"name": "", "bed": "601A"},
+        resp = fresh_client.patch(
+            f"/api/boarders/{boarder_id}", json={"name": "Alice", "bed": "601C"}
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["ok"] is False
+        assert self._boarder(fresh_client, "ALICE").bed == "601A"
+
+    def test_patch_keeping_own_bed_is_not_a_conflict(self, fresh_client):
+        boarder_id = self._alice_id(fresh_client)
+        resp = fresh_client.patch(
+            f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "601A"}
         )
         assert resp.status_code == 200
-        assert "name is required" in resp.get_data(as_text=True).lower()
+        assert resp.get_json() == {"ok": True}
+
+    def test_patch_rejects_empty_name(self, fresh_client):
+        boarder_id = self._alice_id(fresh_client)
+        resp = fresh_client.patch(
+            f"/api/boarders/{boarder_id}", json={"name": "", "bed": "601A"}
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["ok"] is False
+        assert "name" in body["error"].lower()
+        assert self._boarder(fresh_client, "ALICE").bed == "601A"
+
+    def test_patch_rejects_empty_bed(self, fresh_client):
+        boarder_id = self._alice_id(fresh_client)
+        resp = fresh_client.patch(
+            f"/api/boarders/{boarder_id}", json={"name": "Alice", "bed": ""}
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["ok"] is False
+        assert "bed" in body["error"].lower()
+        assert self._boarder(fresh_client, "ALICE").bed == "601A"
 
 
-class TestBoarderDelete:
-    def test_delete_boarder_removes_from_list(self, fresh_client):
+class TestBoarderDeleteApi:
+    def _alice_id(self, fresh_client):
         with app_module.connect() as conn:
-            boarder_id = storage.list_boarders(conn)[0].id
-        resp = fresh_client.post(f"/boarders/{boarder_id}/delete")
-        assert resp.status_code == 302
+            return storage.list_boarders(conn)[0].id
+
+    def test_delete_removes_from_list(self, fresh_client):
+        boarder_id = self._alice_id(fresh_client)
+        resp = fresh_client.delete(f"/api/boarders/{boarder_id}")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"ok": True}
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert "ALICE" not in html
         assert "BOB" in html
 
-    def test_delete_boarder_with_history_is_allowed(self, fresh_client):
+    def test_delete_keeps_history_and_punishments_frozen(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
             storage.save_month(
@@ -305,24 +371,34 @@ class TestBoarderDelete:
                 [record("ALICE", "601A", 2, 5, 7)],
                 "2026-03",
             )
-        resp = fresh_client.post(f"/boarders/{boarder_id}/delete")
-        assert resp.status_code == 302
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "601A", 2, 5, 7)],
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+        resp = fresh_client.delete(f"/api/boarders/{boarder_id}")
+        assert resp.status_code == 200
         with app_module.connect() as conn:
             saved = storage.get_month_report(conn, "2026-03")
+            puns = storage.list_punishments(conn)
         assert {r.name for r in saved} == {"ALICE"}
+        assert {p.normalized_name for p in puns} == {"ALICE"}
+        assert puns[0].bed == "601A"
+        assert puns[0].display_name == "Alice"
 
     def test_delete_unknown_boarder_is_noop(self, fresh_client):
-        resp = fresh_client.post("/boarders/999/delete")
-        assert resp.status_code == 302
+        resp = fresh_client.delete("/api/boarders/999")
+        assert resp.status_code == 200
         with app_module.connect() as conn:
             assert len(storage.list_boarders(conn)) == 2
 
     def test_import_matches_after_edit(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
-        fresh_client.post(
-            f"/boarders/{boarder_id}/edit",
-            data={"name": "Alicia", "bed": "602A"},
+        fresh_client.patch(
+            f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "602A"}
         )
         resp = fresh_client.post(
             "/",
@@ -336,6 +412,22 @@ class TestBoarderDelete:
         with app_module.connect() as conn:
             saved = storage.get_month_report(conn, "2026-08")
         assert {r.name for r in saved} == {"ALICIA", "BOB"}
+
+
+class TestRemovedPostRoutes:
+    def test_old_edit_post_route_404s(self, fresh_client):
+        with app_module.connect() as conn:
+            boarder_id = storage.list_boarders(conn)[0].id
+        resp = fresh_client.post(
+            f"/boarders/{boarder_id}/edit", data={"name": "Alicia", "bed": "602A"}
+        )
+        assert resp.status_code == 404
+
+    def test_old_delete_post_route_404s(self, fresh_client):
+        with app_module.connect() as conn:
+            boarder_id = storage.list_boarders(conn)[0].id
+        resp = fresh_client.post(f"/boarders/{boarder_id}/delete")
+        assert resp.status_code == 404
 
 
 class TestBoarderBulkImport:

@@ -176,6 +176,8 @@ def _validate_boarder(display_name, bed, exclude_id=None):
         return "Error: A bed is required."
     if _boarder_name_taken(display_name, exclude_id=exclude_id):
         return f"Error: A boarder named '{display_name}' is already on the list."
+    if _boarder_bed_taken(bed, exclude_id=exclude_id):
+        return f"Error: Bed '{bed}' is already assigned to another boarder."
     return None
 
 
@@ -191,23 +193,24 @@ def add_boarder():
     return redirect('/boarders')
 
 
-@app.route('/boarders/<int:boarder_id>/edit', methods=['POST'])
-def edit_boarder(boarder_id):
-    display_name = request.form.get('name', '').strip()
-    bed = request.form.get('bed', '').strip()
+@app.route('/api/boarders/<int:boarder_id>', methods=['PATCH'])
+def api_edit_boarder(boarder_id):
+    data = request.get_json(silent=True) or {}
+    display_name = str(data.get('name', '')).strip()
+    bed = str(data.get('bed', '')).strip()
     error = _validate_boarder(display_name, bed, exclude_id=boarder_id)
     if error:
-        return _render_boarders(error=error)
+        return jsonify({'ok': False, 'error': error}), 400
     with connect() as conn:
         storage.update_boarder(conn, boarder_id, normalize_name(display_name), display_name, bed)
-    return redirect('/boarders')
+    return jsonify({'ok': True})
 
 
-@app.route('/boarders/<int:boarder_id>/delete', methods=['POST'])
-def delete_boarder(boarder_id):
+@app.route('/api/boarders/<int:boarder_id>', methods=['DELETE'])
+def api_delete_boarder(boarder_id):
     with connect() as conn:
         storage.delete_boarder(conn, boarder_id)
-    return redirect('/boarders')
+    return jsonify({'ok': True})
 
 
 @app.route('/boarders/import', methods=['POST'])
@@ -246,6 +249,11 @@ def export_boarders():
 def _boarder_name_taken(display_name, exclude_id=None):
     with connect() as conn:
         return storage.boarder_exists(conn, normalize_name(display_name), exclude_id=exclude_id)
+
+
+def _boarder_bed_taken(bed, exclude_id=None):
+    with connect() as conn:
+        return storage.bed_exists(conn, bed, exclude_id=exclude_id)
 
 
 def _render_boarders(error=None, message=None):

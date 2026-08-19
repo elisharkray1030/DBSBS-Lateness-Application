@@ -12,14 +12,18 @@ from records import (
 )
 
 
+_BOARDERS_COLUMNS = """
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    normalized_name TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    bed TEXT NOT NULL UNIQUE
+"""
+
+
 def create_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS boarders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            normalized_name TEXT NOT NULL UNIQUE,
-            display_name TEXT NOT NULL,
-            bed TEXT NOT NULL
+        f"""
+        CREATE TABLE IF NOT EXISTS boarders ({_BOARDERS_COLUMNS}
         )
         """
     )
@@ -74,6 +78,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         WHERE status != 'voided'
         """
     )
+    _migrate_boarders_bed_unique(conn)
     conn.commit()
 
 
@@ -86,6 +91,49 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
         """,
         (key, value),
     )
+    conn.commit()
+
+
+def _boarders_table_sql(conn: sqlite3.Connection) -> str | None:
+    """Returns the boarders table's CREATE statement, or None if absent."""
+    cursor = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'boarders'"
+    )
+    row = cursor.fetchone()
+    return row[0] if row is not None else None
+
+
+def _bed_unique_in_schema(table_sql: str) -> bool:
+    """True when the boarders CREATE statement declares a UNIQUE bed."""
+    return "bed TEXT NOT NULL UNIQUE" in table_sql
+
+
+def _migrate_boarders_bed_unique(conn: sqlite3.Connection) -> None:
+    """Upgrades a pre-UNIQUE boarders table to the bed-UNIQUE schema.
+
+    Uses create-copy-swap: rename the old table, create the new table with
+    the UNIQUE constraint, copy rows across preserving ids, and drop the old
+    table. Safe because the current database contains no duplicate beds.
+    """
+    table_sql = _boarders_table_sql(conn)
+    if table_sql is None or _bed_unique_in_schema(table_sql):
+        return
+
+    conn.execute("ALTER TABLE boarders RENAME TO boarders_old")
+    conn.execute(
+        f"""
+        CREATE TABLE boarders ({_BOARDERS_COLUMNS}
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO boarders (id, normalized_name, display_name, bed)
+        SELECT id, normalized_name, display_name, bed
+        FROM boarders_old
+        """
+    )
+    conn.execute("DROP TABLE boarders_old")
     conn.commit()
 
 
@@ -162,6 +210,29 @@ def boarder_exists(
         cursor = conn.execute(
             "SELECT 1 FROM boarders WHERE normalized_name = ? AND id != ?",
             (normalized_name, exclude_id),
+        )
+    return cursor.fetchone() is not None
+
+
+def bed_exists(
+    conn: sqlite3.Connection,
+    bed: str,
+    exclude_id: int | None = None,
+) -> bool:
+    """True if another boarder is already assigned this bed.
+
+    Pass exclude_id to ignore one row (used when editing that row and
+    keeping its own bed).
+    """
+    if exclude_id is None:
+        cursor = conn.execute(
+            "SELECT 1 FROM boarders WHERE bed = ?",
+            (bed,),
+        )
+    else:
+        cursor = conn.execute(
+            "SELECT 1 FROM boarders WHERE bed = ? AND id != ?",
+            (bed, exclude_id),
         )
     return cursor.fetchone() is not None
 

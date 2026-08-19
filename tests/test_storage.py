@@ -23,6 +23,58 @@ class TestCreateSchema:
         assert storage.list_months(conn) == []
 
 
+class TestBedUniqueMigration:
+    def _legacy_boarders_sql(self):
+        return """
+        CREATE TABLE boarders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_name TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            bed TEXT NOT NULL
+        )
+        """
+
+    def _create_legacy_schema(self, connection):
+        connection.execute(self._legacy_boarders_sql())
+        connection.execute(
+            """
+            INSERT INTO boarders (normalized_name, display_name, bed)
+            VALUES ('ALICE', 'Alice', '601A'), ('BOB', 'Bob', '601B')
+            """
+        )
+        connection.commit()
+
+    def test_migration_applies_unique_bed_constraint(self):
+        connection = sqlite3.connect(":memory:")
+        self._create_legacy_schema(connection)
+        storage.create_schema(connection)
+        with pytest.raises(sqlite3.IntegrityError):
+            storage.add_boarder(connection, "CAROL", "Carol", "601A")
+        connection.close()
+
+    def test_migration_preserves_existing_rows(self):
+        connection = sqlite3.connect(":memory:")
+        self._create_legacy_schema(connection)
+        storage.create_schema(connection)
+        boarders = storage.list_boarders(connection)
+        assert [(b.normalized_name, b.bed) for b in boarders] == [
+            ("ALICE", "601A"),
+            ("BOB", "601B"),
+        ]
+        connection.close()
+
+    def test_migration_is_idempotent(self):
+        connection = sqlite3.connect(":memory:")
+        self._create_legacy_schema(connection)
+        storage.create_schema(connection)
+        storage.create_schema(connection)
+        assert [b.normalized_name for b in storage.list_boarders(connection)] == [
+            "ALICE",
+            "BOB",
+        ]
+        connection.close()
+
+
 class TestMeta:
     def test_set_and_get_meta(self, conn):
         storage.set_meta(conn, "k", "v")
@@ -63,12 +115,12 @@ class TestBoarders:
             [
                 boarder("ALICE", "Alice", "102"),
                 boarder("BOB", "Bob", "101"),
-                boarder("CAROL", "Carol", "101"),
+                boarder("CAROL", "Carol", "101A"),
             ],
         )
         assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
             ("BOB", "101"),
-            ("CAROL", "101"),
+            ("CAROL", "101A"),
             ("ALICE", "102"),
         ]
 
@@ -76,7 +128,7 @@ class TestBoarders:
         rows = [
             boarder("ALICE", "Alice", "102"),
             boarder("BOB", "Bob", "101"),
-            boarder("CAROL", "Carol", "101"),
+            boarder("CAROL", "Carol", "101A"),
         ]
         storage.replace_boarders(conn, rows)
         actual = storage.list_boarders(conn)
@@ -130,6 +182,24 @@ class TestBoarderExists:
         storage.add_boarder(conn, "ALICE", "Alice", "601A")
         other_id = storage.add_boarder(conn, "BOB", "Bob", "601B")
         assert storage.boarder_exists(conn, "ALICE", exclude_id=other_id) is True
+
+
+class TestBedExists:
+    def test_known_bed_is_found(self, conn):
+        storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        assert storage.bed_exists(conn, "601A") is True
+
+    def test_unknown_bed_is_not_found(self, conn):
+        assert storage.bed_exists(conn, "601A") is False
+
+    def test_exclude_id_ignores_the_row_itself(self, conn):
+        boarder_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        assert storage.bed_exists(conn, "601A", exclude_id=boarder_id) is False
+
+    def test_exclude_id_still_finds_other_rows(self, conn):
+        storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        other_id = storage.add_boarder(conn, "BOB", "Bob", "601B")
+        assert storage.bed_exists(conn, "601A", exclude_id=other_id) is True
 
 
 class TestUpdateBoarder:
