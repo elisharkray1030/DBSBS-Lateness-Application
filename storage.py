@@ -2,10 +2,20 @@ import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
-from records import BoarderRecord, HistoryEntry, MonthSummary, Punishment
+from records import Boarder, BoarderRecord, HistoryEntry, MonthSummary, Punishment
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS boarders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_name TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            bed TEXT NOT NULL
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS boarder_history (
@@ -49,6 +59,121 @@ def create_schema(conn: sqlite3.Connection) -> None:
         WHERE status != 'voided'
         """
     )
+    conn.commit()
+
+
+def list_boarders(conn: sqlite3.Connection) -> list[Boarder]:
+    """Returns the current master list, ordered by bed then display name."""
+    cursor = conn.execute(
+        """
+        SELECT id, normalized_name, display_name, bed
+        FROM boarders
+        ORDER BY bed ASC, display_name ASC
+        """
+    )
+    return [
+        Boarder(id=row[0], normalized_name=row[1], display_name=row[2], bed=row[3])
+        for row in cursor.fetchall()
+    ]
+
+
+def boarder_master_list(conn: sqlite3.Connection) -> dict:
+    """Returns {normalized_name: bed} for log ingestion matching."""
+    cursor = conn.execute(
+        """
+        SELECT normalized_name, bed
+        FROM boarders
+        """
+    )
+    return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+def add_boarder(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    display_name: str,
+    bed: str,
+) -> int:
+    """Adds one boarder to the master list, returning the new row id."""
+    cursor = conn.execute(
+        """
+        INSERT INTO boarders (normalized_name, display_name, bed)
+        VALUES (?, ?, ?)
+        """,
+        (normalized_name, display_name, bed),
+    )
+    conn.commit()
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("Insert succeeded but no row id was returned.")
+    return lastrowid
+
+
+def boarder_exists(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    exclude_id: int | None = None,
+) -> bool:
+    """True if a boarder with this normalized name is on the list.
+
+    Pass exclude_id to ignore one row (used when renaming that row to its
+    own current name).
+    """
+    if exclude_id is None:
+        cursor = conn.execute(
+            "SELECT 1 FROM boarders WHERE normalized_name = ?",
+            (normalized_name,),
+        )
+    else:
+        cursor = conn.execute(
+            "SELECT 1 FROM boarders WHERE normalized_name = ? AND id != ?",
+            (normalized_name, exclude_id),
+        )
+    return cursor.fetchone() is not None
+
+
+def update_boarder(
+    conn: sqlite3.Connection,
+    boarder_id: int,
+    normalized_name: str,
+    display_name: str,
+    bed: str,
+) -> None:
+    """Updates one boarder's name and bed; no-op if the id is unknown."""
+    conn.execute(
+        """
+        UPDATE boarders
+        SET normalized_name = ?, display_name = ?, bed = ?
+        WHERE id = ?
+        """,
+        (normalized_name, display_name, bed, boarder_id),
+    )
+    conn.commit()
+
+
+def delete_boarder(conn: sqlite3.Connection, boarder_id: int) -> None:
+    """Removes one boarder from the master list; no-op if the id is unknown."""
+    conn.execute(
+        "DELETE FROM boarders WHERE id = ?",
+        (boarder_id,),
+    )
+    conn.commit()
+
+
+def replace_boarders(
+    conn: sqlite3.Connection,
+    rows: Iterable[tuple[str, str, str]],
+) -> None:
+    """Replaces the entire master list with (normalized_name, display_name, bed) rows."""
+    conn.execute("DELETE FROM boarders")
+    for normalized_name, display_name, bed in rows:
+        conn.execute(
+            """
+            INSERT INTO boarders (normalized_name, display_name, bed)
+            VALUES (?, ?, ?)
+            """,
+            (normalized_name, display_name, bed),
+        )
     conn.commit()
 
 

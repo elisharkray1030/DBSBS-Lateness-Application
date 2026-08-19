@@ -644,6 +644,7 @@
         <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">View Reports in Database</button>
         <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
         <button class="tab-link {% if selected_tab == 'consequences' %}active{% endif %}" data-tab="consequences">Consequences</button>
+        <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">Boarders</button>
     </div>
 
     <!-- History Search Panel -->
@@ -792,6 +793,70 @@
             {% endfor %}
         {% else %}
             <div class="empty-state">No punishments to show.</div>
+        {% endif %}
+    </section>
+
+    <!-- Boarders Panel -->
+    <section id="boarders" class="panel {% if selected_tab == 'boarders' %}active{% endif %} boarders-panel">
+        <h2>Boarders</h2>
+        <div class="upload-panel">
+            <h3 class="upload-title">Add Boarder</h3>
+            <form action="/boarders/add" method="POST">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="boarder_name"><strong>Boarder Name</strong></label>
+                        <input type="text" id="boarder_name" name="name" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="boarder_bed"><strong>Bed</strong></label>
+                        <input type="text" id="boarder_bed" name="bed" required>
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-primary">Add Boarder</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="month-detail-toolbar">
+            <form action="/boarders/import" method="POST" enctype="multipart/form-data" class="consequences-filters">
+                <label for="boarder_csv"><strong>Replace roster from CSV</strong></label>
+                <input type="file" id="boarder_csv" name="boarder_csv" accept=".csv" required>
+                <button type="submit" class="btn btn-primary btn-sm">Import</button>
+            </form>
+            <a class="btn btn-neutral btn-sm" href="/boarders/export">Download roster (CSV)</a>
+        </div>
+        {% if boarders %}
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Bed</th>
+                            <th>Boarder Name</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for boarder in boarders %}
+                        <tr>
+                            <td>{{ boarder.bed }}</td>
+                            <td>{{ boarder.display_name }}</td>
+                            <td>
+                                <form action="/boarders/{{ boarder.id }}/edit" method="POST" class="inline-edit-form">
+                                    <input type="text" name="name" value="{{ boarder.display_name }}" aria-label="Edit name" required>
+                                    <input type="text" name="bed" value="{{ boarder.bed }}" aria-label="Edit bed" required>
+                                    <button type="submit" class="btn btn-neutral btn-sm">Save</button>
+                                </form>
+                                <form action="/boarders/{{ boarder.id }}/delete" method="POST" style="display:inline">
+                                    <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="empty-state">No boarders on the master list. Seed it from a namelist.csv on startup, or import a CSV to replace it.</div>
         {% endif %}
     </section>
 

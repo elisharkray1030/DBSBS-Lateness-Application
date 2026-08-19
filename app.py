@@ -17,7 +17,14 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 import storage
-from parser import RejectedOutcome, boarders_to_csv, ingest_log, load_namelist
+from parser import (
+    RejectedOutcome,
+    boarder_list_to_csv,
+    boarders_to_csv,
+    ingest_log,
+    load_namelist_rows,
+    parse_namelist_stream,
+)
 from punishments import (
     AssignmentRejected,
     TransitionRejected,
@@ -40,6 +47,10 @@ def connect():
 def init_db():
     with connect() as conn:
         storage.create_schema(conn)
+        if not storage.list_boarders(conn):
+            rows = load_namelist_rows(NAMELIST_PATH)
+            if rows:
+                storage.replace_boarders(conn, rows)
 
 
 def serialize_boarders(boarders):
@@ -79,6 +90,7 @@ def home():
 
     with connect() as conn:
         all_months = storage.list_months(conn)
+        boarders = storage.list_boarders(conn)
 
     if request.method == 'POST':
         if 'log_file' in request.files:
@@ -90,8 +102,8 @@ def home():
             elif not month_label:
                 error = "Please enter a valid month label for this report. Example: '2026-03'."
             else:
-                master_list = load_namelist(NAMELIST_PATH)
                 with connect() as conn:
+                    master_list = storage.boarder_master_list(conn)
                     log_stream = io.TextIOWrapper(file.stream, encoding='utf-8-sig')
                     try:
                         outcome = ingest_log(log_stream, month_label, master_list, conn)
@@ -135,6 +147,132 @@ def home():
         error=error,
         all_months=all_months,
         current_month=current_month,
+        boarders=boarders,
+        punishments=[],
+        consequences_show_all=False,
+        consequences_month=None,
+        consequences_status=None,
+    )
+
+
+@app.route('/boarders')
+def boarders():
+    with connect() as conn:
+        boarders_list = storage.list_boarders(conn)
+        all_months = storage.list_months(conn)
+    return render_template(
+        'index.html',
+        history_results=None,
+        selected_tab='boarders',
+        message=None,
+        error=None,
+        all_months=all_months,
+        current_month=None,
+        boarders=boarders_list,
+        punishments=[],
+        consequences_show_all=False,
+        consequences_month=None,
+        consequences_status=None,
+    )
+
+
+@app.route('/boarders/add', methods=['POST'])
+def add_boarder():
+    display_name = request.form.get('name', '').strip()
+    bed = request.form.get('bed', '').strip()
+    error = None
+    if not display_name:
+        error = "Error: A boarder name is required."
+    elif not bed:
+        error = "Error: A bed is required."
+    elif _boarder_name_taken(display_name):
+        error = f"Error: A boarder named '{display_name}' is already on the list."
+    if error:
+        return _render_boarders(error=error)
+    with connect() as conn:
+        storage.add_boarder(conn, display_name.upper(), display_name, bed)
+    return redirect('/boarders')
+
+
+@app.route('/boarders/<int:boarder_id>/edit', methods=['POST'])
+def edit_boarder(boarder_id):
+    display_name = request.form.get('name', '').strip()
+    bed = request.form.get('bed', '').strip()
+    error = None
+    if not display_name:
+        error = "Error: A boarder name is required."
+    elif not bed:
+        error = "Error: A bed is required."
+    elif _boarder_name_taken(display_name, exclude_id=boarder_id):
+        error = f"Error: A boarder named '{display_name}' is already on the list."
+    if error:
+        return _render_boarders(error=error)
+    with connect() as conn:
+        storage.update_boarder(conn, boarder_id, display_name.upper(), display_name, bed)
+    return redirect('/boarders')
+
+
+@app.route('/boarders/<int:boarder_id>/delete', methods=['POST'])
+def delete_boarder(boarder_id):
+    with connect() as conn:
+        storage.delete_boarder(conn, boarder_id)
+    return redirect('/boarders')
+
+
+@app.route('/boarders/import', methods=['POST'])
+def import_boarders():
+    file = request.files.get('boarder_csv')
+    if not file or file.filename == '':
+        return _render_boarders(error="Error: No CSV file selected.")
+
+    with connect() as conn:
+        log_stream = io.TextIOWrapper(file.stream, encoding='utf-8-sig')
+        try:
+            rows = parse_namelist_stream(log_stream)
+        finally:
+            log_stream.detach()
+
+        if not rows:
+            return _render_boarders(
+                error="Error: The uploaded CSV has no boarders. Expected 'Name' and 'Bed' columns."
+            )
+        storage.replace_boarders(conn, rows)
+    return redirect('/boarders')
+
+
+@app.route('/boarders/export')
+def export_boarders():
+    with connect() as conn:
+        boarders = storage.list_boarders(conn)
+    csv_text = boarder_list_to_csv(boarders)
+    csv_bytes = io.BytesIO(csv_text.encode('utf-8'))
+    csv_bytes.seek(0)
+    return send_file(
+        csv_bytes,
+        as_attachment=True,
+        download_name='boarders.csv',
+        mimetype='text/csv',
+    )
+
+
+def _boarder_name_taken(display_name, exclude_id=None):
+    with connect() as conn:
+        return storage.boarder_exists(conn, display_name.upper(), exclude_id=exclude_id)
+
+
+def _render_boarders(error=None, message=None):
+    with connect() as conn:
+        boarders_list = storage.list_boarders(conn)
+        all_months = storage.list_months(conn)
+    return render_template(
+        'index.html',
+        history_results=None,
+        selected_tab='boarders',
+        message=message,
+        error=error,
+        all_months=all_months,
+        current_month=None,
+        boarders=boarders_list,
         punishments=[],
         consequences_show_all=False,
         consequences_month=None,
@@ -209,6 +347,7 @@ def consequences():
     with connect() as conn:
         punishments = list_consequences(conn, show_all=show_all, month=month, status=status)
         all_months = storage.list_months(conn)
+        boarders = storage.list_boarders(conn)
 
     return render_template(
         'index.html',
@@ -218,6 +357,7 @@ def consequences():
         error=None,
         all_months=all_months,
         current_month=None,
+        boarders=boarders,
         punishments=punishments,
         consequences_show_all=show_all,
         consequences_month=month,

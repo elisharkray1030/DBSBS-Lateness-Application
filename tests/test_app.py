@@ -78,18 +78,302 @@ class TestImportMonthPicker:
         assert "YYYY-MM" in html
 
 
+class TestBoardersTab:
+    def test_boarders_tab_button_is_rendered(self):
+        html = home_html()
+        assert 'data-tab="boarders"' in html
+
+    def test_boarders_route_renders_boarders_panel(self, fresh_client):
+        response = fresh_client.get("/boarders")
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'id="boarders"' in html
+        assert "ALICE" in html
+        assert "601A" in html
+        assert "BOB" in html
+        assert "601B" in html
+
+    def test_boarders_route_is_active_tab(self, fresh_client):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert "active" in tab_button_class(html, "boarders").split()
+
+
+class TestBoarderSeeding:
+    def test_startup_seeds_boarders_from_namelist(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "seed.db"
+        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+        namelist = tmp_path / "namelist.csv"
+        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
+        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+        app_module.init_db()
+        with app_module.connect() as conn:
+            assert storage.boarder_master_list(conn) == {"ALICE": "601A"}
+
+    def test_seeding_is_skipped_when_boarders_exist(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "seed.db"
+        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+        app_module.init_db()
+        with app_module.connect() as conn:
+            storage.replace_boarders(conn, [("ALICE", "Alice", "601A")])
+        namelist = tmp_path / "namelist.csv"
+        namelist.write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
+        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+        app_module.init_db()
+        with app_module.connect() as conn:
+            assert storage.boarder_master_list(conn) == {"ALICE": "601A"}
+
+    def test_no_namelist_leaves_boarders_empty(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "seed.db"
+        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
+        app_module.init_db()
+        with app_module.connect() as conn:
+            assert storage.boarder_master_list(conn) == {}
+
+
+class TestImportUsesDbBoarders:
+    def test_import_matches_boarder_known_only_to_db(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.replace_boarders(
+                conn, [("ALICE", "Alice", "601A"), ("GHOST", "Ghost", "999")]
+            )
+        resp = fresh_client.post(
+            "/",
+            data={
+                "report_month": "2026-08",
+                "log_file": (io.BytesIO(b"Name,Transaction Time\nGHOST,07:42\n"), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            months = storage.list_months(conn)
+        assert "2026-08" in [m.month for m in months]
+
+    def test_import_does_not_match_csv_only_boarder(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.replace_boarders(conn, [("ALICE", "Alice", "601A")])
+        resp = fresh_client.post(
+            "/",
+            data={
+                "report_month": "2026-08",
+                "log_file": (io.BytesIO(b"Name,Transaction Time\nBOB,07:42\n"), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "Unmatched names in the log: BOB" in html
+
+
 @pytest.fixture()
 def fresh_client(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-    app_module.init_db()
     namelist = tmp_path / "namelist.csv"
     namelist.write_text(
         "Bed,Name\n601A,ALICE\n601B,BOB\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+    app_module.init_db()
     return app_module.app.test_client()
+
+
+class TestBoarderAdd:
+    def test_add_boarder_appears_in_list(self, fresh_client):
+        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
+        assert resp.status_code == 302
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert "Carol" in html
+        assert "601C" in html
+
+    def test_add_empty_name_is_rejected_inline(self, fresh_client):
+        resp = fresh_client.post("/boarders/add", data={"name": "", "bed": "601C"})
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "name is required" in html.lower()
+
+    def test_add_empty_bed_is_rejected_inline(self, fresh_client):
+        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": ""})
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "bed is required" in html.lower()
+
+    def test_add_duplicate_name_is_rejected_inline(self, fresh_client):
+        resp = fresh_client.post("/boarders/add", data={"name": "alice", "bed": "601C"})
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "already" in html.lower()
+
+
+class TestBoarderEdit:
+    def _alice_id(self, fresh_client):
+        with app_module.connect() as conn:
+            return storage.list_boarders(conn)[0].id
+
+    def test_edit_boarder_updates_list(self, fresh_client):
+        boarder_id = self._alice_id(fresh_client)
+        resp = fresh_client.post(
+            f"/boarders/{boarder_id}/edit",
+            data={"name": "Alicia", "bed": "602A"},
+        )
+        assert resp.status_code == 302
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert "Alicia" in html
+        assert "602A" in html
+        assert "ALICE" not in html
+
+    def test_edit_to_duplicate_name_rejected_inline(self, fresh_client):
+        fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
+        boarder_id = self._alice_id(fresh_client)
+        resp = fresh_client.post(
+            f"/boarders/{boarder_id}/edit",
+            data={"name": "carol", "bed": "601A"},
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "already" in html.lower()
+
+    def test_edit_empty_name_rejected_inline(self, fresh_client):
+        boarder_id = self._alice_id(fresh_client)
+        resp = fresh_client.post(
+            f"/boarders/{boarder_id}/edit",
+            data={"name": "", "bed": "601A"},
+        )
+        assert resp.status_code == 200
+        assert "name is required" in resp.get_data(as_text=True).lower()
+
+
+class TestBoarderDelete:
+    def test_delete_boarder_removes_from_list(self, fresh_client):
+        with app_module.connect() as conn:
+            boarder_id = storage.list_boarders(conn)[0].id
+        resp = fresh_client.post(f"/boarders/{boarder_id}/delete")
+        assert resp.status_code == 302
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert "ALICE" not in html
+        assert "BOB" in html
+
+    def test_delete_boarder_with_history_is_allowed(self, fresh_client):
+        with app_module.connect() as conn:
+            boarder_id = storage.list_boarders(conn)[0].id
+            storage.save_month(
+                conn,
+                [record("ALICE", "601A", 2, 5, 7)],
+                "2026-03",
+            )
+        resp = fresh_client.post(f"/boarders/{boarder_id}/delete")
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            saved = storage.get_month_report(conn, "2026-03")
+        assert {r.name for r in saved} == {"ALICE"}
+
+    def test_delete_unknown_boarder_is_noop(self, fresh_client):
+        resp = fresh_client.post("/boarders/999/delete")
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            assert len(storage.list_boarders(conn)) == 2
+
+    def test_import_matches_after_edit(self, fresh_client):
+        with app_module.connect() as conn:
+            boarder_id = storage.list_boarders(conn)[0].id
+        fresh_client.post(
+            f"/boarders/{boarder_id}/edit",
+            data={"name": "Alicia", "bed": "602A"},
+        )
+        resp = fresh_client.post(
+            "/",
+            data={
+                "report_month": "2026-08",
+                "log_file": (io.BytesIO(b"Name,Transaction Time\nALICIA,07:42\n"), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            saved = storage.get_month_report(conn, "2026-08")
+        assert {r.name for r in saved} == {"ALICIA", "BOB"}
+
+
+class TestBoarderBulkImport:
+    def test_import_csv_replaces_roster(self, fresh_client):
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert "Carol" in html
+        assert "Dana" in html
+        assert "ALICE" not in html
+
+    def test_import_rejects_empty_roster(self, fresh_client):
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "no boarders" in html.lower()
+
+    def test_import_rejects_missing_file(self, fresh_client):
+        resp = fresh_client.post("/boarders/import", data={})
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "file" in html.lower()
+
+    def test_import_roster_used_by_ingestion(self, fresh_client):
+        fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nZed,999\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        resp = fresh_client.post(
+            "/",
+            data={
+                "report_month": "2026-08",
+                "log_file": (io.BytesIO(b"Name,Transaction Time\nZED,07:42\n"), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            saved = storage.get_month_report(conn, "2026-08")
+        assert {r.name for r in saved} == {"ZED"}
+
+
+class TestBoarderExport:
+    def test_export_returns_csv_download(self, fresh_client):
+        resp = fresh_client.get("/boarders/export")
+        assert resp.status_code == 200
+        assert "text/csv" in resp.headers.get("Content-Type", "")
+        body = resp.get_data(as_text=True)
+        rows = [line.split(",") for line in body.strip().splitlines()]
+        assert rows[0] == ["Name", "Bed"]
+        assert ["ALICE", "601A"] in rows
+        assert ["BOB", "601B"] in rows
+
+    def test_export_matches_import_roundtrip(self, fresh_client):
+        fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        resp = fresh_client.get("/boarders/export")
+        body = resp.get_data(as_text=True)
+        rows = [line.split(",") for line in body.strip().splitlines()]
+        assert rows == [["Name", "Bed"], ["Carol", "601C"]]
 
 
 LOG_CSV = "Name,Transaction Time\nALICE,07:45\n"

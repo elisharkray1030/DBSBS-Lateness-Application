@@ -221,8 +221,8 @@ class TestIngestLog:
         assert isinstance(outcome, SavedOutcome)
         assert "2026-03" in outcome.message
         assert "1 boarder recorded" in outcome.message
-        assert "GHOST" in outcome.message
-        assert "BOB ('7:45')" in outcome.message
+        assert "GHOST" not in outcome.message
+        assert "BOB ('7:45')" not in outcome.message
 
     def test_clean_month_saves_and_reports_zero_boarders(self, conn):
         outcome = ingest(

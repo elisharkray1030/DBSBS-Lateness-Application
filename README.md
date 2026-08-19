@@ -74,11 +74,13 @@ docker compose up -d --build
 docker compose down
 ```
 
-## Updating the namelist after setup
+## Updating the boarder list
 
-If you are using Docker Compose, update the root `namelist.csv` file and restart the stack. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
+The boarder master list lives in the SQLite database (`boarders` table). The **Boarders** tab lets staff view, add, edit, and remove boarders inline, replace the whole roster by uploading a CSV, and download the current roster as a CSV.
 
-If you are running locally, replace the `namelist.csv` in the project folder before restarting the app.
+On first startup, if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once. After that seed the file is no longer read — all changes happen through the Boarders tab or a CSV upload.
+
+If you are using Docker Compose, the root `namelist.csv` is only consulted for that initial seed; edits made in the app persist in the mounted database volume and survive restarts. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
 
 ## Using the application
 
@@ -91,7 +93,7 @@ If you are running locally, replace the `namelist.csv` in the project folder bef
 
 ## Data expectations
 
-- `namelist.csv` should contain at least `Name` and `Bed` columns.
+- `namelist.csv` should contain at least `Name` and `Bed` columns. It is read once at first startup to seed an empty boarders table; after that, manage the boarder list through the Boarders tab.
 - Monthly log CSV files should contain at least `Name` and `Transaction Time` columns.
 - `Transaction Time` values must be strict `HH:MM` or `HH:MM:SS` (24-hour) times. Anything else is rejected with the offending rows surfaced, never silently dropped.
 - The SQLite database file is created automatically on first run if it does not already exist.
@@ -105,8 +107,8 @@ The web upload and the parser CLI run the exact same ingestion module, so the tw
 ## Persistence and deployment notes
 
 - The app stores month summaries in SQLite using the path from `DB_PATH`.
-- For Docker, keep the database file in a mounted folder so reports survive container restarts.
-- For Docker, keep `namelist.csv` in that same mounted folder if it changes over time.
+- The boarder master list is stored in the same SQLite database and managed through the Boarders tab; `namelist.csv` is read once at first startup to seed an empty boarders table.
+- For Docker, keep the database file in a mounted folder so reports and the boarder list survive container restarts.
 - Monthly uploads are consumed directly from the request stream and are never written to disk or stored permanently by the app.
 
 ## Development notes
@@ -169,6 +171,6 @@ The template renders the dashboard, search tab, month cards, month detail table,
 
 ## Troubleshooting
 
-- If the app starts but no boarders are found, confirm that the `namelist.csv` file has the expected column names.
+- If the app starts but no boarders are found, confirm that the `namelist.csv` file has the expected column names, or add boarders through the Boarders tab.
 - If Docker Compose starts but changes do not persist, check that the `data` folder is present and writable.
-- If the container cannot find `namelist.csv`, confirm that the file exists in the project root and that `NAMELIST_PATH` points to the mounted file.
+- If the container cannot find `namelist.csv` on first startup, confirm that the file exists in the project root and that `NAMELIST_PATH` points to the mounted file; you can also add boarders through the Boarders tab without a seed file.

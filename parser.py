@@ -51,16 +51,10 @@ class SavedOutcome:
     @property
     def message(self) -> str:
         boarder_word = "boarder" if self.boarders_count == 1 else "boarders"
-        text = (
+        return (
             f"Monthly report saved for '{self.month_label}' "
             f"with {self.boarders_count} {boarder_word} recorded as late."
         )
-        if self.diagnostics.unmatched_names:
-            text += " Unmatched names: " + ", ".join(self.diagnostics.unmatched_names) + "."
-        if self.diagnostics.unparseable_rows:
-            failing = _format_unparseable_rows(self.diagnostics.unparseable_rows)
-            text += f" Rows not counted (unparseable time): {failing}."
-        return text
 
 
 @dataclass
@@ -87,25 +81,53 @@ def parse_time_seconds(value):
     return (hours * 3600) + (minutes * 60) + seconds
 
 
-def load_namelist(namelist_filename):
-    """Loads valid boarders into a mapping of normalized name to bed, or None."""
-    boarders_master = {}
+def parse_namelist_stream(namelist_stream):
+    """Parses a namelist stream into (normalized_name, display_name, bed) rows.
 
+    Preserves the display case of names so the master list can be shown as
+    entered while still matching logs case-insensitively via the normalized name.
+    """
+    rows = []
+    reader = csv.DictReader(namelist_stream)
+    for row in reader:
+        display_name = row.get('Name', '').strip()
+        bed = row.get('Bed', '').strip()
+
+        # Skip rows with missing name or bed information.
+        if not display_name or not bed:
+            continue
+
+        rows.append((display_name.upper(), display_name, bed))
+    return rows
+
+
+def load_namelist_rows(namelist_filename):
+    """Loads valid boarders as (normalized_name, display_name, bed) rows, or None."""
     try:
         with open(namelist_filename, mode='r', encoding='utf-8-sig') as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                name = row.get('Name', '').strip().upper()
-                bed = row.get('Bed', '').strip()
-
-                # Skip rows with missing name or bed information.
-                if not name or not bed:
-                    continue
-
-                boarders_master[name] = bed
-        return boarders_master
+            return parse_namelist_stream(file)
     except FileNotFoundError:
         return None
+
+
+def load_namelist(namelist_filename):
+    """Loads valid boarders into a mapping of normalized name to bed, or None."""
+    rows = load_namelist_rows(namelist_filename)
+    if rows is None:
+        return None
+    return {normalized_name: bed for normalized_name, _display_name, bed in rows}
+
+
+def boarder_list_to_csv(boarders):
+    """Renders the master list to CSV text (Name, Bed) with deterministic order."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Name', 'Bed'])
+
+    for boarder in sorted(boarders, key=lambda b: (b.bed, b.display_name)):
+        writer.writerow([boarder.display_name, boarder.bed])
+
+    return output.getvalue()
 
 
 def parse_log_stream(log_stream, master_list):

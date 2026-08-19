@@ -2,6 +2,16 @@ from dataclasses import dataclass
 
 
 @dataclass
+class Boarder:
+    """One row of the master list: id, normalized name, display name, and bed."""
+
+    normalized_name: str
+    display_name: str
+    bed: str
+    id: int = 0
+
+
+@dataclass
 class BoarderRecord:
     """One boarder's month summary, keyed by normalized name."""
 

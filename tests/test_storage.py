@@ -18,6 +18,126 @@ class TestCreateSchema:
         assert storage.list_months(conn) == []
 
 
+class TestBoarders:
+    def test_create_schema_creates_empty_boarders_table(self, conn):
+        assert storage.list_boarders(conn) == []
+
+    def test_replace_boarders_sets_the_list(self, conn):
+        storage.replace_boarders(
+            conn, [("ALICE", "Alice", "601A"), ("BOB", "Bob", "601B")]
+        )
+        boarders = storage.list_boarders(conn)
+        assert [(b.normalized_name, b.display_name, b.bed) for b in boarders] == [
+            ("ALICE", "Alice", "601A"),
+            ("BOB", "Bob", "601B"),
+        ]
+
+    def test_replace_boarders_replaces_not_appends(self, conn):
+        storage.replace_boarders(conn, [("ALICE", "Alice", "601A")])
+        storage.replace_boarders(conn, [("BOB", "Bob", "601B")])
+        assert [b.normalized_name for b in storage.list_boarders(conn)] == ["BOB"]
+
+    def test_list_boarders_orders_by_bed_then_display_name(self, conn):
+        storage.replace_boarders(
+            conn,
+            [
+                ("ALICE", "Alice", "102"),
+                ("BOB", "Bob", "101"),
+                ("CAROL", "Carol", "101"),
+            ],
+        )
+        assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
+            ("BOB", "101"),
+            ("CAROL", "101"),
+            ("ALICE", "102"),
+        ]
+
+    def test_boarder_master_list_maps_normalized_to_bed(self, conn):
+        storage.replace_boarders(
+            conn, [("ALICE", "Alice", "601A"), ("BOB", "Bob", "601B")]
+        )
+        assert storage.boarder_master_list(conn) == {"ALICE": "601A", "BOB": "601B"}
+
+    def test_boarder_master_list_empty_returns_empty_dict(self, conn):
+        assert storage.boarder_master_list(conn) == {}
+
+
+class TestAddBoarder:
+    def test_add_boarder_returns_new_id(self, conn):
+        boarder_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        boarders = storage.list_boarders(conn)
+        assert [(b.id, b.normalized_name, b.display_name, b.bed) for b in boarders] == [
+            (boarder_id, "ALICE", "Alice", "601A")
+        ]
+
+    def test_add_boarder_rejects_duplicate_normalized_name(self, conn):
+        storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        with pytest.raises(sqlite3.IntegrityError):
+            storage.add_boarder(conn, "ALICE", "alice", "601B")
+
+    def test_add_boarder_orders_with_existing_list(self, conn):
+        storage.add_boarder(conn, "BOB", "Bob", "601B")
+        storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        assert [b.display_name for b in storage.list_boarders(conn)] == ["Alice", "Bob"]
+
+
+class TestBoarderExists:
+    def test_known_normalized_name_is_found(self, conn):
+        storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        assert storage.boarder_exists(conn, "ALICE") is True
+
+    def test_unknown_normalized_name_is_not_found(self, conn):
+        assert storage.boarder_exists(conn, "ALICE") is False
+
+    def test_exclude_id_ignores_the_row_itself(self, conn):
+        boarder_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        assert storage.boarder_exists(conn, "ALICE", exclude_id=boarder_id) is False
+
+    def test_exclude_id_still_finds_other_rows(self, conn):
+        storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        other_id = storage.add_boarder(conn, "BOB", "Bob", "601B")
+        assert storage.boarder_exists(conn, "ALICE", exclude_id=other_id) is True
+
+
+class TestUpdateBoarder:
+    def test_update_boarder_changes_name_and_bed(self, conn):
+        boarder_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        storage.update_boarder(conn, boarder_id, "ALICIA", "Alicia", "602A")
+        boarders = storage.list_boarders(conn)
+        assert [(b.normalized_name, b.display_name, b.bed) for b in boarders] == [
+            ("ALICIA", "Alicia", "602A")
+        ]
+
+    def test_update_boarder_rejects_duplicate_normalized_name(self, conn):
+        storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        other = storage.add_boarder(conn, "BOB", "Bob", "601B")
+        with pytest.raises(sqlite3.IntegrityError):
+            storage.update_boarder(conn, other, "ALICE", "Alice", "601B")
+
+    def test_update_unknown_boarder_is_noop(self, conn):
+        storage.update_boarder(conn, 999, "ALICE", "Alice", "601A")
+        assert storage.list_boarders(conn) == []
+
+
+class TestDeleteBoarder:
+    def test_delete_boarder_removes_it(self, conn):
+        boarder_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        storage.delete_boarder(conn, boarder_id)
+        assert storage.list_boarders(conn) == []
+
+    def test_delete_unknown_boarder_is_noop(self, conn):
+        storage.delete_boarder(conn, 999)
+        assert storage.list_boarders(conn) == []
+
+    def test_delete_boarder_leaves_history_intact(self, conn):
+        boarder_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        storage.save_month(conn, [record("ALICE", "601A", 2, 5, 7)], "2026-03")
+        storage.delete_boarder(conn, boarder_id)
+        assert storage.list_boarders(conn) == []
+        saved = storage.get_month_report(conn, "2026-03")
+        assert {r.name for r in saved} == {"ALICE"}
+
+
 class TestSaveMonth:
     def test_upsert_replaces_boarder_row_for_month(self, conn):
         storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")

@@ -3,12 +3,16 @@ import io
 
 import pytest
 from helpers import record
+from records import Boarder
 
 from parser import (
+    boarder_list_to_csv,
     cli_ingest,
     cli_main,
     export_to_csv,
     load_namelist,
+    load_namelist_rows,
+    parse_namelist_stream,
     parse_time_seconds,
 )
 
@@ -30,6 +34,69 @@ class TestLoadNamelist:
         path = tmp_path / "namelist.csv"
         path.write_text("Name,Bed\n", encoding="utf-8")
         assert load_namelist(str(path)) == {}
+
+
+class TestLoadNamelistRows:
+    def test_preserves_display_case(self, tmp_path):
+        path = tmp_path / "namelist.csv"
+        path.write_text("Name,Bed\nAlice,101\nbob smith,102\n", encoding="utf-8")
+        assert load_namelist_rows(str(path)) == [
+            ("ALICE", "Alice", "101"),
+            ("BOB SMITH", "bob smith", "102"),
+        ]
+
+    def test_missing_file_returns_none(self, tmp_path):
+        assert load_namelist_rows(str(tmp_path / "does-not-exist.csv")) is None
+
+    def test_empty_master_returns_empty_list(self, tmp_path):
+        path = tmp_path / "namelist.csv"
+        path.write_text("Name,Bed\n", encoding="utf-8")
+        assert load_namelist_rows(str(path)) == []
+
+
+class TestParseNamelistStream:
+    def test_parses_stream_preserving_case(self):
+        stream = io.StringIO("Name,Bed\nAlice,101\nbob smith,102\n")
+        assert parse_namelist_stream(stream) == [
+            ("ALICE", "Alice", "101"),
+            ("BOB SMITH", "bob smith", "102"),
+        ]
+
+    def test_skips_rows_with_missing_name_or_bed(self):
+        stream = io.StringIO("Name,Bed\nAlice,101\n,bad\nNoBed,\n")
+        assert parse_namelist_stream(stream) == [("ALICE", "Alice", "101")]
+
+    def test_empty_stream_returns_empty_list(self):
+        assert parse_namelist_stream(io.StringIO("Name,Bed\n")) == []
+
+
+class TestBoarderListToCsv:
+    def test_header_and_rows(self):
+        text = boarder_list_to_csv(
+            [
+                Boarder(normalized_name="ALICE", display_name="Alice", bed="601A"),
+                Boarder(normalized_name="BOB", display_name="Bob", bed="601B"),
+            ]
+        )
+        rows = list(csv.reader(io.StringIO(text)))
+        assert rows[0] == ["Name", "Bed"]
+        assert rows[1] == ["Alice", "601A"]
+        assert rows[2] == ["Bob", "601B"]
+
+    def test_deterministic_order(self):
+        text = boarder_list_to_csv(
+            [
+                Boarder(normalized_name="BOB", display_name="Bob", bed="601B"),
+                Boarder(normalized_name="ALICE", display_name="Alice", bed="601A"),
+            ]
+        )
+        names = [row[0] for row in csv.reader(io.StringIO(text))][1:]
+        assert names == ["Alice", "Bob"]
+
+    def test_empty_list_writes_only_header(self):
+        text = boarder_list_to_csv([])
+        rows = list(csv.reader(io.StringIO(text)))
+        assert rows == [["Name", "Bed"]]
 
 
 class TestParseTimeSeconds:
