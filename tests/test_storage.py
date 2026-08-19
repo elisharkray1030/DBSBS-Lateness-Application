@@ -305,6 +305,13 @@ class TestSearchHistory:
         results = storage.search_history(conn, "aLiCe")
         assert [r.month for r in results] == ["2026-03"]
 
+    def test_whitespace_padded_query_matches(self, conn):
+        storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+
+        padded = storage.search_history(conn, "  alice  ")
+        unpadded = storage.search_history(conn, "alice")
+        assert [r.month for r in padded] == [r.month for r in unpadded] == ["2026-03"]
+
     def test_empty_query_returns_nothing(self, conn):
         assert storage.search_history(conn, "") == []
 

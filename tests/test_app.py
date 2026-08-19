@@ -415,6 +415,18 @@ class TestBoarderBulkImport:
         html = resp.get_data(as_text=True)
         assert "file" in html.lower()
 
+    def test_empty_roster_empty_state_points_at_tab(self, fresh_client):
+        fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert "Add a boarder" in html
+        assert "namelist.csv" not in html
+
     def test_empty_roster_rejects_monthly_log_import(self, fresh_client):
         fresh_client.post(
             "/boarders/import",

@@ -2,7 +2,14 @@ import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
-from records import Boarder, BoarderRecord, HistoryEntry, MonthSummary, Punishment
+from records import (
+    Boarder,
+    BoarderRecord,
+    HistoryEntry,
+    MonthSummary,
+    Punishment,
+    normalize_name,
+)
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -292,7 +299,7 @@ def search_history(conn: sqlite3.Connection, name_query: str) -> list[HistoryEnt
     if not name_query:
         return []
 
-    normalized_query = f"%{name_query.strip().upper()}%"
+    normalized_query = f"%{normalize_name(name_query)}%"
     cursor = conn.execute(
         """
         SELECT display_name, bed, month, frequency, total_minutes, total_points
