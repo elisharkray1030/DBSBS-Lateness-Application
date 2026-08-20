@@ -266,10 +266,25 @@
             background-color: var(--page-bg);
         }
 
-        .boarder-edit-controls {
-            display: inline-flex;
+        .boarder-edit-actions {
+            display: flex;
             gap: 6px;
-            margin-left: 8px;
+            margin-bottom: 20px;
+        }
+
+        .boarder-edit-actions[hidden] {
+            display: none;
+        }
+
+        .boarders-table th.boarder-actions,
+        .boarders-table td.boarder-actions {
+            width: 1%;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .boarder-remove {
+            padding: 6px;
         }
 
         .boarder-inline-error {
@@ -816,6 +831,10 @@
             </form>
             <a class="btn btn-neutral btn-sm" href="/boarders/export">Download roster (CSV)</a>
         </div>
+        <div id="boarder-edit-actions" class="boarder-edit-actions" hidden>
+            <button id="boarder-save" type="button" class="btn btn-primary btn-sm" disabled>Save</button>
+            <button id="boarder-cancel" type="button" class="btn btn-neutral btn-sm">Cancel</button>
+        </div>
         {% if boarders %}
             <div class="table-scroll">
                 <table class="boarders-table" id="boarders-table">
@@ -823,6 +842,7 @@
                         <tr>
                             <th>Bed</th>
                             <th>Boarder Name</th>
+                            <th class="boarder-actions">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -830,6 +850,7 @@
                         <tr data-boarder-id="{{ boarder.id }}">
                             <td class="boarder-cell boarder-bed">{{ boarder.bed }}</td>
                             <td class="boarder-cell boarder-name">{{ boarder.display_name }}</td>
+                            <td class="boarder-actions"></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -1190,6 +1211,9 @@
     // Boarders tab: click-to-edit, dirty-state, AJAX save/remove, discard guards
     let editingBoarderRow = null;
     let boarderOriginal = { name: '', bed: '' };
+    const boarderEditActions = document.getElementById('boarder-edit-actions');
+    const boarderSaveButton = document.getElementById('boarder-save');
+    const boarderCancelButton = document.getElementById('boarder-cancel');
 
     function boarderIsDirty(row) {
         const name = row.querySelector('.boarder-edit-name').value.trim();
@@ -1207,10 +1231,13 @@
         row.innerHTML = `
             <td class="boarder-cell boarder-bed">${escapeHtml(bed)}</td>
             <td class="boarder-cell boarder-name">${escapeHtml(name)}</td>
+            <td class="boarder-actions"></td>
         `;
         if (row === editingBoarderRow) {
             editingBoarderRow = null;
             boarderOriginal = { name: '', bed: '' };
+            boarderEditActions.hidden = true;
+            boarderSaveButton.disabled = true;
         }
     }
 
@@ -1231,31 +1258,40 @@
             </td>
             <td class="boarder-name">
                 <input class="boarder-edit-name" type="text" value="${escapeAttr(name)}" aria-label="Edit name">
-                <span class="boarder-edit-controls">
-                    <button type="button" class="btn btn-primary btn-sm boarder-save" hidden>Save</button>
-                    <button type="button" class="btn btn-neutral btn-sm boarder-cancel">Cancel</button>
-                    <button type="button" class="btn btn-danger btn-sm boarder-remove">Remove</button>
-                </span>
                 <div class="boarder-inline-error" hidden></div>
+            </td>
+            <td class="boarder-actions">
+                <button type="button" class="btn btn-danger btn-sm boarder-remove" aria-label="Remove boarder" title="Remove boarder">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
+                </button>
             </td>
         `;
         editingBoarderRow = row;
+        boarderEditActions.hidden = false;
 
         row.querySelector('.boarder-edit-name').addEventListener('input', updateBoarderSave);
         row.querySelector('.boarder-edit-bed').addEventListener('input', updateBoarderSave);
-        row.querySelector('.boarder-cancel').addEventListener('click', () => renderBoarderStatic(row));
         row.querySelector('.boarder-remove').addEventListener('click', () => promptBoarderRemove(row));
-        row.querySelector('.boarder-save').addEventListener('click', () => saveBoarderEdit(row));
+        row.querySelectorAll('.boarder-edit-name, .boarder-edit-bed').forEach(input => {
+            input.addEventListener('keydown', event => {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    renderBoarderStatic(row);
+                } else if (event.key === 'Enter') {
+                    event.preventDefault();
+                    if (!boarderSaveButton.disabled) saveBoarderEdit(row);
+                }
+            });
+        });
         updateBoarderSave();
     }
 
     function updateBoarderSave() {
         if (!editingBoarderRow) return;
-        const saveBtn = editingBoarderRow.querySelector('.boarder-save');
         const name = editingBoarderRow.querySelector('.boarder-edit-name').value.trim();
         const bed = editingBoarderRow.querySelector('.boarder-edit-bed').value.trim();
         const dirty = boarderIsDirty(editingBoarderRow);
-        saveBtn.hidden = !(dirty && name && bed);
+        boarderSaveButton.disabled = !(dirty && name && bed);
     }
 
     function saveBoarderEdit(row) {
@@ -1272,6 +1308,7 @@
         .then(response => response.json())
         .then(data => {
             if (data.ok) {
+                boarderEditActions.hidden = true;
                 renderBoarderStatic(row);
             } else {
                 errorEl.textContent = data.error || 'Failed to save boarder.';
@@ -1305,6 +1342,9 @@
         .then(data => {
             if (data.ok) {
                 editingBoarderRow = null;
+                boarderOriginal = { name: '', bed: '' };
+                boarderEditActions.hidden = true;
+                boarderSaveButton.disabled = true;
                 row.remove();
                 maybeShowBoarderEmptyState();
             } else {
@@ -1339,9 +1379,16 @@
         return escapeHtml(str).replace(/'/g, '&#39;');
     }
 
+    boarderSaveButton.addEventListener('click', () => {
+        if (editingBoarderRow && !boarderSaveButton.disabled) saveBoarderEdit(editingBoarderRow);
+    });
+
+    boarderCancelButton.addEventListener('click', discardBoarderEdits);
+
     document.querySelectorAll('.boarders-table tbody tr').forEach(row => {
         row.addEventListener('click', function(event) {
             if (event.target.closest('button, input')) return;
+            if (!event.target.closest('.boarder-cell')) return;
             if (row === editingBoarderRow) return;
 
             if (hasDirtyBoarderRow()) {

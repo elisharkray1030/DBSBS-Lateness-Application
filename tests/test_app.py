@@ -98,9 +98,13 @@ class TestBoardersTab:
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert "active" in tab_button_class(html, "boarders").split()
 
-    def test_boarders_table_has_no_actions_column(self, fresh_client):
+    def test_boarders_table_has_actions_column(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
-        assert "Actions" not in html
+        assert re.search(r'<th[^>]*>Actions</th>', html) is not None
+
+    def test_boarder_edit_action_bar_starts_hidden(self, fresh_client):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert re.search(r'<div id="boarder-edit-actions"[^>]*hidden', html) is not None
 
     def test_boarders_rows_render_static_no_inputs(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
@@ -109,6 +113,7 @@ class TestBoardersTab:
         assert '<input' not in table.group(0)
         assert 'boarder-edit-name' not in table.group(0)
         assert 'boarder-edit-bed' not in table.group(0)
+        assert table.group(0).count('<td class="boarder-actions"></td>') == 2
 
     def test_boarders_table_has_bed_and_name_columns(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
