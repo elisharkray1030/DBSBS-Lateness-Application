@@ -1232,9 +1232,9 @@
         boarderSaveButton.disabled = true;
     }
 
-    function renderBoarderStatic(row, values = null) {
-        const name = values ? values.name : row.querySelector('.boarder-edit-name').value.trim();
-        const bed = values ? values.bed : row.querySelector('.boarder-edit-bed').value.trim();
+    function renderBoarderStatic(row, staticValues = null) {
+        const name = staticValues ? staticValues.name : row.querySelector('.boarder-edit-name').value.trim();
+        const bed = staticValues ? staticValues.bed : row.querySelector('.boarder-edit-bed').value.trim();
         row.innerHTML = `
             <td class="boarder-cell boarder-bed">${escapeHtml(bed)}</td>
             <td class="boarder-cell boarder-name">${escapeHtml(name)}</td>
@@ -1312,7 +1312,6 @@
         .then(response => response.json())
         .then(data => {
             if (data.ok) {
-                boarderEditActions.hidden = true;
                 renderBoarderStatic(row);
             } else {
                 errorEl.textContent = data.error || 'Failed to save boarder.';

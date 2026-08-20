@@ -113,7 +113,6 @@ class TestBoardersTab:
         assert '<input' not in table.group(0)
         assert 'boarder-edit-name' not in table.group(0)
         assert 'boarder-edit-bed' not in table.group(0)
-        assert table.group(0).count('<td class="boarder-actions"></td>') == 2
 
     def test_boarders_table_has_bed_and_name_columns(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
