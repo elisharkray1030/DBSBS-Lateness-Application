@@ -272,6 +272,43 @@ class TestUpdateBoarder:
         assert storage.list_boarders(conn) == []
 
 
+class TestUpdateBoarders:
+    def test_updates_can_swap_unique_values(self, conn):
+        alice_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        bob_id = storage.add_boarder(conn, "BOB", "Bob", "601B")
+
+        storage.update_boarders(
+            conn,
+            [
+                (alice_id, "ALICE", "Alice", "601B"),
+                (bob_id, "BOB", "Bob", "601A"),
+            ],
+        )
+
+        assert {(boarder.display_name, boarder.bed) for boarder in storage.list_boarders(conn)} == {
+            ("Alice", "601B"),
+            ("Bob", "601A"),
+        }
+
+    def test_rejects_conflict_without_partial_updates(self, conn):
+        alice_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")
+        bob_id = storage.add_boarder(conn, "BOB", "Bob", "601B")
+
+        with pytest.raises(ValueError):
+            storage.update_boarders(
+                conn,
+                [
+                    (alice_id, "BOB", "Bob", "601A"),
+                    (bob_id, "BOB", "Bob", "601B"),
+                ],
+            )
+
+        assert {(boarder.display_name, boarder.bed) for boarder in storage.list_boarders(conn)} == {
+            ("Alice", "601A"),
+            ("Bob", "601B"),
+        }
+
+
 class TestDeleteBoarder:
     def test_delete_boarder_removes_it(self, conn):
         boarder_id = storage.add_boarder(conn, "ALICE", "Alice", "601A")

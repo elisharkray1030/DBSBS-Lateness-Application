@@ -258,14 +258,6 @@
             background-color: var(--page-bg);
         }
 
-        .boarders-table td.boarder-cell {
-            cursor: pointer;
-        }
-
-        .boarders-table td.boarder-cell:hover {
-            background-color: var(--page-bg);
-        }
-
         .boarder-edit-actions {
             display: flex;
             gap: 6px;
@@ -291,6 +283,10 @@
             color: var(--error-text);
             font-size: 0.85em;
             margin-top: 6px;
+        }
+
+        .boarder-edit-error {
+            flex-basis: 100%;
         }
 
         .month-report-scroll thead th {
@@ -828,12 +824,14 @@
                 <label for="boarder_csv"><strong>Replace roster from CSV</strong></label>
                 <input type="file" id="boarder_csv" name="boarder_csv" accept=".csv" required>
                 <button type="submit" class="btn btn-primary btn-sm">Import</button>
+                <button id="boarder-edit" type="button" class="btn btn-neutral btn-sm" {% if not boarders %}disabled{% endif %}>Edit</button>
             </form>
             <a class="btn btn-neutral btn-sm" href="/boarders/export">Download roster (CSV)</a>
         </div>
         <div id="boarder-edit-actions" class="boarder-edit-actions" hidden>
             <button id="boarder-save" type="button" class="btn btn-primary btn-sm" disabled>Save</button>
             <button id="boarder-cancel" type="button" class="btn btn-neutral btn-sm">Cancel</button>
+            <div id="boarder-edit-error" class="boarder-inline-error boarder-edit-error" hidden role="alert"></div>
         </div>
         {% if boarders %}
             <div class="table-scroll">
@@ -842,7 +840,7 @@
                         <tr>
                             <th>Bed</th>
                             <th>Boarder Name</th>
-                            <th class="boarder-actions">Actions</th>
+                            <th class="boarder-actions"></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1208,28 +1206,34 @@
         });
     }
 
-    // Boarders tab: click-to-edit, dirty-state, AJAX save/remove, discard guards
-    let editingBoarderRow = null;
-    let boarderOriginal = { name: '', bed: '' };
+    // Boarders tab: explicit table editing, dirty-state, AJAX save/remove
+    let boardersEditing = false;
+    let boarderOriginals = new Map();
+    const boarderEditButton = document.getElementById('boarder-edit');
     const boarderEditActions = document.getElementById('boarder-edit-actions');
     const boarderSaveButton = document.getElementById('boarder-save');
     const boarderCancelButton = document.getElementById('boarder-cancel');
+    const boarderEditError = document.getElementById('boarder-edit-error');
 
     function boarderIsDirty(row) {
         const name = row.querySelector('.boarder-edit-name').value.trim();
         const bed = row.querySelector('.boarder-edit-bed').value.trim();
-        return name !== boarderOriginal.name || bed !== boarderOriginal.bed;
+        const original = boarderOriginals.get(row.dataset.boarderId);
+        return original && (name !== original.name || bed !== original.bed);
     }
 
     function hasDirtyBoarderRow() {
-        return editingBoarderRow !== null && boarderIsDirty(editingBoarderRow);
+        if (!boardersEditing) return false;
+        return Array.from(document.querySelectorAll('#boarders-table tbody tr')).some(boarderIsDirty);
     }
 
     function exitBoarderEditMode() {
-        editingBoarderRow = null;
-        boarderOriginal = { name: '', bed: '' };
+        boardersEditing = false;
+        boarderOriginals = new Map();
         boarderEditActions.hidden = true;
-        boarderSaveButton.disabled = true;
+        boarderEditButton.disabled = false;
+        boarderEditError.hidden = true;
+        boarderEditError.textContent = '';
     }
 
     function renderBoarderStatic(row, staticValues = null) {
@@ -1240,87 +1244,102 @@
             <td class="boarder-cell boarder-name">${escapeHtml(name)}</td>
             <td class="boarder-actions"></td>
         `;
-        if (row === editingBoarderRow) {
-            exitBoarderEditMode();
-        }
     }
 
     function discardBoarderEdits() {
-        if (editingBoarderRow) renderBoarderStatic(editingBoarderRow, boarderOriginal);
+        document.querySelectorAll('#boarders-table tbody tr').forEach(row => {
+            const original = boarderOriginals.get(row.dataset.boarderId);
+            if (original) renderBoarderStatic(row, original);
+        });
+        exitBoarderEditMode();
     }
 
-    function enterBoarderEditMode(row) {
-        const bedCell = row.querySelector('.boarder-bed');
-        const nameCell = row.querySelector('.boarder-name');
-        const bed = bedCell.textContent.trim();
-        const name = nameCell.textContent.trim();
+    function enterBoarderEditMode() {
+        if (boardersEditing) return;
+        const rows = Array.from(document.querySelectorAll('#boarders-table tbody tr'));
+        if (!rows.length) return;
 
-        boarderOriginal = { name, bed };
-        row.innerHTML = `
-            <td class="boarder-bed">
-                <input class="boarder-edit-bed" type="text" value="${escapeAttr(bed)}" aria-label="Edit bed">
-            </td>
-            <td class="boarder-name">
-                <input class="boarder-edit-name" type="text" value="${escapeAttr(name)}" aria-label="Edit name">
-                <div class="boarder-inline-error" hidden></div>
-            </td>
-            <td class="boarder-actions">
-                <button type="button" class="btn btn-danger btn-sm boarder-remove" aria-label="Remove boarder" title="Remove boarder">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
-                </button>
-            </td>
-        `;
-        editingBoarderRow = row;
+        boardersEditing = true;
+        boarderOriginals = new Map();
+        boarderEditButton.disabled = true;
         boarderEditActions.hidden = false;
-
-        row.querySelector('.boarder-edit-name').addEventListener('input', updateBoarderSave);
-        row.querySelector('.boarder-edit-bed').addEventListener('input', updateBoarderSave);
-        row.querySelector('.boarder-remove').addEventListener('click', () => promptBoarderRemove(row));
-        row.querySelectorAll('.boarder-edit-name, .boarder-edit-bed').forEach(input => {
-            input.addEventListener('keydown', event => {
-                if (event.key === 'Escape') {
-                    event.preventDefault();
-                    renderBoarderStatic(row, boarderOriginal);
-                } else if (event.key === 'Enter') {
-                    event.preventDefault();
-                    if (!boarderSaveButton.disabled) saveBoarderEdit(row);
-                }
+        rows.forEach(row => {
+            const bed = row.querySelector('.boarder-bed').textContent.trim();
+            const name = row.querySelector('.boarder-name').textContent.trim();
+            boarderOriginals.set(row.dataset.boarderId, { name, bed });
+            row.innerHTML = `
+                <td class="boarder-bed">
+                    <input class="boarder-edit-bed" type="text" value="${escapeAttr(bed)}" aria-label="Edit bed for ${escapeAttr(name)}">
+                </td>
+                <td class="boarder-name">
+                    <input class="boarder-edit-name" type="text" value="${escapeAttr(name)}" aria-label="Edit name for ${escapeAttr(name)}">
+                    <div class="boarder-inline-error" hidden></div>
+                </td>
+                <td class="boarder-actions">
+                    <button type="button" class="btn btn-danger btn-sm boarder-remove" aria-label="Remove boarder" title="Remove boarder">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
+                    </button>
+                </td>
+            `;
+            row.querySelector('.boarder-edit-name').addEventListener('input', updateBoarderSave);
+            row.querySelector('.boarder-edit-bed').addEventListener('input', updateBoarderSave);
+            row.querySelector('.boarder-remove').addEventListener('click', () => promptBoarderRemove(row));
+            row.querySelectorAll('.boarder-edit-name, .boarder-edit-bed').forEach(input => {
+                input.addEventListener('keydown', event => {
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        discardBoarderEdits();
+                    } else if (event.key === 'Enter') {
+                        event.preventDefault();
+                        if (!boarderSaveButton.disabled) saveBoarderEdits();
+                    }
+                });
             });
         });
         updateBoarderSave();
     }
 
     function updateBoarderSave() {
-        if (!editingBoarderRow) return;
-        const name = editingBoarderRow.querySelector('.boarder-edit-name').value.trim();
-        const bed = editingBoarderRow.querySelector('.boarder-edit-bed').value.trim();
-        const dirty = boarderIsDirty(editingBoarderRow);
-        boarderSaveButton.disabled = !(dirty && name && bed);
+        if (!boardersEditing) return;
+        const hasBlankValue = Array.from(document.querySelectorAll('#boarders-table tbody tr')).some(row => {
+            return !row.querySelector('.boarder-edit-name').value.trim() || !row.querySelector('.boarder-edit-bed').value.trim();
+        });
+        boarderSaveButton.disabled = hasBlankValue;
+        boarderEditError.hidden = true;
     }
 
-    function saveBoarderEdit(row) {
-        const id = row.dataset.boarderId;
-        const name = row.querySelector('.boarder-edit-name').value.trim();
-        const bed = row.querySelector('.boarder-edit-bed').value.trim();
-        const errorEl = row.querySelector('.boarder-inline-error');
+    function saveBoarderEdits() {
+        const rows = Array.from(document.querySelectorAll('#boarders-table tbody tr'));
+        if (!hasDirtyBoarderRow()) {
+            rows.forEach(row => renderBoarderStatic(row));
+            exitBoarderEditMode();
+            return;
+        }
 
-        fetch(`/api/boarders/${id}`, {
+        const updates = rows.map(row => ({
+            id: Number(row.dataset.boarderId),
+            name: row.querySelector('.boarder-edit-name').value.trim(),
+            bed: row.querySelector('.boarder-edit-bed').value.trim()
+        }));
+
+        fetch('/api/boarders', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, bed })
+            body: JSON.stringify({ boarders: updates })
         })
         .then(response => response.json())
         .then(data => {
             if (data.ok) {
-                renderBoarderStatic(row);
+                rows.forEach(row => renderBoarderStatic(row));
+                exitBoarderEditMode();
             } else {
-                errorEl.textContent = data.error || 'Failed to save boarder.';
-                errorEl.hidden = false;
+                boarderEditError.textContent = data.error || 'Failed to save boarders.';
+                boarderEditError.hidden = false;
             }
         })
         .catch(() => {
-            errorEl.textContent = 'Failed to save boarder.';
-            errorEl.hidden = false;
+            boarderEditError.textContent = 'Failed to save boarders.';
+            boarderEditError.hidden = false;
         });
     }
 
@@ -1344,7 +1363,7 @@
         .then(response => response.json())
         .then(data => {
             if (data.ok) {
-                exitBoarderEditMode();
+                boarderOriginals.delete(id);
                 row.remove();
                 maybeShowBoarderEmptyState();
             } else {
@@ -1364,6 +1383,8 @@
             const table = document.getElementById('boarders-table');
             const container = table.closest('.table-scroll');
             container.innerHTML = '<div class="empty-state">No boarders on the master list. Add a boarder here, or import a CSV to replace the roster.</div>';
+            exitBoarderEditMode();
+            boarderEditButton.disabled = true;
         }
     }
 
@@ -1379,36 +1400,13 @@
         return escapeHtml(str).replace(/'/g, '&#39;');
     }
 
+    boarderEditButton.addEventListener('click', enterBoarderEditMode);
+
     boarderSaveButton.addEventListener('click', () => {
-        if (editingBoarderRow && !boarderSaveButton.disabled) saveBoarderEdit(editingBoarderRow);
+        if (boardersEditing && !boarderSaveButton.disabled) saveBoarderEdits();
     });
 
     boarderCancelButton.addEventListener('click', discardBoarderEdits);
-
-    document.querySelectorAll('.boarders-table tbody tr').forEach(row => {
-        row.addEventListener('click', function(event) {
-            if (event.target.closest('button, input')) return;
-            if (!event.target.closest('.boarder-cell')) return;
-            if (row === editingBoarderRow) return;
-
-            if (hasDirtyBoarderRow()) {
-                showConfirmModal({
-                    title: 'Discard changes?',
-                    message: 'You have unsaved edits to a boarder. Discard them and edit this row?',
-                    confirmLabel: 'Discard',
-                    onConfirm: () => {
-                        discardBoarderEdits();
-                        enterBoarderEditMode(row);
-                    }
-                });
-                return;
-            }
-
-            // A clean editing row is silently reverted so only one row edits at a time.
-            if (editingBoarderRow) renderBoarderStatic(editingBoarderRow);
-            enterBoarderEditMode(row);
-        });
-    });
 
     document.addEventListener('DOMContentLoaded', function() {
         const initialMonthToOpen = {{ current_month|tojson }};

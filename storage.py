@@ -1,6 +1,7 @@
 import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from records import (
     Boarder,
@@ -11,7 +12,6 @@ from records import (
     normalize_name,
     sort_boarder_records,
 )
-
 
 _BOARDERS_COLUMNS = """
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -263,6 +263,80 @@ def update_boarder(
         (normalized_name, display_name, bed, boarder_id),
     )
     conn.commit()
+
+
+def update_boarders(
+    conn: sqlite3.Connection,
+    updates: Iterable[tuple[int, str, str, str]],
+) -> None:
+    """Atomically updates several master-list rows after validating the final roster."""
+    updates = list(updates)
+    if len({boarder_id for boarder_id, _, _, _ in updates}) != len(updates):
+        raise ValueError("A boarder was included more than once.")
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = {boarder.id: boarder for boarder in list_boarders(conn)}
+        proposed = dict(current)
+
+        for boarder_id, normalized_name, display_name, bed in updates:
+            if boarder_id not in current:
+                raise ValueError("A boarder could not be found.")
+            if not display_name:
+                raise ValueError("A boarder name is required.")
+            if not bed:
+                raise ValueError("A bed is required.")
+            proposed[boarder_id] = Boarder(
+                id=boarder_id,
+                normalized_name=normalized_name,
+                display_name=display_name,
+                bed=bed,
+            )
+
+        names: dict[str, Boarder] = {}
+        beds: dict[str, Boarder] = {}
+        for boarder in proposed.values():
+            other = names.get(boarder.normalized_name)
+            if other is not None and other.id != boarder.id:
+                raise ValueError(
+                    f"A boarder named '{boarder.display_name}' is already on the list."
+                )
+            names[boarder.normalized_name] = boarder
+
+            other = beds.get(boarder.bed)
+            if other is not None and other.id != boarder.id:
+                raise ValueError(
+                    f"Bed '{boarder.bed}' is already assigned to another boarder."
+                )
+            beds[boarder.bed] = boarder
+
+        token = uuid4().hex
+        for boarder_id, _, _, _ in updates:
+            conn.execute(
+                """
+                UPDATE boarders
+                SET normalized_name = ?, bed = ?
+                WHERE id = ?
+                """,
+                (
+                    f"__pending_name_{token}_{boarder_id}",
+                    f"__pending_bed_{token}_{boarder_id}",
+                    boarder_id,
+                ),
+            )
+        for boarder_id, normalized_name, display_name, bed in updates:
+            conn.execute(
+                """
+                UPDATE boarders
+                SET normalized_name = ?, display_name = ?, bed = ?
+                WHERE id = ?
+                """,
+                (normalized_name, display_name, bed, boarder_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def delete_boarder(conn: sqlite3.Connection, boarder_id: int) -> None:

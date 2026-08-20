@@ -60,6 +60,30 @@ class TestHomeRender:
         assert "<h2>Search Boarder History</h2>" in html
 
 
+class TestTabNavigation:
+    def test_all_tabs_are_reachable_when_boarder_rows_are_rendered(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            page_errors = []
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            try:
+                page.set_content(html)
+
+                for tab_name in ("history", "consequences", "boarders", "reports"):
+                    page.locator(f'.tab-link[data-tab="{tab_name}"]').click()
+                    assert page.locator(f"#{tab_name}").evaluate(
+                        "panel => panel.classList.contains('active')"
+                    ), page_errors
+
+                assert not page_errors
+            finally:
+                browser.close()
+
+
 class TestImportMonthPicker:
     def test_report_month_input_is_a_month_picker(self):
         html = home_html()
@@ -98,11 +122,15 @@ class TestBoardersTab:
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert "active" in tab_button_class(html, "boarders").split()
 
-    def test_boarders_table_has_actions_column(self, fresh_client):
+    def test_boarders_table_hides_actions_heading_and_keeps_trash_control(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
         boarders_panel = re.search(r'<section id="boarders".*?</section>', html, re.S)
         assert boarders_panel is not None
-        assert "Actions" in boarders_panel.group(0)
+        panel = boarders_panel.group(0)
+        assert '<th class="boarder-actions"></th>' in panel
+        assert '>Actions<' not in panel
+        assert 'id="boarder-edit"' in panel
+        assert 'icon-trash' in html
 
     def test_boarders_rows_render_static_no_inputs(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
@@ -349,6 +377,54 @@ class TestBoarderEditApi:
         assert body["ok"] is False
         assert "bed" in body["error"].lower()
         assert self._boarder(fresh_client, "ALICE").bed == "601A"
+
+    def test_bulk_patch_updates_all_boarders_atomically(self, fresh_client):
+        with app_module.connect() as conn:
+            boarders = storage.list_boarders(conn)
+        by_name = {boarder.normalized_name: boarder for boarder in boarders}
+
+        resp = fresh_client.patch(
+            "/api/boarders",
+            json={
+                "boarders": [
+                    {"id": by_name["ALICE"].id, "name": "Alice", "bed": "601B"},
+                    {"id": by_name["BOB"].id, "name": "Bob", "bed": "601A"},
+                ]
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.get_json() == {"ok": True}
+        with app_module.connect() as conn:
+            updated = storage.list_boarders(conn)
+        assert {(boarder.display_name, boarder.bed) for boarder in updated} == {
+            ("Alice", "601B"),
+            ("Bob", "601A"),
+        }
+
+    def test_bulk_patch_rejects_conflict_without_partial_updates(self, fresh_client):
+        with app_module.connect() as conn:
+            boarders = storage.list_boarders(conn)
+        by_name = {boarder.normalized_name: boarder for boarder in boarders}
+
+        resp = fresh_client.patch(
+            "/api/boarders",
+            json={
+                "boarders": [
+                    {"id": by_name["ALICE"].id, "name": "Bob", "bed": "601A"},
+                    {"id": by_name["BOB"].id, "name": "Bob", "bed": "601B"},
+                ]
+            },
+        )
+
+        assert resp.status_code == 400
+        assert resp.get_json()["ok"] is False
+        with app_module.connect() as conn:
+            unchanged = storage.list_boarders(conn)
+        assert {(boarder.display_name, boarder.bed) for boarder in unchanged} == {
+            ("ALICE", "601A"),
+            ("BOB", "601B"),
+        }
 
 
 class TestBoarderDeleteApi:

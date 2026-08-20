@@ -194,6 +194,38 @@ def api_edit_boarder(boarder_id):
     return jsonify({'ok': True})
 
 
+@app.route('/api/boarders', methods=['PATCH'])
+def api_edit_boarders():
+    data = request.get_json(silent=True) or {}
+    raw_updates = data.get('boarders')
+    if not isinstance(raw_updates, list):
+        return jsonify({'ok': False, 'error': 'A boarder list is required.'}), 400
+
+    updates = []
+    for item in raw_updates:
+        if not isinstance(item, dict):
+            return jsonify({'ok': False, 'error': 'Invalid boarder data.'}), 400
+        try:
+            boarder_id = int(item['id'])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'A valid boarder id is required.'}), 400
+
+        display_name = item.get('name')
+        bed = item.get('bed')
+        if not isinstance(display_name, str) or not isinstance(bed, str):
+            return jsonify({'ok': False, 'error': 'Boarder name and Bed are required.'}), 400
+        display_name = display_name.strip()
+        bed = bed.strip()
+        updates.append((boarder_id, normalize_name(display_name), display_name, bed))
+
+    try:
+        with connect() as conn:
+            storage.update_boarders(conn, updates)
+    except ValueError as exc:
+        return jsonify({'ok': False, 'error': f'Error: {exc}'}), 400
+    return jsonify({'ok': True})
+
+
 @app.route('/api/boarders/<int:boarder_id>', methods=['DELETE'])
 def api_delete_boarder(boarder_id):
     with connect() as conn:
