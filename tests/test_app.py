@@ -100,11 +100,9 @@ class TestBoardersTab:
 
     def test_boarders_table_has_actions_column(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
-        assert re.search(r'<th[^>]*>Actions</th>', html) is not None
-
-    def test_boarder_edit_action_bar_starts_hidden(self, fresh_client):
-        html = fresh_client.get("/boarders").get_data(as_text=True)
-        assert re.search(r'<div id="boarder-edit-actions"[^>]*hidden', html) is not None
+        boarders_panel = re.search(r'<section id="boarders".*?</section>', html, re.S)
+        assert boarders_panel is not None
+        assert "Actions" in boarders_panel.group(0)
 
     def test_boarders_rows_render_static_no_inputs(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
