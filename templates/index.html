@@ -1225,24 +1225,28 @@
         return editingBoarderRow !== null && boarderIsDirty(editingBoarderRow);
     }
 
-    function renderBoarderStatic(row) {
-        const name = row.querySelector('.boarder-edit-name').value.trim();
-        const bed = row.querySelector('.boarder-edit-bed').value.trim();
+    function exitBoarderEditMode() {
+        editingBoarderRow = null;
+        boarderOriginal = { name: '', bed: '' };
+        boarderEditActions.hidden = true;
+        boarderSaveButton.disabled = true;
+    }
+
+    function renderBoarderStatic(row, values = null) {
+        const name = values ? values.name : row.querySelector('.boarder-edit-name').value.trim();
+        const bed = values ? values.bed : row.querySelector('.boarder-edit-bed').value.trim();
         row.innerHTML = `
             <td class="boarder-cell boarder-bed">${escapeHtml(bed)}</td>
             <td class="boarder-cell boarder-name">${escapeHtml(name)}</td>
             <td class="boarder-actions"></td>
         `;
         if (row === editingBoarderRow) {
-            editingBoarderRow = null;
-            boarderOriginal = { name: '', bed: '' };
-            boarderEditActions.hidden = true;
-            boarderSaveButton.disabled = true;
+            exitBoarderEditMode();
         }
     }
 
     function discardBoarderEdits() {
-        if (editingBoarderRow) renderBoarderStatic(editingBoarderRow);
+        if (editingBoarderRow) renderBoarderStatic(editingBoarderRow, boarderOriginal);
     }
 
     function enterBoarderEditMode(row) {
@@ -1276,7 +1280,7 @@
             input.addEventListener('keydown', event => {
                 if (event.key === 'Escape') {
                     event.preventDefault();
-                    renderBoarderStatic(row);
+                    renderBoarderStatic(row, boarderOriginal);
                 } else if (event.key === 'Enter') {
                     event.preventDefault();
                     if (!boarderSaveButton.disabled) saveBoarderEdit(row);
@@ -1341,10 +1345,7 @@
         .then(response => response.json())
         .then(data => {
             if (data.ok) {
-                editingBoarderRow = null;
-                boarderOriginal = { name: '', bed: '' };
-                boarderEditActions.hidden = true;
-                boarderSaveButton.disabled = true;
+                exitBoarderEditMode();
                 row.remove();
                 maybeShowBoarderEmptyState();
             } else {
