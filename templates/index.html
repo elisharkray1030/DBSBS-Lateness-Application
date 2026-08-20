@@ -258,11 +258,6 @@
             background-color: var(--page-bg);
         }
 
-        .month-report-table th {
-            cursor: pointer;
-            user-select: none;
-        }
-
         .boarders-table td.boarder-cell {
             cursor: pointer;
         }
@@ -287,24 +282,6 @@
             position: sticky;
             top: 0;
             z-index: 1;
-        }
-
-        .sort-indicator {
-            margin-left: 4px;
-            vertical-align: -2px;
-        }
-
-        .month-report-table th .sort-up,
-        .month-report-table th .sort-down {
-            opacity: 0.35;
-        }
-
-        .month-report-table th.sort-asc .sort-up {
-            opacity: 1;
-        }
-
-        .month-report-table th.sort-desc .sort-down {
-            opacity: 1;
         }
 
         .months-list {
@@ -636,12 +613,6 @@
         <polyline points="3 6 5 6 21 6"/>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
     </symbol>
-    <symbol id="icon-sort-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6 15l6-6 6 6"/>
-    </symbol>
-    <symbol id="icon-sort-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6 9l6 6 6-6"/>
-    </symbol>
 </svg>
 <header class="site-header">
     <a class="brand" href="/">
@@ -676,7 +647,7 @@
                 <input type="text" id="search_name" placeholder="Enter name or partial name">
             </div>
             <div>
-                <button type="button" class="btn btn-primary" onclick="performSearch()">Search History</button>
+                <button type="button" class="btn btn-primary" onclick="performSearch()">Search Boarder History</button>
             </div>
         </div>
 
@@ -711,7 +682,7 @@
                         </table>
                     </div>
                 {% else %}
-                    <div class="empty-state">No history records matched your search.</div>
+                    <div class="empty-state">No Boarder History entries matched your search.</div>
                 {% endif %}
             </div>
         {% endif %}
@@ -883,7 +854,7 @@
                         <input type="month" id="report_month" name="report_month" required>
                     </div>
                     <div>
-                        <button type="submit" class="btn btn-primary">Generate and Save</button>
+                        <button type="submit" class="btn btn-primary">Import and Save</button>
                     </div>
                 </div>
             </form>
@@ -944,11 +915,11 @@
                     <table id="month-detail-table" class="month-report-table">
                         <thead>
                             <tr>
-                                <th onclick="sortMonthDetail('bed')">Bed<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
-                                <th onclick="sortMonthDetail('name')">Boarder Name<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
-                                <th onclick="sortMonthDetail('frequency')">Frequency<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
-                                <th onclick="sortMonthDetail('minutes')">Minutes Late<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
-                                <th onclick="sortMonthDetail('points')">Total Points<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th>Bed</th>
+                                <th>Boarder Name</th>
+                                <th>Frequency</th>
+                                <th>Minutes Late</th>
+                                <th>Total Points</th>
                             </tr>
                         </thead>
                         <tbody id="month-detail-body">
@@ -958,7 +929,7 @@
             </div>
         {% else %}
             <div class="empty-state">
-                <p>No reports have been saved yet. Upload a monthly log to get started!</p>
+                <p>No reports have been saved yet. Import a Monthly Log to get started!</p>
             </div>
         {% endif %}
     </section>
@@ -977,86 +948,22 @@
 </div>
 
 <script>
-    // Helper function to convert string to title case
-    function toTitleCase(str) {
-        return str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-    }
-
-    // Natural sort for bed numbers (e.g., 601A < 601B < 602A)
-    function bedComparator(a, b) {
-        const regex = /(\d+)([A-E])/;
-        const matchA = a.match(regex);
-        const matchB = b.match(regex);
-
-        if (!matchA || !matchB) return a.localeCompare(b);
-
-        const numA = parseInt(matchA[1]);
-        const numB = parseInt(matchB[1]);
-
-        if (numA !== numB) return numA - numB;
-        return matchA[2].localeCompare(matchB[2]);
-    }
-
-    // Data storage for tables
-    let monthDetailData = {};
-    let monthDetailSort = { field: 'bed', direction: 'asc' };
+    // Data storage for the month detail table
+    let monthDetailRows = [];
     let activeMonthReport = null;
 
-    // Sort and render month detail table
-    function sortMonthDetail(field) {
-        if (monthDetailSort.field === field) {
-            monthDetailSort.direction = monthDetailSort.direction === 'asc' ? 'desc' : 'asc';
-        } else {
-            monthDetailSort.field = field;
-            monthDetailSort.direction = 'asc';
-        }
-        renderMonthDetail(monthDetailSort.direction);
-    }
-
-    function renderMonthDetail(direction) {
+    // Render month detail rows in the server-provided order and names
+    function renderMonthDetail() {
         const tbody = document.getElementById('month-detail-body');
-        const rows = Object.entries(monthDetailData).map(([name, data]) => ({
-            name: name,
-            bed: data.bed,
-            frequency: data.frequency,
-            total_minutes: data.total_minutes,
-            points: data.total_points
-        }));
-
-        // Sort rows
-        rows.sort((a, b) => {
-            let compareResult = 0;
-            if (monthDetailSort.field === 'bed') {
-                compareResult = bedComparator(a.bed, b.bed);
-            } else if (monthDetailSort.field === 'name') {
-                compareResult = a.name.localeCompare(b.name);
-            } else if (monthDetailSort.field === 'frequency' || monthDetailSort.field === 'minutes' || monthDetailSort.field === 'points') {
-                const aVal = monthDetailSort.field === 'frequency' ? a.frequency : monthDetailSort.field === 'minutes' ? a.total_minutes : a.points;
-                const bVal = monthDetailSort.field === 'frequency' ? b.frequency : monthDetailSort.field === 'minutes' ? b.total_minutes : b.points;
-                compareResult = aVal - bVal;
-            }
-            return direction === 'asc' ? compareResult : -compareResult;
-        });
-
-        // Update header indicators
-        const headers = tbody.parentElement.parentElement.querySelectorAll('th');
-        headers.forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
-        if (monthDetailSort.field === 'bed') headers[0].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (monthDetailSort.field === 'name') headers[1].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (monthDetailSort.field === 'frequency') headers[2].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (monthDetailSort.field === 'minutes') headers[3].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (monthDetailSort.field === 'points') headers[4].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-
-        // Render rows
         tbody.innerHTML = '';
-        rows.forEach(row => {
+        monthDetailRows.forEach(row => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td><strong>${row.bed}</strong></td>
-                <td>${toTitleCase(row.name)}</td>
+                <td><strong>${escapeHtml(row.bed)}</strong></td>
+                <td>${escapeHtml(row.display_name)}</td>
                 <td>${row.frequency}</td>
                 <td>${row.total_minutes} mins</td>
-                <td>${row.points}</td>
+                <td>${row.total_points}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -1162,10 +1069,9 @@
                     return;
                 }
 
-                // Store data and reset sort
+                // Store data and render in the server-provided order
                 activeMonthReport = month;
-                monthDetailData = data.boarders;
-                monthDetailSort = { field: 'bed', direction: 'asc' };
+                monthDetailRows = data.boarders;
 
                 document.getElementById('month-detail-title').textContent = `Report for ${month}`;
                 document.getElementById('month-detail-download').onclick = function() {
@@ -1184,8 +1090,7 @@
                 const assignBtn = document.getElementById('month-detail-assign-btn');
                 assignBtn.onclick = function() { showAssignPanel(month, data.boarders); };
 
-                // Render with default bed sort
-                renderMonthDetail('asc');
+                renderMonthDetail();
             })
             .catch(error => {
                 console.error('Error:', error);
@@ -1213,19 +1118,19 @@
         const form = document.getElementById('assign-form');
         form.action = `/assign/${encodeURIComponent(month)}`;
 
-        const lateBoarders = Object.entries(boarders).filter(([, data]) => data.total_points > 0);
+        const lateBoarders = boarders.filter(row => row.total_points > 0);
         container.innerHTML = '';
         const checkboxes = [];
-        lateBoarders.forEach(([name, data]) => {
+        lateBoarders.forEach(row => {
             const label = document.createElement('label');
             label.className = 'assign-boarder';
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.name = 'exempt';
-            checkbox.value = name;
+            checkbox.value = row.name;
             checkbox.checked = true;
             label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(` ${name} (${data.total_points} pts)`));
+            label.appendChild(document.createTextNode(` ${row.display_name} (${row.total_points} pts)`));
             container.appendChild(label);
             checkboxes.push(checkbox);
         });

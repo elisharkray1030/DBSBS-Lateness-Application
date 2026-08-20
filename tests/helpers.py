@@ -1,9 +1,10 @@
 from records import BoarderRecord
 
 
-def record(name, bed="101", frequency=0, total_minutes=0, total_points=0):
+def record(name, bed="101", frequency=0, total_minutes=0, total_points=0, display_name=None):
     return BoarderRecord(
         name=name,
+        display_name=display_name if display_name is not None else name.title(),
         bed=bed,
         frequency=frequency,
         total_minutes=total_minutes,

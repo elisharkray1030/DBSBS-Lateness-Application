@@ -9,6 +9,7 @@ from records import (
     MonthSummary,
     Punishment,
     normalize_name,
+    sort_boarder_records,
 )
 
 
@@ -159,15 +160,23 @@ def list_boarders(conn: sqlite3.Connection) -> list[Boarder]:
     ]
 
 
-def boarder_master_list(conn: sqlite3.Connection) -> dict:
-    """Returns {normalized_name: bed} for log ingestion matching."""
+def boarder_master_list(conn: sqlite3.Connection) -> dict[str, Boarder]:
+    """Returns {normalized_name: Boarder} for log ingestion matching.
+
+    Each Boarder carries the canonical display name alongside the bed, so
+    ingestion can preserve normalized identity without losing the display
+    name staff see in the Boarders tab.
+    """
     cursor = conn.execute(
         """
-        SELECT normalized_name, bed
+        SELECT normalized_name, display_name, bed
         FROM boarders
         """
     )
-    return {row[0]: row[1] for row in cursor.fetchall()}
+    return {
+        row[0]: Boarder(normalized_name=row[0], display_name=row[1], bed=row[2])
+        for row in cursor.fetchall()
+    }
 
 
 def add_boarder(
@@ -269,9 +278,27 @@ def replace_boarders(
     conn: sqlite3.Connection,
     rows: Iterable[Boarder],
 ) -> None:
-    """Replaces the entire master list with the given boarders."""
+    """Replaces the entire master list with the given boarders.
+
+    Duplicate normalized names resolve last-row-wins before any validation.
+    When two different boarders claim the same Bed, a ValueError is raised and
+    the existing roster is left untouched, so a bad CSV can never partially
+    replace the master list.
+    """
+    deduped = {boarder.normalized_name: boarder for boarder in rows}
+    by_bed: dict[str, Boarder] = {}
+    for boarder in deduped.values():
+        other = by_bed.get(boarder.bed)
+        if other is not None and other.normalized_name != boarder.normalized_name:
+            raise ValueError(
+                f"Bed '{boarder.bed}' is assigned to both '{other.display_name}' "
+                f"and '{boarder.display_name}'. Assign each Bed to one Boarder "
+                "and Import again."
+            )
+        by_bed[boarder.bed] = boarder
+
     conn.execute("DELETE FROM boarders")
-    for boarder in rows:
+    for boarder in deduped.values():
         conn.execute(
             """
             INSERT INTO boarders (normalized_name, display_name, bed)
@@ -306,6 +333,7 @@ def save_month(
                 imported_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(normalized_name, month) DO UPDATE SET
+                display_name = excluded.display_name,
                 bed = excluded.bed,
                 frequency = excluded.frequency,
                 total_minutes = excluded.total_minutes,
@@ -347,23 +375,24 @@ def get_month_report(conn: sqlite3.Connection, month_label: str) -> list[Boarder
 
     cursor = conn.execute(
         """
-        SELECT normalized_name, bed, frequency, total_minutes, total_points
+        SELECT normalized_name, display_name, bed, frequency, total_minutes, total_points
         FROM boarder_history
         WHERE month = ?
-        ORDER BY bed ASC, display_name ASC
         """,
         (month_label,),
     )
-    return [
+    records = [
         BoarderRecord(
             name=row[0],
-            bed=row[1],
-            frequency=row[2],
-            total_minutes=row[3],
-            total_points=row[4],
+            display_name=row[1],
+            bed=row[2],
+            frequency=row[3],
+            total_minutes=row[4],
+            total_points=row[5],
         )
         for row in cursor.fetchall()
     ]
+    return sort_boarder_records(records)
 
 
 def search_history(conn: sqlite3.Connection, name_query: str) -> list[HistoryEntry]:

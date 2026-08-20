@@ -1,3 +1,5 @@
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 
@@ -6,9 +8,30 @@ def normalize_name(name: str) -> str:
     return name.strip().upper()
 
 
-def boarder_sort_key(boarder: "Boarder") -> tuple[str, str]:
-    """Orders boarders by bed then display name, matching the SQL ordering."""
-    return (boarder.bed, boarder.display_name)
+def boarder_sort_key(boarder: "Boarder") -> tuple[tuple[int, int, str], str]:
+    """Orders boarders by the shared Bed ordering rule, then display name."""
+    return (bed_sort_key(boarder.bed), boarder.display_name)
+
+
+_BED_NUMERIC_PATTERN = re.compile(r"^(\d+)(.*)$")
+
+
+def bed_sort_key(bed: str) -> tuple[int, int, str]:
+    """Orders beds by leading number then suffix, with a lexical fallback.
+
+    The single server-side ordering rule for Bed values: '9A' sorts before
+    '10', and '601A' before '601B' before '602A'. Beds that do not start with
+    a number sort lexically after every numbered bed.
+    """
+    match = _BED_NUMERIC_PATTERN.match(bed)
+    if match:
+        return (0, int(match.group(1)), match.group(2))
+    return (1, 0, bed)
+
+
+def sort_boarder_records(records: "Iterable[BoarderRecord]") -> "list[BoarderRecord]":
+    """Orders Monthly Report rows by the shared Bed rule, then normalized name."""
+    return sorted(records, key=lambda r: (bed_sort_key(r.bed), r.name))
 
 
 @dataclass
@@ -23,17 +46,15 @@ class Boarder:
 
 @dataclass
 class BoarderRecord:
-    """One boarder's month summary, keyed by normalized name."""
+    """One boarder's month summary: normalized identity, canonical display
+    name, bed, and the computed lateness values."""
 
     name: str
+    display_name: str
     bed: str
     frequency: int
     total_minutes: int
     total_points: int
-
-    @property
-    def display_name(self) -> str:
-        return self.name.title()
 
 
 @dataclass

@@ -125,7 +125,7 @@ class TestBoarderSeeding:
         monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
         app_module.init_db()
         with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": "601A"}
+            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
     def test_seeding_is_skipped_when_boarders_exist(self, tmp_path, monkeypatch):
         db_path = tmp_path / "seed.db"
@@ -138,7 +138,7 @@ class TestBoarderSeeding:
         monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
         app_module.init_db()
         with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": "601A"}
+            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
     def test_no_namelist_leaves_boarders_empty(self, tmp_path, monkeypatch):
         db_path = tmp_path / "seed.db"
@@ -156,7 +156,7 @@ class TestBoarderSeeding:
         monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
         app_module.init_db()
         with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": "601A"}
+            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
             conn.execute("DELETE FROM boarders")
             conn.commit()
         app_module.init_db()
@@ -186,7 +186,7 @@ class TestBoarderSeeding:
         monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
         app_module.init_db()
         with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": "601A"}
+            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
 
 class TestImportUsesDbBoarders:
@@ -561,6 +561,86 @@ class TestBoarderBulkImport:
         assert {r.name for r in saved} == {"ZED"}
 
 
+class TestBoarderBulkImportDuplicateBed:
+    def test_duplicate_bed_import_shows_inline_error_and_keeps_roster(self, fresh_client):
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601A\nDana,601A\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "assigned to both" in html
+        assert "601A" in html
+        with app_module.connect() as conn:
+            boarders = storage.list_boarders(conn)
+        assert [(b.normalized_name, b.bed) for b in boarders] == [
+            ("ALICE", "601A"),
+            ("BOB", "601B"),
+        ]
+
+    def test_duplicate_bed_import_does_not_partially_replace(self, fresh_client):
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (
+                    io.BytesIO(b"Name,Bed\nCarol,601A\nDana,601A\nEve,601B\n"),
+                    "roster.csv",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 200
+        with app_module.connect() as conn:
+            boarders = storage.list_boarders(conn)
+        assert [(b.normalized_name, b.bed) for b in boarders] == [
+            ("ALICE", "601A"),
+            ("BOB", "601B"),
+        ]
+
+    def test_duplicate_bed_import_after_prior_import_keeps_prior_roster(self, fresh_client):
+        fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nZed,601C\nWye,601C\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 200
+        with app_module.connect() as conn:
+            boarders = storage.list_boarders(conn)
+        assert [(b.normalized_name, b.bed) for b in boarders] == [
+            ("CAROL", "601C"),
+            ("DANA", "601D"),
+        ]
+
+    def test_import_matching_existing_bed_is_still_valid(self, fresh_client):
+        resp = fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601A\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 302
+        with app_module.connect() as conn:
+            boarders = storage.list_boarders(conn)
+        assert [(b.normalized_name, b.bed) for b in boarders] == [("CAROL", "601A")]
+
+
 class TestBoarderExport:
     def test_export_returns_csv_download(self, fresh_client):
         resp = fresh_client.get("/boarders/export")
@@ -616,6 +696,19 @@ class TestImportPostRedirectGet:
         assert "with 1 boarder recorded as late" in html
         assert 'const initialMonthToOpen = "2026-07";' in html
 
+    def test_mixed_import_redirect_shows_diagnostics_in_page(self, fresh_client):
+        resp = self._import(
+            fresh_client,
+            body="Name,Transaction Time\nALICE,07:45\nGHOST,07:46\nBOB,7:47\n",
+        )
+
+        assert resp.status_code == 302
+        page = fresh_client.get(resp.headers["Location"])
+        html = page.get_data(as_text=True)
+        assert "Unmatched names: GHOST." in html
+        assert "Unparseable times: BOB" in html
+        assert "7:47" in html
+
     def test_following_redirect_does_not_duplicate_the_import(self, fresh_client):
         resp = self._import(fresh_client)
         fresh_client.get(resp.headers["Location"])
@@ -659,6 +752,104 @@ class TestImportPostRedirectGet:
         with app_module.connect() as conn:
             months = storage.list_months(conn)
         assert len(months) == 1
+
+
+class TestMonthApi:
+    def test_api_returns_ordered_explicit_row_list(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [
+                    record("ALICE", "102", 2, 5, 7, display_name="Alice"),
+                    record("BOB", "101", 1, 19, 20, display_name="Bob"),
+                ],
+                "2026-07",
+            )
+        response = fresh_client.get("/api/month/2026-07")
+
+        assert response.status_code == 200
+        body = response.get_json()
+        assert body["month"] == "2026-07"
+        assert isinstance(body["boarders"], list)
+        assert body["boarders"][0] == {
+            "name": "BOB",
+            "display_name": "Bob",
+            "bed": "101",
+            "frequency": 1,
+            "total_minutes": 19,
+            "total_points": 20,
+        }
+        assert body["boarders"][1]["name"] == "ALICE"
+
+    def test_api_rows_carry_all_typed_fields(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7, display_name="Alicia")], "2026-07")
+        body = fresh_client.get("/api/month/2026-07").get_json()
+
+        assert set(body["boarders"][0].keys()) == {
+            "name",
+            "display_name",
+            "bed",
+            "frequency",
+            "total_minutes",
+            "total_points",
+        }
+
+    def test_api_returns_server_ordered_rows_by_bed_rule(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [
+                    record("A", bed="10"),
+                    record("B", bed="9A"),
+                    record("C", bed="101A"),
+                    record("D", bed="101"),
+                ],
+                "2026-07",
+            )
+        body = fresh_client.get("/api/month/2026-07").get_json()
+
+        assert [row["name"] for row in body["boarders"]] == ["B", "A", "D", "C"]
+
+    def test_api_unknown_month_returns_404(self, fresh_client):
+        response = fresh_client.get("/api/month/1999-01")
+        assert response.status_code == 404
+        assert response.get_json()["error"]
+
+
+class TestServerOwnedReportRows:
+    def test_page_no_longer_contains_client_sorting_helpers(self):
+        html = home_html()
+        assert "toTitleCase" not in html
+        assert "bedComparator" not in html
+        assert "sortMonthDetail" not in html
+        assert "sort-indicator" not in html
+
+    def test_client_renders_server_rows_and_display_names(self):
+        html = home_html()
+        assert "monthDetailRows = data.boarders;" in html
+        assert "row.display_name" in html
+
+    def test_page_renders_import_copy_without_generate(self):
+        html = home_html()
+        assert "Import and Save" in html
+        assert "Generate" not in html
+
+    def test_history_button_uses_boarder_history_terminology(self):
+        html = home_html()
+        assert "Search Boarder History" in html
+        assert ">Search History</button>" not in html
+
+    def test_empty_history_uses_boarder_history_terminology(self, fresh_client):
+        resp = fresh_client.post("/", data={"search_name": "ZZZ"})
+        html = resp.get_data(as_text=True)
+        assert "No Boarder History entries matched your search." in html
+        assert "No history records matched" not in html
+
+    def test_empty_reports_copy_uses_import(self, fresh_client):
+        html = fresh_client.get("/").get_data(as_text=True)
+        assert "Import a Monthly Log to get started!" in html
+        assert "Upload a monthly log" not in html
 
 
 class TestAssignRoute:

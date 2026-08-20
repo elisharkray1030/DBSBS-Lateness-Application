@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 import storage
-from records import Boarder, BoarderRecord, UnparsedTimeRow, boarder_sort_key, normalize_name
+from records import Boarder, BoarderRecord, UnparsedTimeRow, sort_boarder_records, boarder_sort_key, normalize_name
 
 START_SECONDS = (7 * 3600) + (41 * 60)
 END_SECONDS = (8 * 3600) + (0 * 60)
@@ -51,10 +51,15 @@ class SavedOutcome:
     @property
     def message(self) -> str:
         boarder_word = "boarder" if self.boarders_count == 1 else "boarders"
-        return (
+        parts = [
             f"Monthly report saved for '{self.month_label}' "
             f"with {self.boarders_count} {boarder_word} recorded as late."
-        )
+        ]
+        if self.diagnostics.unmatched_names:
+            parts.append(f"Unmatched names: {', '.join(self.diagnostics.unmatched_names)}.")
+        if self.diagnostics.unparseable_rows:
+            parts.append(f"Unparseable times: {_format_unparseable_rows(self.diagnostics.unparseable_rows)}.")
+        return " ".join(parts)
 
 
 @dataclass
@@ -111,11 +116,11 @@ def load_namelist_rows(namelist_filename):
 
 
 def load_namelist(namelist_filename):
-    """Loads valid boarders into a mapping of normalized name to bed, or None."""
+    """Loads valid boarders as a normalized-name-to-Boarder mapping, or None."""
     rows = load_namelist_rows(namelist_filename)
     if rows is None:
         return None
-    return {boarder.normalized_name: boarder.bed for boarder in rows}
+    return {boarder.normalized_name: boarder for boarder in rows}
 
 
 def master_list_to_csv(boarders):
@@ -131,13 +136,25 @@ def master_list_to_csv(boarders):
 
 
 def parse_log_stream(log_stream, master_list):
-    """Parses a monthly log stream into boarder records and diagnostics."""
+    """Parses a monthly log stream into boarder records and diagnostics.
+
+    The master list maps each normalized name to a Boarder carrying both the
+    canonical display name and the bed, so the parsed records keep normalized
+    matching while carrying the display name the staff see in the Boarders tab.
+    """
     if master_list is None:
         master_list = {}
 
     boarders = {
-        name: BoarderRecord(name=name, bed=bed, frequency=0, total_minutes=0, total_points=0)
-        for name, bed in master_list.items()
+        name: BoarderRecord(
+            name=name,
+            display_name=boarder.display_name,
+            bed=boarder.bed,
+            frequency=0,
+            total_minutes=0,
+            total_points=0,
+        )
+        for name, boarder in master_list.items()
     }
 
     rows_read = 0
@@ -248,15 +265,19 @@ def ingest_log(log_stream, month_label, master_list, conn):
 
 
 def boarders_to_csv(boarders):
-    """Renders boarder records to CSV text with a deterministic row order."""
+    """Renders boarder records to CSV text with the canonical row order.
+
+    Rows are ordered by the shared server-side Bed ordering rule and carry the
+    canonical display name, so the CSV matches the report detail view.
+    """
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(CSV_HEADERS)
 
-    for record in sorted(boarders, key=lambda r: (r.bed, r.name)):
+    for record in sort_boarder_records(boarders):
         writer.writerow([
             record.bed,
-            record.name,
+            record.display_name,
             record.frequency,
             record.total_minutes,
             record.total_points,
@@ -308,15 +329,14 @@ def cli_main(namelist_path='namelist.csv', log_path='test_data.csv', output_path
 
     diagnostics = outcome.diagnostics
     print(f"Read {diagnostics.rows_read} log rows, matched {diagnostics.matched_rows}.")
-    print(f"Unmatched names: {diagnostics.unmatched_names}")
-    print(f"Unparseable rows: {[(r.name, r.raw_value) for r in diagnostics.unparseable_rows]}")
 
     if isinstance(outcome, RejectedOutcome):
         print(f"Rejected: {outcome.reason}")
         return 1
 
     export_to_csv(output_path, outcome.boarders)
-    print(f"Generated '{output_path}'.")
+    print(outcome.message)
+    print(f"Wrote report to '{output_path}'.")
     return 0
 
 

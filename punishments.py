@@ -171,7 +171,22 @@ def _is_due(punishment, now: datetime) -> bool:
 def _was_late(punishment) -> bool:
     if punishment.status != "submitted" or not punishment.submitted_at:
         return False
-    return punishment.submitted_at > punishment.deadline
+    submitted_at = _submission_date(punishment.submitted_at)
+    deadline = date.fromisoformat(punishment.deadline)
+    return submitted_at > deadline
+
+
+def _submission_date(submitted_at: str) -> date:
+    """Parses a stored submission timestamp to its calendar date.
+
+    Accepts a full ISO timestamp or a bare date, so a submission on the
+    deadline date is never treated as late due to a string comparison against
+    the deadline's date string.
+    """
+    try:
+        return datetime.fromisoformat(submitted_at).date()
+    except ValueError:
+        return date.fromisoformat(submitted_at)
 
 
 def _status_rank(status: str) -> int:

@@ -62,18 +62,6 @@ def init_db():
         storage.set_meta(conn, SEED_FLAG, "1")
 
 
-def serialize_boarders(boarders):
-    return {
-        record.name: {
-            'bed': record.bed,
-            'frequency': record.frequency,
-            'total_minutes': record.total_minutes,
-            'total_points': record.total_points,
-        }
-        for record in boarders
-    }
-
-
 def build_csv_response(boarders, download_name):
     csv_bytes = io.BytesIO(boarders_to_csv(boarders).encode('utf-8'))
     csv_bytes.seek(0)
@@ -129,12 +117,12 @@ def home():
             selected_tab = 'history'
             search_name = request.form.get('search_name', '').strip()
             if not search_name:
-                error = "Please enter a boarder name to search the history."
+                error = "Please enter a boarder name to search Boarder History."
             else:
                 with connect() as conn:
                     history_results = storage.search_history(conn, search_name)
                 if not history_results:
-                    message = f"No history found for '{search_name}'."
+                    message = f"No Boarder History found for '{search_name}'."
         else:
             with connect() as conn:
                 all_months = storage.list_months(conn)
@@ -226,8 +214,10 @@ def import_boarders():
         finally:
             log_stream.detach()
 
-        deduped = {boarder.normalized_name: boarder for boarder in rows}
-        storage.replace_boarders(conn, list(deduped.values()))
+        try:
+            storage.replace_boarders(conn, rows)
+        except ValueError as exc:
+            return _render_boarders(error=f"Error: {exc}")
     return redirect('/boarders')
 
 
@@ -283,7 +273,20 @@ def api_month(month):
     if not boarders:
         return jsonify({'error': f'No report found for {month}.'}), 404
 
-    return jsonify({'month': month, 'boarders': serialize_boarders(boarders)})
+    return jsonify({
+        'month': month,
+        'boarders': [
+            {
+                'name': record.name,
+                'display_name': record.display_name,
+                'bed': record.bed,
+                'frequency': record.frequency,
+                'total_minutes': record.total_minutes,
+                'total_points': record.total_points,
+            }
+            for record in boarders
+        ],
+    })
 
 
 @app.route('/download_month/<path:month>')

@@ -100,7 +100,7 @@ If you are using Docker Compose, the root `namelist.csv` is only consulted for t
 
 ## Upload behaviour
 
-A month report is only saved when the uploaded log produced at least one row for a known boarder with a parseable time. Uploads that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful upload reports how many boarders were recorded. The upload stream is consumed directly by the ingestion module - it is never written to a temp file on disk.
+A month report is only saved when the uploaded log produced at least one row for a known boarder with a parseable time. Uploads that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful Import reports how many boarders were recorded, and lists unmatched names or unparseable times when present, so staff can correct bad source data. The upload stream is consumed directly by the ingestion module - it is never written to a temp file on disk.
 
 The web upload and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
 
@@ -132,7 +132,8 @@ Important behavior:
 
 - Each route opens its own connection and passes it into the storage functions; nothing reads a `DB_PATH` module global inside the storage layer.
 - The upload route forwards the request stream straight into `ingest_log` - no temp file on disk.
-- `serialize_boarders()` derives the JSON body from the shared `BoarderRecord`, so the wire format matches the stored rows and the CSV writer.
+- `api_month()` returns the month's rows as an ordered collection of explicit fields (name, display name, bed, frequency, total minutes, total points), so the wire format matches the stored rows and the CSV writer and carries the canonical display name.
+- A roster Import validates Bed uniqueness before replacing the master list: a CSV that assigns one Bed to two different boarders shows an actionable error and leaves the existing roster untouched, while duplicate normalized names still resolve last-row-wins.
 
 ### `parser.py` - the shared ingestion module, CSV writer, and CLI
 
@@ -140,9 +141,9 @@ Important behavior:
 
 Important behavior:
 
-- `load_namelist(namelist_filename)` reads the master list and normalizes names; returns `None` if the file is missing.
-- `ingest_log(log_stream, month_label, master_list, conn)` takes the log as a stream, the month label, the namelist, and a history store connection, and returns one outcome - either the report saved, or rejected with an exact reason. A rejected ingestion leaves the store untouched.
-- `SavedOutcome` carries the saved `BoarderRecord` list plus diagnostics (rows read, matched rows, unmatched names, unparseable rows) and builds the user-facing message.
+- `load_namelist(namelist_filename)` reads the master list into a normalized-name-to-Boarder mapping; returns `None` if the file is missing.
+- `ingest_log(log_stream, month_label, master_list, conn)` takes the log as a stream, the month label, the master list (each entry carrying the canonical display name and bed), and a history store connection, and returns one outcome - either the report saved, or rejected with an exact reason. A rejected ingestion leaves the store untouched.
+- `SavedOutcome` carries the saved `BoarderRecord` list plus diagnostics (rows read, matched rows, unmatched names, unparseable rows) and builds the user-facing message, which includes the saved-month confirmation and late-boarder count plus any unmatched names or unparseable times.
 - `RejectedOutcome` carries the exact rejection reason (master list missing/empty, empty log, no rows matched any boarder, or no parseable time).
 - `boarders_to_csv(boarders)` renders a boarder record list to CSV text (used by the download route and the export).
 - `export_to_csv(output_filename, boarders)` writes the results to a CSV file.
@@ -157,17 +158,18 @@ Important behavior:
 - `create_schema(conn)` creates the `boarder_history` table if it does not exist.
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
 - `list_months(conn)` returns the month summaries used in the UI (month label, boarder count, total minutes late), ordered newest-first.
-- `get_month_report(conn, month_label)` returns one month's stored `BoarderRecord` rows.
+- `get_month_report(conn, month_label)` returns one month's stored `BoarderRecord` rows, ordered by the server's single Bed ordering rule (numeric part then suffix, lexical fallback).
 - `search_history(conn, name_query)` performs a partial match against stored names.
 - `delete_month(conn, month_label)` removes a month and returns the deleted row count.
+- `replace_boarders(conn, rows)` replaces the master list after resolving duplicate normalized names last-row-wins and validating that no two different boarders share a Bed, raising a ValueError otherwise.
 
 ### `records.py` - the typed boarder record
 
-`records.py` defines the `BoarderRecord` (named fields for bed, frequency, total minutes late, total points, plus the normalized boarder name) once, shared by the ingestion module, the CSV writer, the storage module, and the JSON body. It also holds the `UnparsedTimeRow` and `HistoryEntry` records.
+`records.py` defines the `BoarderRecord` (normalized identity, canonical display name, bed, frequency, total minutes late, total points) once, shared by the ingestion module, the CSV writer, the storage module, and the JSON body. It also holds the `Boarder` master-list row, the `UnparsedTimeRow` and `HistoryEntry` records, and the `bed_sort_key` rule that orders Monthly Report rows.
 
 ### `templates/index.html` - User interface and client scripting
 
-The template renders the dashboard, search tab, month cards, month detail table, delete confirmation modal, and client-side sorting and fetch behavior.
+The template renders the dashboard, search tab, month cards, month detail table, delete confirmation modal, and fetch behavior. The month detail table renders the rows and canonical display names supplied by the server in the server-defined order; no client-side sorting or name formatting is applied.
 
 ## Troubleshooting
 

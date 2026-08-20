@@ -2,11 +2,16 @@
 
 import pytest
 from helpers import month_labels, record
+from records import Boarder
 
 import storage
 from parser import RejectedOutcome, SavedOutcome, ingest_log
 
-MASTER = {"ALICE": "101", "BOB": "102", "CAROL": "103"}
+MASTER = {
+    "ALICE": Boarder("ALICE", "Alice", "101"),
+    "BOB": Boarder("BOB", "Bob", "102"),
+    "CAROL": Boarder("CAROL", "Carol", "103"),
+}
 LOG_HEADER = "Name,Transaction Time\n"
 
 
@@ -193,11 +198,26 @@ class TestIngestLog:
         assert all(isinstance(o, RejectedOutcome) for o in cases)
 
     def test_does_not_mutate_master_list(self, conn):
-        master = {"ALICE": "101", "BOB": "102"}
+        master = {
+            "ALICE": Boarder("ALICE", "Alice", "101"),
+            "BOB": Boarder("BOB", "Bob", "102"),
+        }
         outcome = ingest(LOG_HEADER + "ALICE,07:42\n", master=master, conn=conn)
 
         assert isinstance(outcome, SavedOutcome)
-        assert master == {"ALICE": "101", "BOB": "102"}
+        assert master == {
+            "ALICE": Boarder("ALICE", "Alice", "101"),
+            "BOB": Boarder("BOB", "Bob", "102"),
+        }
+
+    def test_canonical_display_name_flows_into_saved_rows(self, conn):
+        master = {"ALICE": Boarder("ALICE", "Alicia", "101")}
+        outcome = ingest(LOG_HEADER + "ALICE,07:42\n", master=master, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.boarders[0].display_name == "Alicia"
+        saved = storage.get_month_report(conn, "2026-03")
+        assert saved[0].display_name == "Alicia"
 
     def test_rejected_ingestion_leaves_store_untouched(self, conn):
         storage.save_month(
@@ -223,8 +243,37 @@ class TestIngestLog:
         assert isinstance(outcome, SavedOutcome)
         assert "2026-03" in outcome.message
         assert "1 boarder recorded" in outcome.message
-        assert "GHOST" not in outcome.message
-        assert "BOB ('7:45')" not in outcome.message
+        assert "Unmatched names: GHOST." in outcome.message
+        assert "Unparseable times: BOB ('7:45')." in outcome.message
+
+    def test_clean_import_message_omits_diagnostic_sections(self, conn):
+        outcome = ingest(LOG_HEADER + "ALICE,07:42\n" + "BOB,08:00\n", conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "2 boarders recorded" in outcome.message
+        assert "Unmatched names" not in outcome.message
+        assert "Unparseable times" not in outcome.message
+
+    def test_unmatched_only_saved_message_lists_each_name_once(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:42\n" + "GHOST,07:43\n" + "GHOST,07:44\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.message == (
+            "Monthly report saved for '2026-03' with 1 boarder recorded as late. "
+            "Unmatched names: GHOST."
+        )
+
+    def test_unparseable_only_saved_message_lists_each_row(self, conn):
+        outcome = ingest(
+            LOG_HEADER + "ALICE,07:42\n" + "BOB,7:45\n" + "CAROL,07:99\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "Unparseable times: BOB ('7:45'), CAROL ('07:99')." in outcome.message
 
     def test_clean_month_saves_and_reports_zero_boarders(self, conn):
         outcome = ingest(

@@ -22,9 +22,9 @@ class TestLoadNamelist:
         path = tmp_path / "namelist.csv"
         path.write_text("Name,Bed\nalice,101\nBOB,102\ncarol smith,103\n", encoding="utf-8")
         assert load_namelist(str(path)) == {
-            "ALICE": "101",
-            "BOB": "102",
-            "CAROL SMITH": "103",
+            "ALICE": Boarder(normalized_name="ALICE", display_name="alice", bed="101"),
+            "BOB": Boarder(normalized_name="BOB", display_name="BOB", bed="102"),
+            "CAROL SMITH": Boarder(normalized_name="CAROL SMITH", display_name="carol smith", bed="103"),
         }
 
     def test_missing_file_returns_none(self, tmp_path):
@@ -148,7 +148,11 @@ class TestBoarderRecord:
         assert rec.total_minutes == 5
         assert rec.total_points == 7
 
-    def test_display_name_is_title_cased(self):
+    def test_exposes_canonical_display_name(self):
+        rec = record(name="ALICE", display_name="Alicia", bed="101")
+        assert rec.display_name == "Alicia"
+
+    def test_display_name_defaults_to_title_case(self):
         assert record("ALICE").display_name == "Alice"
         assert record("CAROL SMITH").display_name == "Carol Smith"
 
@@ -162,8 +166,13 @@ class TestBoardersToCsv:
         rows = list(csv.reader(io.StringIO(boarders_to_csv(boarders))))
 
         assert rows[0] == ["Bed", "Name", "Frequency", "Total Minutes Late", "Total Points"]
-        assert rows[1] == ["101", "ALICE", "2", "5", "7"]
-        assert rows[2] == ["102", "BOB", "1", "19", "20"]
+        assert rows[1] == ["101", "Alice", "2", "5", "7"]
+        assert rows[2] == ["102", "Bob", "1", "19", "20"]
+
+    def test_name_column_uses_canonical_display_name(self):
+        boarders = [record("ALICE", display_name="Alicia", bed="101")]
+        rows = list(csv.reader(io.StringIO(boarders_to_csv(boarders))))
+        assert rows[1] == ["101", "Alicia", "0", "0", "0"]
 
     def test_points_come_from_carried_value_not_recomputed(self):
         boarders = [record("X", bed="1", frequency=1, total_minutes=2, total_points=99)]
@@ -177,7 +186,18 @@ class TestBoardersToCsv:
         ]
         text = boarders_to_csv(boarders)
         names = [row[1] for row in csv.reader(io.StringIO(text))][1:]
-        assert names == ["ALICE", "BOB"]
+        assert names == ["Alice", "Bob"]
+
+    def test_orders_beds_by_number_then_suffix(self):
+        boarders = [
+            record("A", bed="10"),
+            record("B", bed="9A"),
+            record("C", bed="101A"),
+            record("D", bed="101"),
+        ]
+        text = boarders_to_csv(boarders)
+        names = [row[1] for row in csv.reader(io.StringIO(text))][1:]
+        assert names == ["B", "A", "D", "C"]
 
 
 class TestExportToCsv:
@@ -238,11 +258,30 @@ class TestCli:
         with open(output, encoding="utf-8", newline="") as file:
             written = file.read()
         assert written == boarders_to_csv(
-            [record("ALICE", bed="601A", frequency=1, total_minutes=1, total_points=2)]
+            [record("ALICE", bed="601A", frequency=1, total_minutes=1, total_points=2, display_name="alice")]
         )
         captured = capsys.readouterr()
         assert "Read 1 log rows, matched 1." in captured.out
-        assert "Unmatched names: []" in captured.out
+        assert "Monthly report saved for" in captured.out
+        assert "with 1 boarder recorded as late" in captured.out
+
+    def test_cli_prints_saved_message_with_diagnostics(self, tmp_path, capsys):
+        namelist = tmp_path / "namelist.csv"
+        namelist.write_text("Bed,Name\n601A,alice\n", encoding="utf-8")
+        log = tmp_path / "log.csv"
+        log.write_text(
+            "Name,Transaction Time\nALICE,07:42\nGHOST,07:43\nALICE,7:45\n", encoding="utf-8"
+        )
+        output = tmp_path / "report.csv"
+
+        code = cli_main(str(namelist), str(log), str(output))
+
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "Unmatched names: GHOST." in captured.out
+        assert "Unparseable times: ALICE ('7:45')." in captured.out
+        assert "Wrote report to" in captured.out
+        assert "Generated" not in captured.out
 
     def test_cli_main_rejects_missing_namelist(self, tmp_path, capsys):
         missing = tmp_path / "nope.csv"

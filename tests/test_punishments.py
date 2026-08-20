@@ -307,6 +307,33 @@ class TestListConsequences:
         submitted = next(r for r in rows if r.status == "submitted")
         assert submitted.was_late is False
 
+    def test_submission_on_deadline_date_not_flagged_late(self, conn):
+        self._assign(conn)
+        row = storage.list_punishments(conn, statuses=("assigned",))[0]
+        transition(conn, row.id, "submitted", timestamp="2026-04-10T09:00:00+00:00")
+
+        rows = list_consequences(conn, show_all=True)
+        submitted = next(r for r in rows if r.status == "submitted")
+        assert submitted.was_late is False
+
+    def test_submission_next_day_after_deadline_flagged_late(self, conn):
+        self._assign(conn)
+        row = storage.list_punishments(conn, statuses=("assigned",))[0]
+        transition(conn, row.id, "submitted", timestamp="2026-04-11T09:00:00+00:00")
+
+        rows = list_consequences(conn, show_all=True)
+        submitted = next(r for r in rows if r.status == "submitted")
+        assert submitted.was_late is True
+
+    def test_submission_much_later_flagged_late(self, conn):
+        self._assign(conn)
+        row = storage.list_punishments(conn, statuses=("assigned",))[0]
+        transition(conn, row.id, "submitted", timestamp="2026-05-30T09:00:00+00:00")
+
+        rows = list_consequences(conn, show_all=True)
+        submitted = next(r for r in rows if r.status == "submitted")
+        assert submitted.was_late is True
+
     def test_status_filter_narrows_results(self, conn):
         self._assign(conn)
         rows = storage.list_punishments(conn, statuses=("assigned",))

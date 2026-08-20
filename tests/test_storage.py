@@ -137,14 +137,64 @@ class TestBoarders:
             (b.normalized_name, b.bed) for b in expected
         ]
 
-    def test_boarder_master_list_maps_normalized_to_bed(self, conn):
+    def test_boarder_master_list_maps_normalized_to_boarder(self, conn):
         storage.replace_boarders(
             conn, [boarder("ALICE", "Alice", "601A"), boarder("BOB", "Bob", "601B")]
         )
-        assert storage.boarder_master_list(conn) == {"ALICE": "601A", "BOB": "601B"}
+        assert storage.boarder_master_list(conn) == {
+            "ALICE": boarder("ALICE", "Alice", "601A"),
+            "BOB": boarder("BOB", "Bob", "601B"),
+        }
 
     def test_boarder_master_list_empty_returns_empty_dict(self, conn):
         assert storage.boarder_master_list(conn) == {}
+
+
+class TestReplaceBoardersSafety:
+    def test_duplicate_bed_across_names_rejected_and_roster_unchanged(self, conn):
+        storage.replace_boarders(conn, [boarder("ALICE", "Alice", "601A")])
+        with pytest.raises(ValueError):
+            storage.replace_boarders(
+                conn,
+                [boarder("ALICE", "Alice", "601A"), boarder("BOB", "Bob", "601A")],
+            )
+        assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
+            ("ALICE", "601A")
+        ]
+
+    def test_duplicate_bed_error_names_both_boarders(self, conn):
+        with pytest.raises(ValueError) as excinfo:
+            storage.replace_boarders(
+                conn,
+                [boarder("ALICE", "Alice", "601A"), boarder("BOB", "Bob", "601A")],
+            )
+        message = str(excinfo.value)
+        assert "601A" in message
+        assert "Alice" in message
+        assert "Bob" in message
+
+    def test_duplicate_name_last_row_wins(self, conn):
+        storage.replace_boarders(
+            conn,
+            [boarder("ALICE", "Alice", "601A"), boarder("ALICE", "Alicia", "602A")],
+        )
+        assert [(b.display_name, b.bed) for b in storage.list_boarders(conn)] == [
+            ("Alicia", "602A")
+        ]
+
+    def test_same_name_same_bed_duplicates_are_not_a_conflict(self, conn):
+        storage.replace_boarders(
+            conn,
+            [boarder("ALICE", "Alice", "601A"), boarder("ALICE", "Alice", "601A")],
+        )
+        assert [(b.display_name, b.bed) for b in storage.list_boarders(conn)] == [
+            ("Alice", "601A")
+        ]
+
+    def test_valid_replacement_still_replaces(self, conn):
+        storage.replace_boarders(conn, [boarder("ALICE", "Alice", "601A")])
+        storage.replace_boarders(conn, [boarder("BOB", "Bob", "601B")])
+        assert [b.normalized_name for b in storage.list_boarders(conn)] == ["BOB"]
 
 
 class TestAddBoarder:
@@ -259,6 +309,23 @@ class TestSaveMonth:
         assert [r.frequency for r in storage.get_month_report(conn, "2026-03")] == [2]
         assert [r.frequency for r in storage.get_month_report(conn, "2026-04")] == [1]
 
+    def test_save_month_persists_canonical_display_name(self, conn):
+        storage.save_month(conn, [record("ALICE", "101", 2, 5, 7, display_name="Alicia")], "2026-03")
+        assert storage.get_month_report(conn, "2026-03")[0].display_name == "Alicia"
+
+    def test_upsert_refreshes_display_name_for_that_month(self, conn):
+        storage.save_month(conn, [record("ALICE", "101", 2, 5, 7, display_name="Alice")], "2026-03")
+        storage.save_month(conn, [record("ALICE", "101", 3, 8, 11, display_name="Alicia")], "2026-03")
+
+        assert storage.get_month_report(conn, "2026-03")[0].display_name == "Alicia"
+
+    def test_refresh_does_not_rewrite_other_months(self, conn):
+        storage.save_month(conn, [record("ALICE", "101", 2, 5, 7, display_name="Alice")], "2026-03")
+        storage.save_month(conn, [record("ALICE", "101", 2, 5, 7, display_name="Alicia")], "2026-04")
+
+        assert storage.get_month_report(conn, "2026-03")[0].display_name == "Alice"
+        assert storage.get_month_report(conn, "2026-04")[0].display_name == "Alicia"
+
 
 class TestListMonths:
     def test_returns_saved_months_newest_first(self, conn):
@@ -354,6 +421,21 @@ class TestGetMonthReport:
 
         saved = storage.get_month_report(conn, "2026-03")
         assert [r.name for r in saved] == ["BOB", "CAROL", "ALICE"]
+
+    def test_orders_beds_by_number_then_suffix(self, conn):
+        storage.save_month(
+            conn,
+            [
+                record("A", bed="10"),
+                record("B", bed="9A"),
+                record("C", bed="101A"),
+                record("D", bed="101"),
+            ],
+            "2026-03",
+        )
+
+        saved = storage.get_month_report(conn, "2026-03")
+        assert [r.name for r in saved] == ["B", "A", "D", "C"]
 
     def test_unknown_month_returns_empty(self, conn):
         assert storage.get_month_report(conn, "nope") == []
