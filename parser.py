@@ -50,16 +50,7 @@ class SavedOutcome:
 
     @property
     def message(self) -> str:
-        boarder_word = "boarder" if self.boarders_count == 1 else "boarders"
-        parts = [
-            f"Monthly report saved for '{self.month_label}' "
-            f"with {self.boarders_count} {boarder_word} recorded as late."
-        ]
-        if self.diagnostics.unmatched_names:
-            parts.append(f"Unmatched names: {', '.join(self.diagnostics.unmatched_names)}.")
-        if self.diagnostics.unparseable_rows:
-            parts.append(f"Unparseable times: {_format_unparseable_rows(self.diagnostics.unparseable_rows)}.")
-        return " ".join(parts)
+        return f"Monthly report saved for '{self.month_label}'."
 
 
 @dataclass

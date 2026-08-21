@@ -435,6 +435,26 @@ class TestListMonths:
         assert summaries[1].total_minutes == 24
 
 
+class TestListPunishmentMonths:
+    def test_returns_distinct_punishment_months_newest_first(self, conn):
+        storage.assign_punishments(
+            conn,
+            month="2026-01",
+            boarders=[record("ALICE", "101", 1, 1, 2)],
+            deadline="2026-02-01",
+            assigned_at="2026-01-01T09:00:00+00:00",
+        )
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[record("BOB", "102", 1, 1, 2)],
+            deadline="2026-04-01",
+            assigned_at="2026-03-01T09:00:00+00:00",
+        )
+
+        assert storage.list_punishment_months(conn) == ["2026-03", "2026-01"]
+
+
 class TestGetMonthReport:
     def test_returns_saved_record_set(self, conn):
         storage.save_month(
@@ -589,3 +609,30 @@ class TestAssignPunishments:
         rows = storage.list_punishments(conn, statuses=("assigned",))
         assert len(rows) == 1
         assert rows[0].points_owed == 11
+
+    def test_voiding_submitted_punishment_preserves_audit_fields(self, conn):
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[record("ALICE", "101", 2, 5, 7)],
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+        row = storage.list_punishments(conn)[0]
+        storage.transition_punishment(
+            conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
+        )
+
+        storage.transition_punishment(
+            conn,
+            row.id,
+            "voided",
+            timestamp="2026-04-10T09:00:00+00:00",
+            void_reason="later exempted",
+        )
+
+        saved = storage.get_punishment(conn, row.id)
+        assert saved.status == "voided"
+        assert saved.submitted_at == "2026-04-09T09:00:00+00:00"
+        assert saved.voided_at == "2026-04-10T09:00:00+00:00"
+        assert saved.void_reason == "later exempted"

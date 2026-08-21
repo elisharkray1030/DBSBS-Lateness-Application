@@ -62,6 +62,14 @@ def init_db():
         storage.set_meta(conn, SEED_FLAG, "1")
 
 
+def _punishment_months(conn, report_months):
+    return sorted(
+        {month.month for month in report_months}
+        | set(storage.list_punishment_months(conn)),
+        reverse=True,
+    )
+
+
 def build_csv_response(boarders, download_name):
     csv_bytes = io.BytesIO(boarders_to_csv(boarders).encode('utf-8'))
     csv_bytes.seek(0)
@@ -88,6 +96,7 @@ def home():
     with connect() as conn:
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
+        punishment_months = _punishment_months(conn, all_months)
 
     if request.method == 'POST':
         if 'log_file' in request.files:
@@ -145,6 +154,7 @@ def home():
         all_months=all_months,
         current_month=current_month,
         boarders=boarders,
+        punishment_months=punishment_months,
         punishments=[],
         consequences_show_all=False,
         consequences_month=None,
@@ -282,6 +292,7 @@ def _render_boarders(error=None, message=None):
     with connect() as conn:
         boarders_list = storage.list_boarders(conn)
         all_months = storage.list_months(conn)
+        punishment_months = _punishment_months(conn, all_months)
     return render_template(
         'index.html',
         history_results=None,
@@ -291,6 +302,7 @@ def _render_boarders(error=None, message=None):
         all_months=all_months,
         current_month=None,
         boarders=boarders_list,
+        punishment_months=punishment_months,
         punishments=[],
         consequences_show_all=False,
         consequences_month=None,
@@ -379,6 +391,7 @@ def consequences():
         punishments = list_consequences(conn, show_all=show_all, month=month, status=status)
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
+        punishment_months = _punishment_months(conn, all_months)
 
     return render_template(
         'index.html',
@@ -389,6 +402,7 @@ def consequences():
         all_months=all_months,
         current_month=None,
         boarders=boarders,
+        punishment_months=punishment_months,
         punishments=punishments,
         consequences_show_all=show_all,
         consequences_month=month,

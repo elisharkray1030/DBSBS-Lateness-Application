@@ -67,9 +67,12 @@ class TransitionRejected:
     current_status: str
     target: str
     normalized_name: str
+    reason_message: str | None = None
 
     @property
     def reason(self) -> str:
+        if self.reason_message is not None:
+            return self.reason_message
         return (
             f"Cannot move {self.normalized_name} from '{self.current_status}' "
             f"to '{self.target}'. That transition is not allowed."
@@ -99,6 +102,20 @@ def transition(
             target=target,
             normalized_name=punishment.display_name,
         )
+
+    if target == "overdue" and punishment.status == "assigned":
+        transition_date = _timestamp_date(timestamp)
+        deadline = date.fromisoformat(punishment.deadline)
+        if transition_date < deadline:
+            return TransitionRejected(
+                current_status=punishment.status,
+                target=target,
+                normalized_name=punishment.display_name,
+                reason_message=(
+                    f"Cannot mark {punishment.display_name} overdue before its "
+                    f"deadline of {punishment.deadline}."
+                ),
+            )
 
     storage.transition_punishment(
         conn,
@@ -169,24 +186,23 @@ def _is_due(punishment, now: datetime) -> bool:
 
 
 def _was_late(punishment) -> bool:
-    if punishment.status != "submitted" or not punishment.submitted_at:
+    if not punishment.submitted_at:
         return False
-    submitted_at = _submission_date(punishment.submitted_at)
+    submitted_at = _timestamp_date(punishment.submitted_at)
     deadline = date.fromisoformat(punishment.deadline)
     return submitted_at > deadline
 
 
-def _submission_date(submitted_at: str) -> date:
-    """Parses a stored submission timestamp to its calendar date.
+def _timestamp_date(timestamp: str) -> date:
+    """Returns the calendar date represented by an ISO timestamp or date.
 
-    Accepts a full ISO timestamp or a bare date, so a submission on the
-    deadline date is never treated as late due to a string comparison against
-    the deadline's date string.
+    A submission on the Deadline date is not late because comparison uses
+    calendar dates rather than the stored timestamp string.
     """
     try:
-        return datetime.fromisoformat(submitted_at).date()
+        return datetime.fromisoformat(timestamp).date()
     except ValueError:
-        return date.fromisoformat(submitted_at)
+        return date.fromisoformat(timestamp)
 
 
 def _status_rank(status: str) -> int:
@@ -207,10 +223,10 @@ def list_consequences(
     and ``was_late`` flags for each punishment.
     """
     statuses: tuple[str, ...] | None
-    if show_all:
-        statuses = None
-    elif status:
+    if status:
         statuses = (status,)
+    elif show_all:
+        statuses = None
     else:
         statuses = IN_FLIGHT_STATUSES
     punishments = storage.list_punishments(conn, statuses=statuses, month=month)

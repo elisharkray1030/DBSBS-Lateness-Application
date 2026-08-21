@@ -443,6 +443,18 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     ]
 
 
+def list_punishment_months(conn: sqlite3.Connection) -> list[str]:
+    """Returns Months represented by Punishments, newest first."""
+    cursor = conn.execute(
+        """
+        SELECT DISTINCT month
+        FROM punishments
+        ORDER BY month DESC
+        """
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
 def get_month_report(conn: sqlite3.Connection, month_label: str) -> list[BoarderRecord]:
     if not month_label:
         return []

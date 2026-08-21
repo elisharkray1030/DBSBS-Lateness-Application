@@ -150,6 +150,22 @@ class TestTransition:
         assert row.overdue_at == "2026-04-10T09:00:00+00:00"
         assert row.submitted_at == "2026-04-12T09:00:00+00:00"
 
+    def test_assigned_cannot_become_overdue_before_deadline(self, conn):
+        punishment = self._assign_one(conn)
+
+        result = transition(
+            conn,
+            punishment.id,
+            "overdue",
+            timestamp="2026-04-09T09:00:00+00:00",
+        )
+
+        assert isinstance(result, TransitionRejected)
+        assert "deadline" in result.reason.lower()
+        row = storage.get_punishment(conn, punishment.id)
+        assert row.status == "assigned"
+        assert row.overdue_at is None
+
     def test_overdue_can_become_phone_held_then_submitted_releases_phone(self, conn):
         punishment = self._assign_one(conn)
         transition(conn, punishment.id, "overdue", timestamp="2026-04-10T09:00:00+00:00")
@@ -171,6 +187,27 @@ class TestTransition:
         assert row.voided_at == "2026-04-02T09:00:00+00:00"
         assert row.void_reason == "exempt"
 
+    def test_submitted_can_be_voided_without_losing_submission_audit(self, conn):
+        punishment = self._assign_one(conn)
+        transition(conn, punishment.id, "submitted", timestamp="2026-04-11T09:00:00+00:00")
+
+        result = transition(
+            conn,
+            punishment.id,
+            "voided",
+            timestamp="2026-04-12T09:00:00+00:00",
+            void_reason="later exempted",
+        )
+
+        assert not isinstance(result, TransitionRejected)
+        row = storage.get_punishment(conn, punishment.id)
+        assert row.status == "voided"
+        assert row.submitted_at == "2026-04-11T09:00:00+00:00"
+        assert row.voided_at == "2026-04-12T09:00:00+00:00"
+        assert row.void_reason == "later exempted"
+        listed = list_consequences(conn, show_all=True)
+        assert listed[0].was_late is True
+
     @pytest.mark.parametrize(
         ("from_status", "to"),
         [
@@ -185,8 +222,8 @@ class TestTransition:
         punishment = self._assign_one(conn)
 
         if from_status == "phone_held":
-            transition(conn, punishment.id, "overdue", timestamp="2026-04-03T09:00:00+00:00")
-            transition(conn, punishment.id, "phone_held", timestamp="2026-04-04T09:00:00+00:00")
+            transition(conn, punishment.id, "overdue", timestamp="2026-04-10T09:00:00+00:00")
+            transition(conn, punishment.id, "phone_held", timestamp="2026-04-11T09:00:00+00:00")
         elif from_status != "assigned":
             transition(conn, punishment.id, from_status, timestamp="2026-04-03T09:00:00+00:00")
 
@@ -343,6 +380,15 @@ class TestListConsequences:
         submitted = list_consequences(conn, status="submitted")
         assert {r.normalized_name for r in assigned} == {"BOB"}
         assert {r.normalized_name for r in submitted} == {"ALICE"}
+
+    def test_status_filter_narrows_show_all_results(self, conn):
+        self._assign(conn)
+        rows = storage.list_punishments(conn, statuses=("assigned",))
+        transition(conn, rows[0].id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
+
+        submitted = list_consequences(conn, show_all=True, status="submitted")
+
+        assert [row.normalized_name for row in submitted] == ["ALICE"]
 
     def test_show_all_groups_by_status_soonest_deadline_first(self, conn):
         self._assign(conn)

@@ -2,6 +2,8 @@ import io
 import os
 import re
 import tempfile
+from datetime import datetime, timedelta, timezone
+from html import unescape
 
 import pytest
 from helpers import record
@@ -73,7 +75,7 @@ class TestTabNavigation:
             try:
                 page.set_content(html)
 
-                for tab_name in ("history", "consequences", "boarders", "reports"):
+                for tab_name in ("history", "boarders", "reports"):
                     page.locator(f'.tab-link[data-tab="{tab_name}"]').click()
                     assert page.locator(f"#{tab_name}").evaluate(
                         "panel => panel.classList.contains('active')"
@@ -768,13 +770,13 @@ class TestImportPostRedirectGet:
         resp = self._import(fresh_client)
 
         page = fresh_client.get(resp.headers["Location"])
-        html = page.get_data(as_text=True)
+        html = unescape(page.get_data(as_text=True))
         assert page.status_code == 200
-        assert "Monthly report saved for" in html
-        assert "with 1 boarder recorded as late" in html
+        assert "Monthly report saved for '2026-07'." in html
+        assert "with 1 boarder recorded as late" not in html
         assert 'const initialMonthToOpen = "2026-07";' in html
 
-    def test_mixed_import_redirect_shows_diagnostics_in_page(self, fresh_client):
+    def test_mixed_import_redirect_shows_confirmation_only(self, fresh_client):
         resp = self._import(
             fresh_client,
             body="Name,Transaction Time\nALICE,07:45\nGHOST,07:46\nBOB,7:47\n",
@@ -782,10 +784,11 @@ class TestImportPostRedirectGet:
 
         assert resp.status_code == 302
         page = fresh_client.get(resp.headers["Location"])
-        html = page.get_data(as_text=True)
-        assert "Unmatched names: GHOST." in html
-        assert "Unparseable times: BOB" in html
-        assert "7:47" in html
+        html = unescape(page.get_data(as_text=True))
+        assert "Monthly report saved for '2026-07'." in html
+        assert "Unmatched names: GHOST." not in html
+        assert "Unparseable times: BOB" not in html
+        assert "7:47" not in html
 
     def test_following_redirect_does_not_duplicate_the_import(self, fresh_client):
         resp = self._import(fresh_client)
@@ -896,17 +899,150 @@ class TestMonthApi:
 
 
 class TestServerOwnedReportRows:
-    def test_page_no_longer_contains_client_sorting_helpers(self):
+    def test_page_restores_sortable_report_headers_and_indicators(self):
         html = home_html()
-        assert "toTitleCase" not in html
-        assert "bedComparator" not in html
-        assert "sortMonthDetail" not in html
-        assert "sort-indicator" not in html
+        for field in ("bed", "name", "frequency", "minutes", "points"):
+            assert f"sortMonthDetail('{field}')" in html
+        assert "sort-indicator" in html
+        assert "sort-asc" in html
+        assert "sort-desc" in html
+
+    def test_report_sorting_keeps_server_fields_and_resets_for_each_month(self):
+        html = home_html()
+        assert "row.display_name" in html
+        assert "row.total_points" in html
+        assert "monthDetailSort = { field: 'bed', direction: 'asc' };" in html
 
     def test_client_renders_server_rows_and_display_names(self):
         html = home_html()
         assert "monthDetailRows = data.boarders;" in html
         assert "row.display_name" in html
+
+    def test_report_headers_sort_rows_and_reset_for_a_new_month(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE")], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [
+            {
+                "name": "BOB",
+                "display_name": "Bob",
+                "bed": "10",
+                "frequency": 1,
+                "total_minutes": 2,
+                "total_points": 3,
+            },
+            {
+                "name": "ALICE",
+                "display_name": "Alice",
+                "bed": "9A",
+                "frequency": 4,
+                "total_minutes": 8,
+                "total_points": 12,
+            },
+            {
+                "name": "CAROL",
+                "display_name": "Carol",
+                "bed": "101A",
+                "frequency": 2,
+                "total_minutes": 4,
+                "total_points": 6,
+            },
+        ]
+        reset_rows = [
+            {
+                "name": "DANA",
+                "display_name": "Dana",
+                "bed": "601A",
+                "frequency": 1,
+                "total_minutes": 1,
+                "total_points": 2,
+            }
+        ]
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                page.evaluate(
+                    """({ rows, resetRows }) => {
+                        window.fetch = url => Promise.resolve({
+                            json: () => Promise.resolve({
+                                boarders: url.includes('2026-08') ? resetRows : rows
+                            })
+                        });
+                        viewMonth('2026-07');
+                    }""",
+                    {"rows": rows, "resetRows": reset_rows},
+                )
+                page.wait_for_function(
+                    "() => document.querySelectorAll('#month-detail-body tr').length === 3"
+                )
+
+                bed_cells = page.locator("#month-detail-body tr td:first-child")
+                assert bed_cells.all_text_contents() == ["9A", "10", "101A"]
+
+                page.locator("#month-detail-table thead th").nth(2).click()
+                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+                    "Bob",
+                    "Carol",
+                    "Alice",
+                ]
+                assert page.locator("#month-detail-table thead th").nth(2).get_attribute(
+                    "class"
+                ) == "sort-asc"
+
+                page.locator("#month-detail-table thead th").nth(2).click()
+                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+                    "Alice",
+                    "Carol",
+                    "Bob",
+                ]
+
+                page.locator("#month-detail-table thead th").nth(3).click()
+                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+                    "Bob",
+                    "Carol",
+                    "Alice",
+                ]
+
+                page.locator("#month-detail-table thead th").nth(4).click()
+                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+                    "Bob",
+                    "Carol",
+                    "Alice",
+                ]
+
+                page.locator("#month-detail-table thead th").nth(0).click()
+                assert page.locator("#month-detail-body tr td:first-child").all_text_contents() == [
+                    "9A",
+                    "10",
+                    "101A",
+                ]
+                page.locator("#month-detail-table thead th").nth(0).click()
+                assert page.locator("#month-detail-body tr td:first-child").all_text_contents() == [
+                    "101A",
+                    "10",
+                    "9A",
+                ]
+
+                page.locator("#month-detail-table thead th").nth(1).click()
+                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+                    "Alice",
+                    "Bob",
+                    "Carol",
+                ]
+
+                page.evaluate("() => viewMonth('2026-08')")
+                page.wait_for_function(
+                    "() => document.querySelector('#month-detail-body td')?.textContent === '601A'"
+                )
+                assert page.locator("#month-detail-table thead th").nth(0).get_attribute(
+                    "class"
+                ) == "sort-asc"
+            finally:
+                browser.close()
 
     def test_page_renders_import_copy_without_generate(self):
         html = home_html()
@@ -1029,6 +1165,13 @@ class TestConsequencesRoute:
         html = client.get("/").get_data(as_text=True)
         assert "data-tab=\"consequences\"" in html
 
+    def test_consequences_tab_links_to_server_view(self):
+        html = client.get("/").get_data(as_text=True)
+        assert re.search(
+            r'<a class="tab-link [^"]*" data-tab="consequences" href="/consequences">',
+            html,
+        )
+
     def test_show_all_includes_submitted(self):
         with app_module.connect() as conn:
             row = storage.list_punishments(conn, statuses=("assigned",))[0]
@@ -1047,6 +1190,20 @@ class TestConsequencesRoute:
 
         assert 'value="2026-03"' in html
 
+    def test_month_filter_includes_months_only_present_in_punishments(self):
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-04",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline="2026-05-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+
+        html = client.get("/consequences").get_data(as_text=True)
+
+        assert 'value="2026-04"' in html
+
     def test_status_filter_shows_only_that_status(self):
         with app_module.connect() as conn:
             row = storage.list_punishments(conn, statuses=("assigned",))[0]
@@ -1060,6 +1217,63 @@ class TestConsequencesRoute:
         html = response.get_data(as_text=True)
         assert "Alice" in html
         assert "Bob" not in html
+
+    def test_default_view_excludes_submitted_punishments(self):
+        with app_module.connect() as conn:
+            row = storage.list_punishments(conn, statuses=("assigned",))[0]
+            storage.transition_punishment(
+                conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
+            )
+
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert "Alice" not in panel
+        assert "Bob" in panel
+
+    def test_show_all_and_status_filter_preserve_selected_filters(self):
+        with app_module.connect() as conn:
+            row = storage.list_punishments(conn, statuses=("assigned",))[0]
+            storage.transition_punishment(
+                conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
+            )
+
+        response = client.get(
+            "/consequences?show_all=1&month=2026-03&status=submitted"
+        )
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert "Alice" in panel
+        assert "Bob" not in panel
+        assert re.search(r'<option value="2026-03" selected>', panel)
+        assert re.search(r'<option value="submitted" selected>', panel)
+        assert 'name="month" value="2026-03"' in panel
+        assert 'name="status" value="submitted"' in panel
+
+    def test_empty_view_has_server_rendered_empty_state(self):
+        with app_module.connect() as conn:
+            conn.execute("DELETE FROM punishments")
+            conn.commit()
+
+        html = client.get("/consequences").get_data(as_text=True)
+        assert "No punishments to show." in html
+
+    def test_overdue_action_is_hidden_before_deadline(self):
+        with app_module.connect() as conn:
+            conn.execute("DELETE FROM punishments")
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline="2099-01-01",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert "Alice" in panel
+        assert "Mark overdue" not in panel
 
 
 class TestTransitionRoute:
@@ -1104,8 +1318,98 @@ class TestTransitionRoute:
         assert response.status_code == 302
         with app_module.connect() as conn:
             row = storage.get_punishment(conn, self._alice_id())
-            assert row.status == "voided"
-            assert row.void_reason == "exempt"
+        assert row.status == "voided"
+        assert row.void_reason == "exempt"
+
+    def test_submitted_punishment_can_be_voided(self):
+        punishment_id = self._alice_id()
+        with app_module.connect() as conn:
+            storage.transition_punishment(
+                conn, punishment_id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
+            )
+
+        html = client.get("/consequences?show_all=1").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        row = re.search(
+            rf'<tr data-punishment-id="{punishment_id}">.*?</tr>', panel, re.S
+        )
+        assert row is not None
+        assert 'name="to" value="voided"' in row.group(0)
+
+        response = client.post(
+            f"/punishment/{punishment_id}/transition",
+            data={"to": "voided", "void_reason": "later exempted"},
+        )
+
+        assert response.status_code == 302
+        with app_module.connect() as conn:
+            row = storage.get_punishment(conn, punishment_id)
+        assert row.status == "voided"
+        assert row.submitted_at == "2026-04-09T09:00:00+00:00"
+        assert row.void_reason == "later exempted"
+
+    def test_early_overdue_transition_is_rejected(self):
+        with app_module.connect() as conn:
+            conn.execute("DELETE FROM punishments")
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline="2099-01-01",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+            punishment_id = storage.list_punishments(conn)[0].id
+
+        response = client.post(
+            f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
+        )
+
+        assert response.status_code == 400
+        assert b"deadline" in response.data.lower()
+        with app_module.connect() as conn:
+            assert storage.get_punishment(conn, punishment_id).status == "assigned"
+
+    def test_overdue_transition_succeeds_on_deadline(self):
+        deadline = datetime.now(tz=timezone.utc).date().isoformat()
+        with app_module.connect() as conn:
+            conn.execute("DELETE FROM punishments")
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline=deadline,
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+            punishment_id = storage.list_punishments(conn)[0].id
+
+        response = client.post(
+            f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
+        )
+
+        assert response.status_code == 302
+        with app_module.connect() as conn:
+            assert storage.get_punishment(conn, punishment_id).status == "overdue"
+
+    def test_overdue_transition_succeeds_after_deadline(self):
+        deadline = (datetime.now(tz=timezone.utc).date() - timedelta(days=1)).isoformat()
+        with app_module.connect() as conn:
+            conn.execute("DELETE FROM punishments")
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline=deadline,
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+            punishment_id = storage.list_punishments(conn)[0].id
+
+        response = client.post(
+            f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
+        )
+
+        assert response.status_code == 302
+        with app_module.connect() as conn:
+            assert storage.get_punishment(conn, punishment_id).status == "overdue"
 
     def test_illegal_transition_rejected(self):
         with app_module.connect() as conn:

@@ -262,10 +262,10 @@ class TestCli:
         )
         captured = capsys.readouterr()
         assert "Read 1 log rows, matched 1." in captured.out
-        assert "Monthly report saved for" in captured.out
-        assert "with 1 boarder recorded as late" in captured.out
+        assert "Monthly report saved for '" in captured.out
+        assert "with 1 boarder recorded as late" not in captured.out
 
-    def test_cli_prints_saved_message_with_diagnostics(self, tmp_path, capsys):
+    def test_cli_prints_saved_message_without_diagnostics(self, tmp_path, capsys):
         namelist = tmp_path / "namelist.csv"
         namelist.write_text("Bed,Name\n601A,alice\n", encoding="utf-8")
         log = tmp_path / "log.csv"
@@ -278,8 +278,10 @@ class TestCli:
 
         assert code == 0
         captured = capsys.readouterr()
-        assert "Unmatched names: GHOST." in captured.out
-        assert "Unparseable times: ALICE ('7:45')." in captured.out
+        assert "Monthly report saved for '" in captured.out
+        assert "with 1 boarder recorded as late" not in captured.out
+        assert "Unmatched names: GHOST." not in captured.out
+        assert "Unparseable times: ALICE ('7:45')." not in captured.out
         assert "Wrote report to" in captured.out
         assert "Generated" not in captured.out
 

@@ -143,7 +143,7 @@ Important behavior:
 
 - `load_namelist(namelist_filename)` reads the master list into a normalized-name-to-Boarder mapping; returns `None` if the file is missing.
 - `ingest_log(log_stream, month_label, master_list, conn)` takes the log as a stream, the month label, the master list (each entry carrying the canonical display name and bed), and a history store connection, and returns one outcome - either the report saved, or rejected with an exact reason. A rejected ingestion leaves the store untouched.
-- `SavedOutcome` carries the saved `BoarderRecord` list plus diagnostics (rows read, matched rows, unmatched names, unparseable rows) and builds the user-facing message, which includes the saved-month confirmation and late-boarder count plus any unmatched names or unparseable times.
+- `SavedOutcome` carries the saved `BoarderRecord` list plus diagnostics (rows read, matched rows, unmatched names, unparseable rows) and builds the user-facing saved-month confirmation.
 - `RejectedOutcome` carries the exact rejection reason (master list missing/empty, empty log, no rows matched any boarder, or no parseable time).
 - `boarders_to_csv(boarders)` renders a boarder record list to CSV text (used by the download route and the export).
 - `export_to_csv(output_filename, boarders)` writes the results to a CSV file.
@@ -158,7 +158,7 @@ Important behavior:
 - `create_schema(conn)` creates the `boarder_history` table if it does not exist.
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
 - `list_months(conn)` returns the month summaries used in the UI (month label, boarder count, total minutes late), ordered newest-first.
-- `get_month_report(conn, month_label)` returns one month's stored `BoarderRecord` rows, ordered by the server's single Bed ordering rule (numeric part then suffix, lexical fallback).
+- `get_month_report(conn, month_label)` returns one month's stored `BoarderRecord` rows, ordered by the server's single Bed ordering rule (numeric part then suffix, lexical fallback). The report table may change display order without changing these stored values.
 - `search_history(conn, name_query)` performs a partial match against stored names.
 - `delete_month(conn, month_label)` removes a month and returns the deleted row count.
 - `replace_boarders(conn, rows)` replaces the master list after resolving duplicate normalized names last-row-wins and validating that no two different boarders share a Bed, raising a ValueError otherwise.
@@ -169,7 +169,7 @@ Important behavior:
 
 ### `templates/index.html` - User interface and client scripting
 
-The template renders the dashboard, search tab, month cards, month detail table, delete confirmation modal, and fetch behavior. The month detail table renders the rows and canonical display names supplied by the server in the server-defined order; no client-side sorting or name formatting is applied.
+The template renders the dashboard, search tab, month cards, month detail table, delete confirmation modal, and fetch behavior. The month detail table renders canonical display names and typed values supplied by the server, starts in the server-defined Bed order, and supports display-only sorting without changing the data used for printing, downloading, or Punishment assignment.
 
 ## Troubleshooting
 

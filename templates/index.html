@@ -97,6 +97,7 @@
             color: var(--text-muted);
             font-weight: 600;
             cursor: pointer;
+            text-decoration: none;
             border-bottom: 3px solid transparent;
             transition: all 0.2s;
         }
@@ -293,6 +294,29 @@
             position: sticky;
             top: 0;
             z-index: 1;
+        }
+
+        .month-report-table th {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .sort-indicator {
+            display: inline-flex;
+            flex-direction: column;
+            margin-left: 4px;
+            vertical-align: -2px;
+            line-height: 0.65;
+        }
+
+        .month-report-table th .sort-up,
+        .month-report-table th .sort-down {
+            opacity: 0.35;
+        }
+
+        .month-report-table th.sort-asc .sort-up,
+        .month-report-table th.sort-desc .sort-down {
+            opacity: 1;
         }
 
         .months-list {
@@ -645,7 +669,7 @@
     <div class="tabs">
         <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">View Reports in Database</button>
         <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
-        <button class="tab-link {% if selected_tab == 'consequences' %}active{% endif %}" data-tab="consequences">Consequences</button>
+        <a class="tab-link {% if selected_tab == 'consequences' %}active{% endif %}" data-tab="consequences" href="/consequences">Consequences</a>
         <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">Boarders</button>
     </div>
 
@@ -705,25 +729,39 @@
         <div class="month-detail-toolbar">
             <h3>Punishments</h3>
             <form action="/consequences" method="get" class="consequences-filters">
+                {% if consequences_show_all %}
+                    <input type="hidden" name="show_all" value="1">
+                {% endif %}
                 <label for="consequences-month"><strong>Month</strong></label>
                 <select id="consequences-month" name="month">
                     <option value="">All months</option>
-                    {% for m in all_months %}
-                        <option value="{{ m.month }}" {% if consequences_month == m.month %}selected{% endif %}>{{ m.month }}</option>
+                    {% for month in punishment_months %}
+                        <option value="{{ month }}" {% if consequences_month == month %}selected{% endif %}>{{ month }}</option>
                     {% endfor %}
                 </select>
                 <label for="consequences-status"><strong>Status</strong></label>
                 <select id="consequences-status" name="status">
-                    <option value="">In-flight only</option>
+                    <option value="">{% if consequences_show_all %}All statuses{% else %}In-flight only{% endif %}</option>
                     {% for s in ['assigned', 'overdue', 'phone_held', 'submitted', 'voided'] %}
                         <option value="{{ s }}" {% if consequences_status == s %}selected{% endif %}>{{ s }}</option>
                     {% endfor %}
                 </select>
                 <button type="submit" class="btn btn-primary btn-sm">Filter</button>
             </form>
-            <a class="btn btn-neutral btn-sm" href="/consequences{% if not consequences_show_all %}?show_all=1{% endif %}">
-                {% if consequences_show_all %}Show in-flight only{% else %}Show all{% endif %}
-            </a>
+            <form action="/consequences" method="get">
+                {% if consequences_month %}
+                    <input type="hidden" name="month" value="{{ consequences_month }}">
+                {% endif %}
+                {% if consequences_status %}
+                    <input type="hidden" name="status" value="{{ consequences_status }}">
+                {% endif %}
+                {% if not consequences_show_all %}
+                    <input type="hidden" name="show_all" value="1">
+                {% endif %}
+                <button type="submit" class="btn btn-neutral btn-sm">
+                    {% if consequences_show_all %}Show in-flight only{% else %}Show all{% endif %}
+                </button>
+            </form>
         </div>
         {% if punishments %}
             {% for group in punishments|groupby('status') %}
@@ -744,7 +782,7 @@
                         </thead>
                         <tbody>
                             {% for p in group.list %}
-                            <tr>
+                            <tr data-punishment-id="{{ p.id }}">
                                 <td>{{ p.display_name }}{% if p.is_due %} <span class="due-badge">due</span>{% endif %}</td>
                                 <td>{{ p.bed }}</td>
                                 <td>{{ p.month }}</td>
@@ -753,10 +791,12 @@
                                 <td>{{ p.status }}</td>
                                 <td>
                                     {% if p.status == 'assigned' %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="overdue">
-                                            <button type="submit" class="btn btn-primary btn-sm">Mark overdue</button>
-                                        </form>
+                                        {% if p.is_due %}
+                                            <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
+                                                <input type="hidden" name="to" value="overdue">
+                                                <button type="submit" class="btn btn-primary btn-sm">Mark overdue</button>
+                                            </form>
+                                        {% endif %}
                                         <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
                                             <input type="hidden" name="to" value="submitted">
                                             <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
@@ -778,7 +818,7 @@
                                             <button type="submit" class="btn btn-primary btn-sm">Submitted (release phone)</button>
                                         </form>
                                     {% endif %}
-                                    {% if p.status in ['assigned', 'overdue', 'phone_held'] %}
+                                    {% if p.status in ['assigned', 'overdue', 'phone_held', 'submitted'] %}
                                         <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
                                             <input type="hidden" name="to" value="voided">
                                             <input type="text" name="void_reason" placeholder="Reason (optional)">
@@ -934,11 +974,11 @@
                     <table id="month-detail-table" class="month-report-table">
                         <thead>
                             <tr>
-                                <th>Bed</th>
-                                <th>Boarder Name</th>
-                                <th>Frequency</th>
-                                <th>Minutes Late</th>
-                                <th>Total Points</th>
+                                <th onclick="sortMonthDetail('bed')">Bed<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></th>
+                                <th onclick="sortMonthDetail('name')">Boarder Name<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></th>
+                                <th onclick="sortMonthDetail('frequency')">Frequency<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></th>
+                                <th onclick="sortMonthDetail('minutes')">Minutes Late<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></th>
+                                <th onclick="sortMonthDetail('points')">Total Points<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></th>
                             </tr>
                         </thead>
                         <tbody id="month-detail-body">
@@ -969,13 +1009,74 @@
 <script>
     // Data storage for the month detail table
     let monthDetailRows = [];
+    let monthDetailSort = { field: 'bed', direction: 'asc' };
     let activeMonthReport = null;
 
-    // Render month detail rows in the server-provided order and names
+    function lexicalCompare(a, b) {
+        return a < b ? -1 : a > b ? 1 : 0;
+    }
+
+    function numericStringCompare(a, b) {
+        const normalizedA = a.replace(/^0+/, '') || '0';
+        const normalizedB = b.replace(/^0+/, '') || '0';
+        return normalizedA.length - normalizedB.length || lexicalCompare(normalizedA, normalizedB);
+    }
+
+    function bedComparator(a, b) {
+        const matchA = String(a).match(/^(\d+)(.*)$/);
+        const matchB = String(b).match(/^(\d+)(.*)$/);
+
+        if (!matchA || !matchB) {
+            if (matchA) return -1;
+            if (matchB) return 1;
+            return lexicalCompare(String(a), String(b));
+        }
+
+        return numericStringCompare(matchA[1], matchB[1]) || lexicalCompare(matchA[2], matchB[2]);
+    }
+
+    function compareMonthRows(a, b) {
+        let result;
+        if (monthDetailSort.field === 'bed') {
+            result = bedComparator(a.bed, b.bed);
+        } else if (monthDetailSort.field === 'name') {
+            result = a.display_name.localeCompare(b.display_name);
+        } else if (monthDetailSort.field === 'frequency') {
+            result = a.frequency - b.frequency;
+        } else if (monthDetailSort.field === 'minutes') {
+            result = a.total_minutes - b.total_minutes;
+        } else {
+            result = a.total_points - b.total_points;
+        }
+
+        if (result === 0) {
+            result = a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+        }
+        return monthDetailSort.direction === 'asc' ? result : -result;
+    }
+
+    function sortMonthDetail(field) {
+        if (monthDetailSort.field === field) {
+            monthDetailSort.direction = monthDetailSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            monthDetailSort = { field: field, direction: 'asc' };
+        }
+        renderMonthDetail();
+    }
+
+    // Render month detail rows with the server-owned values in the selected order.
     function renderMonthDetail() {
         const tbody = document.getElementById('month-detail-body');
+        const rows = [...monthDetailRows].sort(compareMonthRows);
+        const headers = document.querySelectorAll('#month-detail-table thead th');
+        headers.forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
+        const sortIndex = ['bed', 'name', 'frequency', 'minutes', 'points'].indexOf(monthDetailSort.field);
+        if (sortIndex >= 0) {
+            headers[sortIndex].classList.add(`sort-${monthDetailSort.direction}`);
+        }
+
         tbody.innerHTML = '';
-        monthDetailRows.forEach(row => {
+        rows.forEach(row => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><strong>${escapeHtml(row.bed)}</strong></td>
@@ -1002,8 +1103,23 @@
     }
 
     tabButtons.forEach(button => {
-        button.addEventListener('click', function() {
+        button.addEventListener('click', function(event) {
             const tabName = this.getAttribute('data-tab');
+            if (tabName === 'consequences') {
+                if (hasDirtyBoarderRow()) {
+                    event.preventDefault();
+                    showConfirmModal({
+                        title: 'Discard changes?',
+                        message: 'You have unsaved edits to a boarder. Discard them and open Consequences?',
+                        confirmLabel: 'Discard',
+                        onConfirm: () => {
+                            discardBoarderEdits();
+                            window.location.href = '/consequences';
+                        }
+                    });
+                }
+                return;
+            }
             if (tabName === 'boarders') {
                 activateTab('boarders');
                 return;
@@ -1079,16 +1195,27 @@
     }
 
     // Month detail view
+    let monthRequestToken = 0;
+
     function viewMonth(month) {
+        const requestToken = ++monthRequestToken;
+        activeMonthReport = null;
+        monthDetailRows = [];
+        monthDetailSort = { field: 'bed', direction: 'asc' };
+        document.getElementById('month-detail').classList.add('hidden');
+        document.getElementById('month-detail-assign').classList.add('hidden');
+        renderMonthDetail();
+
         fetch(`/api/month/${encodeURIComponent(month)}`)
             .then(response => response.json())
             .then(data => {
+                if (requestToken !== monthRequestToken) return;
                 if (data.error) {
                     alert('Error: ' + data.error);
                     return;
                 }
 
-                // Store data and render in the server-provided order
+                // Store data and render in the selected order without mutating the API rows.
                 activeMonthReport = month;
                 monthDetailRows = data.boarders;
 
