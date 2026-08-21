@@ -8,7 +8,7 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import pytest
-from helpers import record
+from helpers import month_row, record, seed_punishments
 from records import Boarder
 
 import app as app_module
@@ -65,27 +65,21 @@ class TestHomeRender:
 
 
 class TestTabNavigation:
-    def test_all_tabs_are_reachable_when_boarder_rows_are_rendered(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_all_tabs_are_reachable_when_boarder_rows_are_rendered(self, fresh_client, browser_page):
         html = fresh_client.get("/").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            page_errors = []
-            page.on("pageerror", lambda error: page_errors.append(str(error)))
-            try:
-                page.set_content(html)
+        page = browser_page
+        page_errors = []
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.set_content(html)
 
-                for tab_name in ("history", "boarders", "reports"):
-                    page.locator(f'.tab-link[data-tab="{tab_name}"]').click()
-                    assert page.locator(f"#{tab_name}").evaluate(
-                        "panel => panel.classList.contains('active')"
-                    ), page_errors
+        for tab_name in ("history", "boarders", "reports"):
+            page.locator(f'.tab-link[data-tab="{tab_name}"]').click()
+            assert page.locator(f"#{tab_name}").evaluate(
+                "panel => panel.classList.contains('active')"
+            ), page_errors
 
-                assert not page_errors
-            finally:
-                browser.close()
+        assert not page_errors
 
 
 class TestImportMonthPicker:
@@ -448,18 +442,7 @@ class TestBoarderDeleteApi:
     def test_delete_keeps_history_and_punishments_frozen(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
-            storage.save_month(
-                conn,
-                [record("ALICE", "601A", 2, 5, 7)],
-                "2026-03",
-            )
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "601A", 2, 5, 7)],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn, boarders=[record("ALICE", "601A", 2, 5, 7)])
         resp = fresh_client.delete(f"/api/boarders/{boarder_id}")
         assert resp.status_code == 200
         with app_module.connect() as conn:
@@ -930,8 +913,7 @@ class TestServerOwnedReportRows:
         assert "<td>19</td>" in history_panel
         assert "<td>19 mins</td>" not in history_panel
 
-    def test_browser_sort_headers_reach_and_announce_direction(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_browser_sort_headers_reach_and_announce_direction(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(
                 conn,
@@ -943,46 +925,41 @@ class TestServerOwnedReportRows:
             )
         html = fresh_client.get("/").get_data(as_text=True)
         rows = [
-            {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
-            {"name": "BOB", "display_name": "Bob", "bed": "102", "frequency": 4, "total_minutes": 8, "total_points": 12},
+            month_row("ALICE", "101", 2, 5, 7),
+            month_row("BOB", "102", 4, 8, 12),
         ]
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                page.evaluate(
-                    """({ rows }) => {
-                        window.fetch = url => Promise.resolve({
-                            json: () => Promise.resolve({ boarders: rows })
-                        });
-                        viewMonth('2026-07');
-                    }""",
-                    {"rows": rows},
-                )
-                page.wait_for_function(
-                    "() => document.querySelectorAll('#month-detail-body tr').length === 2"
-                )
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """({ rows }) => {
+                window.fetch = url => Promise.resolve({
+                    json: () => Promise.resolve({ boarders: rows })
+                });
+                viewMonth('2026-07');
+            }""",
+            {"rows": rows},
+        )
+        page.wait_for_function(
+            "() => document.querySelectorAll('#month-detail-body tr').length === 2"
+        )
 
-                frequency_header = page.locator("#month-detail-table thead th").nth(2)
-                assert frequency_header.get_attribute("aria-sort") == "none"
+        frequency_header = page.locator("#month-detail-table thead th").nth(2)
+        assert frequency_header.get_attribute("aria-sort") == "none"
 
-                frequency_header.locator("button.sort-btn").focus()
-                page.keyboard.press("Enter")
-                names = page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents()
-                assert names == ["Alice", "Bob"]
-                assert frequency_header.get_attribute("aria-sort") == "ascending"
+        frequency_header.locator("button.sort-btn").focus()
+        page.keyboard.press("Enter")
+        names = page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents()
+        assert names == ["Alice", "Bob"]
+        assert frequency_header.get_attribute("aria-sort") == "ascending"
 
-                page.keyboard.press("Enter")
-                names = page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents()
-                assert names == ["Bob", "Alice"]
-                assert frequency_header.get_attribute("aria-sort") == "descending"
+        page.keyboard.press("Enter")
+        names = page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents()
+        assert names == ["Bob", "Alice"]
+        assert frequency_header.get_attribute("aria-sort") == "descending"
 
-                bed_header = page.locator("#month-detail-table thead th").nth(0)
-                assert bed_header.get_attribute("aria-sort") == "none"
-            finally:
-                browser.close()
+        bed_header = page.locator("#month-detail-table thead th").nth(0)
+        assert bed_header.get_attribute("aria-sort") == "none"
 
 
     def test_report_sorting_keeps_server_fields_and_resets_for_each_month(self):
@@ -996,131 +973,95 @@ class TestServerOwnedReportRows:
         assert "monthDetailRows = data.boarders;" in html
         assert "row.display_name" in html
 
-    def test_report_headers_sort_rows_and_reset_for_a_new_month(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_report_headers_sort_rows_and_reset_for_a_new_month(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE")], "2026-07")
         html = fresh_client.get("/").get_data(as_text=True)
         rows = [
-            {
-                "name": "BOB",
-                "display_name": "Bob",
-                "bed": "10",
-                "frequency": 1,
-                "total_minutes": 2,
-                "total_points": 3,
-            },
-            {
-                "name": "ALICE",
-                "display_name": "Alice",
-                "bed": "9A",
-                "frequency": 4,
-                "total_minutes": 8,
-                "total_points": 12,
-            },
-            {
-                "name": "CAROL",
-                "display_name": "Carol",
-                "bed": "101A",
-                "frequency": 2,
-                "total_minutes": 4,
-                "total_points": 6,
-            },
+            month_row("BOB", bed="10", frequency=1, total_minutes=2, total_points=3),
+            month_row("ALICE", bed="9A", frequency=4, total_minutes=8, total_points=12),
+            month_row("CAROL", bed="101A", frequency=2, total_minutes=4, total_points=6),
         ]
-        reset_rows = [
-            {
-                "name": "DANA",
-                "display_name": "Dana",
-                "bed": "601A",
-                "frequency": 1,
-                "total_minutes": 1,
-                "total_points": 2,
-            }
+        reset_rows = [month_row("DANA", bed="601A", frequency=1, total_minutes=1, total_points=2)]
+
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """({ rows, resetRows }) => {
+                window.fetch = url => Promise.resolve({
+                    json: () => Promise.resolve({
+                        boarders: url.includes('2026-08') ? resetRows : rows
+                    })
+                });
+                viewMonth('2026-07');
+            }""",
+            {"rows": rows, "resetRows": reset_rows},
+        )
+        page.wait_for_function(
+            "() => document.querySelectorAll('#month-detail-body tr').length === 3"
+        )
+
+        bed_cells = page.locator("#month-detail-body tr td:first-child")
+        assert bed_cells.all_text_contents() == ["9A", "10", "101A"]
+
+        page.locator("#month-detail-table thead th").nth(2).click()
+        assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+            "Bob",
+            "Carol",
+            "Alice",
+        ]
+        assert page.locator("#month-detail-table thead th").nth(2).get_attribute(
+            "class"
+        ) == "sort-asc"
+
+        page.locator("#month-detail-table thead th").nth(2).click()
+        assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+            "Alice",
+            "Carol",
+            "Bob",
         ]
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                page.evaluate(
-                    """({ rows, resetRows }) => {
-                        window.fetch = url => Promise.resolve({
-                            json: () => Promise.resolve({
-                                boarders: url.includes('2026-08') ? resetRows : rows
-                            })
-                        });
-                        viewMonth('2026-07');
-                    }""",
-                    {"rows": rows, "resetRows": reset_rows},
-                )
-                page.wait_for_function(
-                    "() => document.querySelectorAll('#month-detail-body tr').length === 3"
-                )
+        page.locator("#month-detail-table thead th").nth(3).click()
+        assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+            "Bob",
+            "Carol",
+            "Alice",
+        ]
 
-                bed_cells = page.locator("#month-detail-body tr td:first-child")
-                assert bed_cells.all_text_contents() == ["9A", "10", "101A"]
+        page.locator("#month-detail-table thead th").nth(4).click()
+        assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+            "Bob",
+            "Carol",
+            "Alice",
+        ]
 
-                page.locator("#month-detail-table thead th").nth(2).click()
-                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
-                    "Bob",
-                    "Carol",
-                    "Alice",
-                ]
-                assert page.locator("#month-detail-table thead th").nth(2).get_attribute(
-                    "class"
-                ) == "sort-asc"
+        page.locator("#month-detail-table thead th").nth(0).click()
+        assert page.locator("#month-detail-body tr td:first-child").all_text_contents() == [
+            "9A",
+            "10",
+            "101A",
+        ]
+        page.locator("#month-detail-table thead th").nth(0).click()
+        assert page.locator("#month-detail-body tr td:first-child").all_text_contents() == [
+            "101A",
+            "10",
+            "9A",
+        ]
 
-                page.locator("#month-detail-table thead th").nth(2).click()
-                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
-                    "Alice",
-                    "Carol",
-                    "Bob",
-                ]
+        page.locator("#month-detail-table thead th").nth(1).click()
+        assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
+            "Alice",
+            "Bob",
+            "Carol",
+        ]
 
-                page.locator("#month-detail-table thead th").nth(3).click()
-                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
-                    "Bob",
-                    "Carol",
-                    "Alice",
-                ]
-
-                page.locator("#month-detail-table thead th").nth(4).click()
-                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
-                    "Bob",
-                    "Carol",
-                    "Alice",
-                ]
-
-                page.locator("#month-detail-table thead th").nth(0).click()
-                assert page.locator("#month-detail-body tr td:first-child").all_text_contents() == [
-                    "9A",
-                    "10",
-                    "101A",
-                ]
-                page.locator("#month-detail-table thead th").nth(0).click()
-                assert page.locator("#month-detail-body tr td:first-child").all_text_contents() == [
-                    "101A",
-                    "10",
-                    "9A",
-                ]
-
-                page.locator("#month-detail-table thead th").nth(1).click()
-                assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
-                    "Alice",
-                    "Bob",
-                    "Carol",
-                ]
-
-                page.evaluate("() => viewMonth('2026-08')")
-                page.wait_for_function(
-                    "() => document.querySelector('#month-detail-body td')?.textContent === '601A'"
-                )
-                assert page.locator("#month-detail-table thead th").nth(0).get_attribute(
-                    "class"
-                ) == "sort-asc"
-            finally:
-                browser.close()
+        page.evaluate("() => viewMonth('2026-08')")
+        page.wait_for_function(
+            "() => document.querySelector('#month-detail-body td')?.textContent === '601A'"
+        )
+        assert page.locator("#month-detail-table thead th").nth(0).get_attribute(
+            "class"
+        ) == "sort-asc"
 
     def test_page_renders_import_copy_without_generate(self):
         html = home_html()
@@ -1164,8 +1105,7 @@ class TestServerOwnedReportRows:
         assert "enter a boarder name" in html.lower()
         assert "No Boarder History entries matched your search." not in html
 
-    def test_browser_first_search_after_load_shows_miss_feedback(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_browser_first_search_after_load_shows_miss_feedback(self, fresh_client, browser_page):
 
         def fulfill_from_server(route):
             parsed = urlparse(route.request.url)
@@ -1183,23 +1123,18 @@ class TestServerOwnedReportRows:
                 content_type="text/html",
             )
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.route("**/*", fulfill_from_server)
-                page.goto("http://dbs.local/")
-                page.locator('.tab-link[data-tab="history"]').click()
-                page.fill("#search_name", "ZZZ")
-                page.locator("#history button[type=submit]").click()
+        page = browser_page
+        page.route("**/*", fulfill_from_server)
+        page.goto("http://dbs.local/")
+        page.locator('.tab-link[data-tab="history"]').click()
+        page.fill("#search_name", "ZZZ")
+        page.locator("#history button[type=submit]").click()
 
-                page.wait_for_selector("#history .empty-state")
-                assert page.locator("#history .banner-success").count() == 0
-                assert "No Boarder History entries matched your search." in (
-                    page.locator("#history .empty-state").text_content()
-                )
-            finally:
-                browser.close()
+        page.wait_for_selector("#history .empty-state")
+        assert page.locator("#history .banner-success").count() == 0
+        assert "No Boarder History entries matched your search." in (
+            page.locator("#history .empty-state").text_content()
+        )
 
     def test_empty_reports_copy_uses_import(self, fresh_client):
         html = fresh_client.get("/").get_data(as_text=True)
@@ -1327,23 +1262,12 @@ class TestConsequencesRoute:
             conn.execute("DELETE FROM punishments")
             conn.execute("DELETE FROM boarder_history")
             conn.commit()
-            storage.save_month(
+            seed_punishments(
                 conn,
-                [
-                    record("ALICE", "101", 2, 5, 7),
-                    record("BOB", "102", 1, 19, 20),
-                ],
-                "2026-03",
-            )
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
                 boarders=[
                     record("ALICE", "101", 2, 5, 7),
                     record("BOB", "102", 1, 19, 20),
                 ],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
             )
 
     def test_consequences_page_lists_in_flight_punishments(self):
@@ -1456,13 +1380,7 @@ class TestConsequencesRoute:
     def test_overdue_action_is_hidden_before_deadline(self):
         with app_module.connect() as conn:
             conn.execute("DELETE FROM punishments")
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline="2099-01-01",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn, deadline="2099-01-01", include_report=False)
 
         html = client.get("/consequences").get_data(as_text=True)
         panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
@@ -1509,18 +1427,7 @@ class TestTransitionRoute:
             conn.execute("DELETE FROM punishments")
             conn.execute("DELETE FROM boarder_history")
             conn.commit()
-            storage.save_month(
-                conn,
-                [record("ALICE", "101", 2, 5, 7)],
-                "2026-03",
-            )
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn)
 
     def _alice_id(self):
         with app_module.connect() as conn:
@@ -1577,13 +1484,7 @@ class TestTransitionRoute:
     def test_early_overdue_transition_is_rejected(self):
         with app_module.connect() as conn:
             conn.execute("DELETE FROM punishments")
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline="2099-01-01",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn, deadline="2099-01-01", include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
         response = client.post(
@@ -1600,13 +1501,7 @@ class TestTransitionRoute:
         deadline = datetime.now(tz=timezone.utc).date().isoformat()
         with app_module.connect() as conn:
             conn.execute("DELETE FROM punishments")
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline=deadline,
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn, deadline=deadline, include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
         response = client.post(
@@ -1621,13 +1516,7 @@ class TestTransitionRoute:
         deadline = (datetime.now(tz=timezone.utc).date() - timedelta(days=1)).isoformat()
         with app_module.connect() as conn:
             conn.execute("DELETE FROM punishments")
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline=deadline,
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn, deadline=deadline, include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
         response = client.post(
@@ -1665,100 +1554,66 @@ def stub_form_submit(page):
 
 
 class TestDestructiveActionsNameTarget:
-    def test_void_opens_confirm_dialog_naming_boarder_and_month(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_void_opens_confirm_dialog_naming_boarder_and_month(self, fresh_client, browser_page):
         with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn)
         html = fresh_client.get("/consequences").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                stub_form_submit(page)
-                page.locator("form.void-form button[type=submit]").click()
+        page = browser_page
+        page.set_content(html)
+        stub_form_submit(page)
+        page.locator("form.void-form button[type=submit]").click()
 
-                assert page.locator("#confirmModal.show").count() == 1
-                message = page.locator("#confirm-modal-message").text_content()
-                assert "Alice" in message
-                assert "2026-03" in message
+        assert page.locator("#confirmModal.show").count() == 1
+        message = page.locator("#confirm-modal-message").text_content()
+        assert "Alice" in message
+        assert "2026-03" in message
 
-                page.locator("#confirmModal .btn-danger").click()
-                submitted = page.evaluate("() => window.__submitCalled")
-                assert submitted is not None
-                assert "/transition" in submitted
-            finally:
-                browser.close()
+        page.locator("#confirmModal .btn-danger").click()
+        submitted = page.evaluate("() => window.__submitCalled")
+        assert submitted is not None
+        assert "/transition" in submitted
 
-    def test_void_reason_stays_in_form_after_confirm(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_void_reason_stays_in_form_after_confirm(self, fresh_client, browser_page):
         with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn)
         html = fresh_client.get("/consequences").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                stub_form_submit(page)
-                page.locator("form.void-form input[name=void_reason]").fill("left school")
-                page.locator("form.void-form button[type=submit]").click()
-                page.locator("#confirmModal .btn-danger").click()
+        page = browser_page
+        page.set_content(html)
+        stub_form_submit(page)
+        page.locator("form.void-form input[name=void_reason]").fill("left school")
+        page.locator("form.void-form button[type=submit]").click()
+        page.locator("#confirmModal .btn-danger").click()
 
-                submitted = page.evaluate("() => window.__submitCalled")
-                assert submitted is not None
-            finally:
-                browser.close()
+        submitted = page.evaluate("() => window.__submitCalled")
+        assert submitted is not None
 
-    def test_delete_report_confirmation_names_exact_month_and_punishment_impact(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_delete_report_confirmation_names_exact_month_and_punishment_impact(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 1, 1, 2)], "2026-07")
         html = fresh_client.get("/").get_data(as_text=True)
-        rows = [
-            {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 1, "total_minutes": 1, "total_points": 2}
-        ]
+        rows = [month_row("ALICE", "101", 1, 1, 2)]
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                page.evaluate(
-                    """({ rows }) => {
-                        window.fetch = url => Promise.resolve({
-                            json: () => Promise.resolve({ boarders: rows })
-                        });
-                        viewMonth('2026-07');
-                    }""",
-                    {"rows": rows},
-                )
-                page.wait_for_function(
-                    "() => document.querySelectorAll('#month-detail-body tr').length === 1"
-                )
-                page.locator("#month-detail-delete").click()
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """({ rows }) => {
+                window.fetch = url => Promise.resolve({
+                    json: () => Promise.resolve({ boarders: rows })
+                });
+                viewMonth('2026-07');
+            }""",
+            {"rows": rows},
+        )
+        page.wait_for_function(
+            "() => document.querySelectorAll('#month-detail-body tr').length === 1"
+        )
+        page.locator("#month-detail-delete").click()
 
-                message = page.locator("#confirm-modal-message").text_content()
-                assert "2026-07" in message
-                assert "Punishments" in message
-            finally:
-                browser.close()
+        message = page.locator("#confirm-modal-message").text_content()
+        assert "2026-07" in message
+        assert "Punishments" in message
 
 
 def _relative_luminance(rgb):
@@ -1784,14 +1639,7 @@ def _parse_rgb(text):
 class TestConfirmModalDialogSemantics:
     def _consequences_html(self, fresh_client):
         with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn)
         return fresh_client.get("/consequences").get_data(as_text=True)
 
     def _open_modal(self, page):
@@ -1799,56 +1647,44 @@ class TestConfirmModalDialogSemantics:
         page.locator("form.void-form button[type=submit]").click()
         page.wait_for_selector("#confirmModal.show")
 
-    def test_modal_has_dialog_role_accessible_name_and_initial_focus(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_modal_has_dialog_role_accessible_name_and_initial_focus(self, fresh_client, browser_page):
         html = self._consequences_html(fresh_client)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                self._open_modal(page)
+        page = browser_page
+        page.set_content(html)
+        self._open_modal(page)
 
-                modal = page.locator("#confirmModal")
-                assert modal.get_attribute("role") == "dialog"
-                assert modal.get_attribute("aria-modal") == "true"
-                assert modal.get_attribute("aria-labelledby") == "confirm-modal-title"
+        modal = page.locator("#confirmModal")
+        assert modal.get_attribute("role") == "dialog"
+        assert modal.get_attribute("aria-modal") == "true"
+        assert modal.get_attribute("aria-labelledby") == "confirm-modal-title"
 
-                focused = page.evaluate(
-                    "() => document.activeElement.className"
-                )
-                assert "btn-danger" in focused
-            finally:
-                browser.close()
+        focused = page.evaluate(
+            "() => document.activeElement.className"
+        )
+        assert "btn-danger" in focused
 
-    def test_tab_is_trapped_esc_cancels_and_focus_is_restored(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_tab_is_trapped_esc_cancels_and_focus_is_restored(self, fresh_client, browser_page):
         html = self._consequences_html(fresh_client)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                self._open_modal(page)
+        page = browser_page
+        page.set_content(html)
+        self._open_modal(page)
 
-                for _ in range(4):
-                    page.keyboard.press("Tab")
-                    contained = page.evaluate(
-                        """() => document.getElementById('confirmModal').contains(document.activeElement)"""
-                    )
-                    assert contained
+        for _ in range(4):
+            page.keyboard.press("Tab")
+            contained = page.evaluate(
+                """() => document.getElementById('confirmModal').contains(document.activeElement)"""
+            )
+            assert contained
 
-                page.keyboard.press("Escape")
-                assert page.locator("#confirmModal.show").count() == 0
+        page.keyboard.press("Escape")
+        assert page.locator("#confirmModal.show").count() == 0
 
-                restored = page.evaluate(
-                    """() => document.activeElement.closest('form.void-form') !== null"""
-                )
-                assert restored
-            finally:
-                browser.close()
+        restored = page.evaluate(
+            """() => document.activeElement.closest('form.void-form') !== null"""
+        )
+        assert restored
 
 
 class TestUnsavedEditGuard:
@@ -1865,92 +1701,62 @@ class TestUnsavedEditGuard:
             ),
         )
 
-    def test_beforeunload_warns_with_unsaved_edits(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_beforeunload_warns_with_unsaved_edits(self, fresh_client, browser_page):
         html = fresh_client.get("/boarders").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            dialogs = []
-            page.on(
-                "dialog",
-                lambda dialog: (dialogs.append(dialog.type), dialog.accept()),
-            )
-            try:
-                self._fulfill_navigation(page)
-                page.set_content(html)
-                self._enter_dirty_edit(page)
-                page.goto("http://dbs.local/elsewhere")
+        page = browser_page
+        dialogs = []
+        page.on(
+            "dialog",
+            lambda dialog: (dialogs.append(dialog.type), dialog.accept()),
+        )
+        self._fulfill_navigation(page)
+        page.set_content(html)
+        self._enter_dirty_edit(page)
+        page.goto("http://dbs.local/elsewhere")
 
-                assert len(dialogs) == 1
-                assert dialogs[0] == "beforeunload"
-            finally:
-                browser.close()
+        assert len(dialogs) == 1
+        assert dialogs[0] == "beforeunload"
 
-    def test_no_beforeunload_warning_without_unsaved_edits(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_no_beforeunload_warning_without_unsaved_edits(self, fresh_client, browser_page):
         html = fresh_client.get("/boarders").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            dialogs = []
-            page.on(
-                "dialog",
-                lambda dialog: (dialogs.append(dialog.type), dialog.accept()),
-            )
-            try:
-                self._fulfill_navigation(page)
-                page.set_content(html)
-                page.locator("#boarder-edit").click()
-                page.goto("http://dbs.local/elsewhere")
+        page = browser_page
+        dialogs = []
+        page.on(
+            "dialog",
+            lambda dialog: (dialogs.append(dialog.type), dialog.accept()),
+        )
+        self._fulfill_navigation(page)
+        page.set_content(html)
+        page.locator("#boarder-edit").click()
+        page.goto("http://dbs.local/elsewhere")
 
-                assert dialogs == []
-            finally:
-                browser.close()
+        assert dialogs == []
 
-    def test_tab_click_guard_unchanged_for_unsaved_edits(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_tab_click_guard_unchanged_for_unsaved_edits(self, fresh_client, browser_page):
         html = fresh_client.get("/boarders").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                self._enter_dirty_edit(page)
-                page.locator('.tab-link[data-tab="reports"]').click()
+        page = browser_page
+        page.set_content(html)
+        self._enter_dirty_edit(page)
+        page.locator('.tab-link[data-tab="reports"]').click()
 
-                assert page.locator("#confirmModal.show").count() == 1
-                assert page.locator("#boarders.active").count() == 1
-            finally:
-                browser.close()
+        assert page.locator("#confirmModal.show").count() == 1
+        assert page.locator("#boarders.active").count() == 1
 
 
 class TestAccessibilityPolish:
     def _seed_punishments(self, fresh_client):
         with app_module.connect() as conn:
-            storage.save_month(
+            seeded = seed_punishments(
                 conn,
-                [
-                    record("ALICE", "101", 2, 5, 7),
-                    record("BOB", "102", 1, 19, 20),
-                ],
-                "2026-03",
-            )
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
                 boarders=[
                     record("ALICE", "101", 2, 5, 7),
                     record("BOB", "102", 1, 19, 20),
                 ],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
             )
-            rows = storage.list_punishments(conn, statuses=("assigned",))
-            bob = next(r for r in rows if r.normalized_name == "BOB")
+            bob = next(r for r in seeded if r.normalized_name == "BOB")
             storage.transition_punishment(
                 conn, bob.id, "submitted", timestamp="2026-04-11T09:00:00+00:00"
             )
@@ -1982,95 +1788,78 @@ class TestAccessibilityPolish:
         ).group(0)
         assert '<th scope="col">' in consequences_section
 
-    def test_tab_bar_wraps_at_narrow_width(self):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_tab_bar_wraps_at_narrow_width(self, browser_page):
         html = home_html()
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 360, "height": 800})
-            try:
-                page.set_content(html)
-                wrap = page.evaluate(
-                    """() => getComputedStyle(document.querySelector('.tabs')).flexWrap"""
-                )
-                assert wrap == "wrap"
-                overflow = page.evaluate(
-                    """() => {
-                        const tabs = document.querySelector('.tabs');
-                        return tabs.scrollWidth > tabs.clientWidth;
-                    }"""
-                )
-                assert not overflow
-            finally:
-                browser.close()
+        page = browser_page
+        page.set_viewport_size({"width": 360, "height": 800})
+        page.set_content(html)
+        wrap = page.evaluate(
+            """() => getComputedStyle(document.querySelector('.tabs')).flexWrap"""
+        )
+        assert wrap == "wrap"
+        overflow = page.evaluate(
+            """() => {
+                const tabs = document.querySelector('.tabs');
+                return tabs.scrollWidth > tabs.clientWidth;
+            }"""
+        )
+        assert not overflow
 
-    def test_month_input_shows_visible_focus_indicator(self):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_month_input_shows_visible_focus_indicator(self, browser_page):
         html = home_html()
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                page.locator('.tab-link[data-tab="reports"]').click()
-                page.focus("#report_month")
-                outline_width = page.evaluate(
-                    """() => getComputedStyle(document.getElementById('report_month')).outlineWidth"""
-                )
-                outline_style = page.evaluate(
-                    """() => getComputedStyle(document.getElementById('report_month')).outlineStyle"""
-                )
-                assert outline_style != "none"
-                assert outline_width not in ("", "0px")
-            finally:
-                browser.close()
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="reports"]').click()
+        page.focus("#report_month")
+        outline_width = page.evaluate(
+            """() => getComputedStyle(document.getElementById('report_month')).outlineWidth"""
+        )
+        outline_style = page.evaluate(
+            """() => getComputedStyle(document.getElementById('report_month')).outlineStyle"""
+        )
+        assert outline_style != "none"
+        assert outline_width not in ("", "0px")
 
-    def test_badge_and_disabled_styles_meet_aa_contrast(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_badge_and_disabled_styles_meet_aa_contrast(self, fresh_client, browser_page):
         self._seed_punishments(fresh_client)
         consequences_html = fresh_client.get("/consequences?show_all=1").get_data(as_text=True)
         boarders_html = fresh_client.get("/boarders").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(consequences_html)
+        page = browser_page
+        page.set_content(consequences_html)
 
-                def computed_colors(selector):
-                    return page.locator(selector).first.evaluate(
-                        """el => [
-                            getComputedStyle(el).backgroundColor,
-                            getComputedStyle(el).color
-                        ]"""
-                    )
+        def computed_colors(selector):
+            return page.locator(selector).first.evaluate(
+                """el => [
+                    getComputedStyle(el).backgroundColor,
+                    getComputedStyle(el).color
+                ]"""
+            )
 
-                for selector in (".due-badge", ".late-badge"):
-                    background, foreground = computed_colors(selector)
-                    ratio = _contrast_ratio(_parse_rgb(background), _parse_rgb(foreground))
-                    assert ratio >= 4.5, f"{selector} contrast {ratio:.2f} < 4.5"
+        for selector in (".due-badge", ".late-badge"):
+            background, foreground = computed_colors(selector)
+            ratio = _contrast_ratio(_parse_rgb(background), _parse_rgb(foreground))
+            assert ratio >= 4.5, f"{selector} contrast {ratio:.2f} < 4.5"
 
-                page.set_content(boarders_html)
-                disabled_background, disabled_foreground = computed_colors("#boarder-save")
-                ratio = _contrast_ratio(
-                    _parse_rgb(disabled_background), _parse_rgb(disabled_foreground)
-                )
-                assert ratio >= 4.5, f"disabled contrast {ratio:.2f} < 4.5"
+        page.set_content(boarders_html)
+        disabled_background, disabled_foreground = computed_colors("#boarder-save")
+        ratio = _contrast_ratio(
+            _parse_rgb(disabled_background), _parse_rgb(disabled_foreground)
+        )
+        assert ratio >= 4.5, f"disabled contrast {ratio:.2f} < 4.5"
 
-                enabled_background, _ = computed_colors(".btn-primary:not(:disabled)")
-                assert _parse_rgb(disabled_background) != _parse_rgb(enabled_background), (
-                    "disabled controls must be visually distinct from enabled ones"
-                )
-            finally:
-                browser.close()
+        enabled_background, _ = computed_colors(".btn-primary:not(:disabled)")
+        assert _parse_rgb(disabled_background) != _parse_rgb(enabled_background), (
+            "disabled controls must be visually distinct from enabled ones"
+        )
 
 
 class TestPrintOutputsActiveView:
     ROWS: ClassVar = [
-        {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
-        {"name": "BOB", "display_name": "Bob", "bed": "102", "frequency": 1, "total_minutes": 19, "total_points": 20},
+        month_row("ALICE", "101", 2, 5, 7),
+        month_row("BOB", "102", 1, 19, 20),
     ]
 
     def _open_report(self, page):
@@ -2091,222 +1880,165 @@ class TestPrintOutputsActiveView:
         page.emulate_media(media="print")
         return page.evaluate("() => document.body.innerText")
 
-    def test_printing_open_month_report_yields_only_that_report(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_printing_open_month_report_yields_only_that_report(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
         html = fresh_client.get("/").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                self._open_report(page)
-                printed = self._printed_text(page)
+        page = browser_page
+        page.set_content(html)
+        self._open_report(page)
+        printed = self._printed_text(page)
 
-                assert "Alice" in printed
-                assert "101" in printed
-                assert "View Reports in Database" not in printed
-                assert "Search Boarder History" not in printed
-                assert "Assign Punishments" not in printed
-                assert "Import Monthly Log" not in printed
-            finally:
-                browser.close()
+        assert "Alice" in printed
+        assert "101" in printed
+        assert "View Reports in Database" not in printed
+        assert "Search Boarder History" not in printed
+        assert "Assign Punishments" not in printed
+        assert "Import Monthly Log" not in printed
 
-    def test_empty_month_detail_skeleton_never_prints(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_empty_month_detail_skeleton_never_prints(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
         html = fresh_client.get("/").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                printed = self._printed_text(page)
-                assert "Report for" not in printed
+        page = browser_page
+        page.set_content(html)
+        printed = self._printed_text(page)
+        assert "Report for" not in printed
 
-                display = page.evaluate(
-                    """() => getComputedStyle(document.getElementById('month-detail')).display"""
-                )
-                assert display == "none"
-            finally:
-                browser.close()
+        display = page.evaluate(
+            """() => getComputedStyle(document.getElementById('month-detail')).display"""
+        )
+        assert display == "none"
 
-    def test_printing_consequences_tab_excludes_other_views_and_skeleton(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_printing_consequences_tab_excludes_other_views_and_skeleton(self, fresh_client, browser_page):
         with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn)
         html = fresh_client.get("/consequences").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                printed = self._printed_text(page)
+        page = browser_page
+        page.set_content(html)
+        printed = self._printed_text(page)
 
-                assert "Alice" in printed
-                assert "Points Owed" in printed
-                assert "Report for" not in printed
-                assert "Add Boarder" not in printed
-                assert "View Reports in Database" not in printed
-            finally:
-                browser.close()
+        assert "Alice" in printed
+        assert "Points Owed" in printed
+        assert "Report for" not in printed
+        assert "Add Boarder" not in printed
+        assert "View Reports in Database" not in printed
 
-    def test_printing_history_tab_shows_results_not_search_form(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_printing_history_tab_shows_results_not_search_form(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
         html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                page.locator('.tab-link[data-tab="history"]').click()
-                printed = self._printed_text(page)
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="history"]').click()
+        printed = self._printed_text(page)
 
-                assert "Alice" in printed
-                assert "Minutes Late" in printed
-                assert "Enter name or partial name" not in printed
-                assert "Report for" not in printed
-            finally:
-                browser.close()
+        assert "Alice" in printed
+        assert "Minutes Late" in printed
+        assert "Enter name or partial name" not in printed
+        assert "Report for" not in printed
 
 
 class TestAsyncActionsNeverFailSilently:
-    ROWS: ClassVar = [
-        {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
-    ]
+    ROWS: ClassVar = [month_row("ALICE", "101", 2, 5, 7)]
 
     def _watch_alerts(self, page):
         page.evaluate("() => { window.__alerted = false; window.alert = () => { window.__alerted = true; }; }")
 
-    def test_month_detail_fetch_shows_loading_indicator(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_month_detail_fetch_shows_loading_indicator(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
         html = fresh_client.get("/").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                page.evaluate(
-                    """({ rows }) => {
-                        window.fetch = url => new Promise(resolve => setTimeout(() => resolve({
-                            json: () => Promise.resolve({ boarders: rows })
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """({ rows }) => {
+                window.fetch = url => new Promise(resolve => setTimeout(() => resolve({
+                    json: () => Promise.resolve({ boarders: rows })
+                }), 300));
+                viewMonth('2026-07');
+            }""",
+            {"rows": self.ROWS},
+        )
+        page.wait_for_selector("#month-detail-loading:not(.hidden)")
+        page.wait_for_selector("#month-detail-loading.hidden", state="attached")
+        assert page.locator("#month-detail-loading").is_hidden()
+
+    def test_failed_month_fetch_renders_inline_error_not_alert(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        self._watch_alerts(page)
+        page.evaluate(
+            """() => {
+                window.fetch = url => Promise.resolve({
+                    json: () => Promise.resolve({ error: 'No report found for 2026-07.' })
+                });
+                viewMonth('2026-07');
+            }"""
+        )
+        page.wait_for_selector("#month-detail-error:not(.hidden)")
+        assert "No report found" in page.locator("#month-detail-error").text_content()
+        assert not page.evaluate("() => window.__alerted")
+
+    def test_double_click_save_sends_one_request(self, fresh_client, browser_page):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """() => {
+                window.__saveCount = 0;
+                window.fetch = (url, opts) => {
+                    if (url.includes('/api/boarders') && opts && opts.method === 'PATCH') {
+                        window.__saveCount++;
+                        return new Promise(resolve => setTimeout(() => resolve({
+                            json: () => Promise.resolve({ ok: true })
                         }), 300));
-                        viewMonth('2026-07');
-                    }""",
-                    {"rows": self.ROWS},
-                )
-                page.wait_for_selector("#month-detail-loading:not(.hidden)")
-                page.wait_for_selector("#month-detail-loading.hidden", state="attached")
-                assert page.locator("#month-detail-loading").is_hidden()
-            finally:
-                browser.close()
+                    }
+                    return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
+                };
+            }"""
+        )
+        page.locator("#boarder-edit").click()
+        page.locator(".boarder-edit-name").first.fill("Alicia")
+        save_button = page.locator("#boarder-save")
+        save_button.click()
+        page.evaluate("() => document.getElementById('boarder-save').click()")
+        page.wait_for_timeout(600)
+        assert page.evaluate("() => window.__saveCount") == 1
 
-    def test_failed_month_fetch_renders_inline_error_not_alert(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
-
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                self._watch_alerts(page)
-                page.evaluate(
-                    """() => {
-                        window.fetch = url => Promise.resolve({
-                            json: () => Promise.resolve({ error: 'No report found for 2026-07.' })
-                        });
-                        viewMonth('2026-07');
-                    }"""
-                )
-                page.wait_for_selector("#month-detail-error:not(.hidden)")
-                assert "No report found" in page.locator("#month-detail-error").text_content()
-                assert not page.evaluate("() => window.__alerted")
-            finally:
-                browser.close()
-
-    def test_double_click_save_sends_one_request(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_remove_button_disabled_while_delete_in_flight(self, fresh_client, browser_page):
         html = fresh_client.get("/boarders").get_data(as_text=True)
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                page.evaluate(
-                    """() => {
-                        window.__saveCount = 0;
-                        window.fetch = (url, opts) => {
-                            if (url.includes('/api/boarders') && opts && opts.method === 'PATCH') {
-                                window.__saveCount++;
-                                return new Promise(resolve => setTimeout(() => resolve({
-                                    json: () => Promise.resolve({ ok: true })
-                                }), 300));
-                            }
-                            return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
-                        };
-                    }"""
-                )
-                page.locator("#boarder-edit").click()
-                page.locator(".boarder-edit-name").first.fill("Alicia")
-                save_button = page.locator("#boarder-save")
-                save_button.click()
-                page.evaluate("() => document.getElementById('boarder-save').click()")
-                page.wait_for_timeout(600)
-                assert page.evaluate("() => window.__saveCount") == 1
-            finally:
-                browser.close()
-
-    def test_remove_button_disabled_while_delete_in_flight(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
-        html = fresh_client.get("/boarders").get_data(as_text=True)
-
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                page.evaluate(
-                    """() => {
-                        window.fetch = (url, opts) => {
-                            if (opts && opts.method === 'DELETE') {
-                                return new Promise(resolve => setTimeout(() => resolve({
-                                    json: () => Promise.resolve({ ok: true })
-                                }), 300));
-                            }
-                            return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
-                        };
-                    }"""
-                )
-                page.locator("#boarder-edit").click()
-                remove_button = page.locator(".boarder-remove").first
-                remove_button.click()
-                page.locator("#confirmModal .btn-danger").click()
-                assert remove_button.is_disabled()
-                page.wait_for_timeout(600)
-            finally:
-                browser.close()
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """() => {
+                window.fetch = (url, opts) => {
+                    if (opts && opts.method === 'DELETE') {
+                        return new Promise(resolve => setTimeout(() => resolve({
+                            json: () => Promise.resolve({ ok: true })
+                        }), 300));
+                    }
+                    return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
+                };
+            }"""
+        )
+        page.locator("#boarder-edit").click()
+        remove_button = page.locator(".boarder-remove").first
+        remove_button.click()
+        page.locator("#confirmModal .btn-danger").click()
+        assert remove_button.is_disabled()
+        page.wait_for_timeout(600)
 
 
 class TestAssignPanelPositiveConsent:
@@ -2325,8 +2057,7 @@ class TestAssignPanelPositiveConsent:
         )
         page.locator("#month-detail-assign-btn").click()
 
-    def test_panel_prechecks_eligible_boarders_with_positive_labels(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_panel_prechecks_eligible_boarders_with_positive_labels(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(
                 conn,
@@ -2339,39 +2070,33 @@ class TestAssignPanelPositiveConsent:
             )
         html = fresh_client.get("/").get_data(as_text=True)
         rows = [
-            {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
-            {"name": "BOB", "display_name": "Bob", "bed": "102", "frequency": 1, "total_minutes": 19, "total_points": 20},
-            {"name": "CAROL", "display_name": "Carol", "bed": "103", "frequency": 0, "total_minutes": 0, "total_points": 0},
+            month_row("ALICE", "101", 2, 5, 7),
+            month_row("BOB", "102", 1, 19, 20),
+            month_row("CAROL", "103", 0, 0, 0),
         ]
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                self._open_assign_panel(page, rows, 3)
+        page = browser_page
+        page.set_content(html)
+        self._open_assign_panel(page, rows, 3)
 
-                checkboxes = page.locator('#assign-boarders input[type="checkbox"]')
-                assert checkboxes.count() == 2
-                assert all(checkboxes.nth(i).is_checked() for i in range(2))
-                assert all(
-                    checkboxes.nth(i).get_attribute("name") == "assign"
-                    for i in range(2)
-                )
-                labels = page.locator("#assign-boarders label").all_text_contents()
-                assert any("Assign punishment to Alice (7 pts)" in text for text in labels)
-                assert any("Assign punishment to Bob (20 pts)" in text for text in labels)
+        checkboxes = page.locator('#assign-boarders input[type="checkbox"]')
+        assert checkboxes.count() == 2
+        assert all(checkboxes.nth(i).is_checked() for i in range(2))
+        assert all(
+            checkboxes.nth(i).get_attribute("name") == "assign"
+            for i in range(2)
+        )
+        labels = page.locator("#assign-boarders label").all_text_contents()
+        assert any("Assign punishment to Alice (7 pts)" in text for text in labels)
+        assert any("Assign punishment to Bob (20 pts)" in text for text in labels)
 
-                counter = page.locator("#assign-counter")
-                assert counter.text_content().strip() == "2 punishments will be assigned."
+        counter = page.locator("#assign-counter")
+        assert counter.text_content().strip() == "2 punishments will be assigned."
 
-                checkboxes.nth(0).uncheck()
-                assert counter.text_content().strip() == "1 punishment will be assigned."
-            finally:
-                browser.close()
+        checkboxes.nth(0).uncheck()
+        assert counter.text_content().strip() == "1 punishment will be assigned."
 
-    def test_submitting_sends_only_checked_boarders(self, fresh_client):
-        playwright_api = pytest.importorskip("playwright.sync_api")
+    def test_submitting_sends_only_checked_boarders(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(
                 conn,
@@ -2383,37 +2108,32 @@ class TestAssignPanelPositiveConsent:
             )
         html = fresh_client.get("/").get_data(as_text=True)
         rows = [
-            {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
-            {"name": "BOB", "display_name": "Bob", "bed": "102", "frequency": 1, "total_minutes": 19, "total_points": 20},
+            month_row("ALICE", "101", 2, 5, 7),
+            month_row("BOB", "102", 1, 19, 20),
         ]
 
-        with playwright_api.sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.set_content(html)
-                self._open_assign_panel(page, rows, 2)
-                page.locator("#assign-deadline").fill("2026-08-10")
-                page.evaluate(
-                    """() => {
-                        window.__submitted = null;
-                        document.getElementById('assign-form').addEventListener('submit', event => {
-                            event.preventDefault();
-                            window.__submitted = new URLSearchParams(
-                                new FormData(event.target)
-                            ).toString();
-                        });
-                    }"""
-                )
-                page.locator('#assign-boarders input[type="checkbox"]').first.uncheck()
-                page.locator("#assign-form button[type=\"submit\"]").click()
+        page = browser_page
+        page.set_content(html)
+        self._open_assign_panel(page, rows, 2)
+        page.locator("#assign-deadline").fill("2026-08-10")
+        page.evaluate(
+            """() => {
+                window.__submitted = null;
+                document.getElementById('assign-form').addEventListener('submit', event => {
+                    event.preventDefault();
+                    window.__submitted = new URLSearchParams(
+                        new FormData(event.target)
+                    ).toString();
+                });
+            }"""
+        )
+        page.locator('#assign-boarders input[type="checkbox"]').first.uncheck()
+        page.locator("#assign-form button[type=\"submit\"]").click()
 
-                submitted = page.evaluate("() => window.__submitted")
-                assert "assign=BOB" in submitted
-                assert "assign=ALICE" not in submitted
-                assert "deadline=2026-08-10" in submitted
-            finally:
-                browser.close()
+        submitted = page.evaluate("() => window.__submitted")
+        assert "assign=BOB" in submitted
+        assert "assign=ALICE" not in submitted
+        assert "deadline=2026-08-10" in submitted
 
 
 class TestTransitionFeedbackLivesOnPage:
@@ -2423,18 +2143,7 @@ class TestTransitionFeedbackLivesOnPage:
             conn.execute("DELETE FROM punishments")
             conn.execute("DELETE FROM boarder_history")
             conn.commit()
-            storage.save_month(
-                conn,
-                [record("ALICE", "101", 2, 5, 7)],
-                "2026-03",
-            )
-            storage.assign_punishments(
-                conn,
-                month="2026-03",
-                boarders=[record("ALICE", "101", 2, 5, 7)],
-                deadline="2026-04-10",
-                assigned_at="2026-04-01T09:00:00+00:00",
-            )
+            seed_punishments(conn)
 
     def _alice_id(self):
         with app_module.connect() as conn:
