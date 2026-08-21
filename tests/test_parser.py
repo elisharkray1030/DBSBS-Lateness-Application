@@ -116,6 +116,17 @@ class TestParseTimeSeconds:
     def test_accepts_hh_mm_ss(self):
         assert parse_time_seconds("07:41:30") == (7 * 3600) + (41 * 60) + 30
 
+    def test_accepts_single_digit_hour_hh_mm(self):
+        # Access-control logs emit H:MM times before 10am - the lateness window.
+        assert parse_time_seconds("7:41") == (7 * 3600) + (41 * 60)
+
+    def test_accepts_single_digit_hour_hh_mm_ss(self):
+        assert parse_time_seconds("7:41:04") == (7 * 3600) + (41 * 60) + 4
+
+    def test_bare_and_padded_hours_parse_identically(self):
+        assert parse_time_seconds("7:41") == parse_time_seconds("07:41")
+        assert parse_time_seconds("8:00:00") == parse_time_seconds("08:00:00")
+
     def test_accepts_24_hour_boundaries(self):
         assert parse_time_seconds("00:00") == 0
         assert parse_time_seconds("23:59:59") == (23 * 3600) + (59 * 60) + 59
@@ -123,7 +134,6 @@ class TestParseTimeSeconds:
     @pytest.mark.parametrize(
         "value",
         [
-            "7:41",
             "5:41 PM",
             "07:60",
             "07:41:60",

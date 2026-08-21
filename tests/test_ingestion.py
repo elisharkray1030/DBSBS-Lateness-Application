@@ -87,8 +87,29 @@ class TestIngestLog:
         assert outcome.diagnostics.rows_read == 4
         assert outcome.diagnostics.matched_rows == 4
         raw = [(r.name, r.raw_value) for r in outcome.diagnostics.unparseable_rows]
-        assert raw == [("BOB", "7:45"), ("CAROL", "07:99"), ("ALICE", "not a time")]
+        assert raw == [("CAROL", "07:99"), ("ALICE", "not a time")]
 
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 1
+        assert by_name["ALICE"].total_minutes == 1
+        assert by_name["BOB"].frequency == 1
+        assert by_name["BOB"].total_minutes == 4
+
+    def test_single_digit_hour_access_control_row_records_lateness(self, conn):
+        """Regression: real access-control logs emit H:MM:SS times (one-digit
+        hours before 10am), which is the entire lateness window. Strict HH:MM
+        parsing silently recorded zero lateness while still saving the report.
+        """
+        text = (
+            "Transaction Date,Transaction Time,Transaction Type,Panel,Door,Name,"
+            "Other Name,Staff Code,Department,Position,Card ID,Transaction Log\n"
+            "5/4/2026,7:41:04,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+        )
+        outcome = ingest(text, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.diagnostics.unparseable_rows == []
         by_name = {r.name: r for r in outcome.boarders}
         assert by_name["ALICE"].frequency == 1
         assert by_name["ALICE"].total_minutes == 1
@@ -179,18 +200,18 @@ class TestIngestLog:
         assert "Transaction Time" in outcome.reason
 
     def test_all_times_unparseable_rejected(self, conn):
-        outcome = ingest(LOG_HEADER + "ALICE,7:42\n" + "BOB,bad\n", conn=conn)
+        outcome = ingest(LOG_HEADER + "ALICE,07:99\n" + "BOB,bad\n", conn=conn)
 
         assert isinstance(outcome, RejectedOutcome)
         assert "ALICE" in outcome.reason
-        assert "7:42" in outcome.reason
+        assert "07:99" in outcome.reason
         assert storage.list_months(conn) == []
 
     def test_four_failure_causes_produce_distinct_reasons(self, conn):
         cases = [
             ingest("", conn=conn),
             ingest(LOG_HEADER + "GHOST,07:43\n", conn=conn),
-            ingest(LOG_HEADER + "ALICE,7:42\n", conn=conn),
+            ingest(LOG_HEADER + "ALICE,07:99\n", conn=conn),
             ingest(LOG_HEADER + "ALICE,07:42\n", master=None, conn=conn),
         ]
         reasons = {o.reason for o in cases}
@@ -244,9 +265,8 @@ class TestIngestLog:
         assert isinstance(outcome, SavedOutcome)
         assert outcome.message == (
             "Monthly report saved for '2026-06'. "
-            "3 Boarders recorded, 1 with lateness. "
-            "1 log row matched no Boarder. "
-            "1 log row had an unreadable Transaction Time."
+            "3 Boarders recorded, 2 with lateness. "
+            "1 log row matched no Boarder."
         )
 
     def test_clean_import_message_reports_counts_without_diagnostics(self, conn):
@@ -276,7 +296,7 @@ class TestIngestLog:
 
     def test_unparseable_rows_reported_with_plural_count(self, conn):
         outcome = ingest(
-            LOG_HEADER + "ALICE,07:42\n" + "BOB,7:45\n" + "CAROL,07:99\n",
+            LOG_HEADER + "ALICE,07:42\n" + "BOB,07:99\n" + "CAROL,bad\n",
             conn=conn,
         )
 

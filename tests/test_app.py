@@ -779,7 +779,7 @@ class TestImportPostRedirectGet:
     def test_mixed_import_redirect_shows_confirmation_only(self, fresh_client):
         resp = self._import(
             fresh_client,
-            body="Name,Transaction Time\nALICE,07:45\nGHOST,07:46\nBOB,7:47\n",
+            body="Name,Transaction Time\nALICE,07:45\nGHOST,07:46\nBOB,07:99\n",
         )
 
         assert resp.status_code == 302
@@ -790,7 +790,7 @@ class TestImportPostRedirectGet:
         assert "1 log row had an unreadable Transaction Time." in html
         assert "Unmatched names: GHOST." not in html
         assert "Unparseable times: BOB" not in html
-        assert "7:47" not in html
+        assert "07:99" not in html
 
     def test_following_redirect_does_not_duplicate_the_import(self, fresh_client):
         resp = self._import(fresh_client)

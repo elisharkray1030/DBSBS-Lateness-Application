@@ -12,7 +12,9 @@ from records import Boarder, BoarderRecord, UnparsedTimeRow, sort_boarder_record
 START_SECONDS = (7 * 3600) + (41 * 60)
 END_SECONDS = (8 * 3600) + (0 * 60)
 
-TIME_PATTERN = re.compile(r"^\d{2}:\d{2}(?::\d{2})?$")
+# Access-control logs emit one-digit hours before 10am (e.g. '7:41:04'),
+# which covers the whole lateness window; range checks still apply below.
+TIME_PATTERN = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?$")
 
 MONTH_LABEL_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
