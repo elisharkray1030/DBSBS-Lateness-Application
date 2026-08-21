@@ -20,7 +20,7 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 - [storage.py](storage.py) - SQLite persistence behind an injectable connection seam
 - [records.py](records.py) - the typed boarder record shared by ingestion, storage, the CSV writer, and the JSON body
 - [templates/index.html](templates/index.html) - dashboard UI
-- [tests/](tests/) - pytest suite covering the ingestion and storage seams (no server or browser needed)
+- [tests/](tests/) - pytest suite covering the ingestion and storage seams, plus Flask test-client route tests and Playwright browser tests for UI behavior (browser tests skip automatically when Playwright is not installed)
 - [namelist.csv](namelist.csv) - master boarder list used for matching (local-only: gitignored for privacy, not in the repo)
 - [requirements.txt](requirements.txt) - runtime dependencies
 - [requirements-dev.txt](requirements-dev.txt) - development dependencies (pytest), includes runtime deps
@@ -91,6 +91,8 @@ If you are using Docker Compose, the root `namelist.csv` is only consulted for t
 5. Use the month cards to view, download, or delete saved reports.
 6. Use the History tab to search boarder records by name.
 
+Printing is an intentional feature for Monthly Reports: with a report open, Print (or Ctrl/Cmd+P) outputs exactly that report — the application chrome, other tabs' content, and empty report skeletons are excluded from the printed page.
+
 ## Data expectations
 
 - `namelist.csv` should contain at least `Name` and `Bed` columns. It is read once at first startup to seed an empty boarders table; after that, manage the boarder list through the Boarders tab.
@@ -100,7 +102,7 @@ If you are using Docker Compose, the root `namelist.csv` is only consulted for t
 
 ## Upload behaviour
 
-A month report is only saved when the uploaded log produced at least one row for a known boarder with a parseable time. Uploads that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful Import reports how many boarders were recorded, and lists unmatched names or unparseable times when present, so staff can correct bad source data. The upload stream is consumed directly by the ingestion module - it is never written to a temp file on disk.
+A month report is only saved when the uploaded log produced at least one row for a known boarder with a parseable time. Uploads that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful Import reports how many Boarders were recorded and how many had lateness, plus counts of unmatched or unparseable rows when present, so staff can correct bad source data. The upload stream is consumed directly by the ingestion module - it is never written to a temp file on disk.
 
 The web upload and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
 
@@ -113,8 +115,8 @@ The web upload and the parser CLI run the exact same ingestion module, so the tw
 
 ## Development notes
 
-- Install dev dependencies (pytest, mypy) with `python -m pip install -r requirements-dev.txt`.
-- Run `python -m pytest tests` to run the suite across the ingestion and storage seams (synthetic CSVs and an in-memory SQLite connection, no server or browser required).
+- Install dev dependencies (pytest, mypy, playwright) with `python -m pip install -r requirements-dev.txt`.
+- Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium and skip automatically when it is unavailable).
 - Run `python -m mypy app.py parser.py storage.py records.py punishments.py` for typechecking.
 - Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.

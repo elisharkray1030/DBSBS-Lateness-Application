@@ -106,3 +106,4 @@ class Punishment:
     void_reason: str | None = None
     is_due: bool = False
     was_late: bool = False
+    last_action: str | None = None

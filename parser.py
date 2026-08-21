@@ -50,7 +50,26 @@ class SavedOutcome:
 
     @property
     def message(self) -> str:
-        return f"Monthly report saved for '{self.month_label}'."
+        recorded = len(self.boarders)
+        boarder_word = "Boarder" if recorded == 1 else "Boarders"
+        parts = [
+            f"Monthly report saved for '{self.month_label}'.",
+            f"{recorded} {boarder_word} recorded, {self.boarders_count} with lateness.",
+        ]
+        unmatched = self.diagnostics.rows_read - self.diagnostics.matched_rows
+        if unmatched > 0:
+            parts.append(f"{unmatched} log {self._row_word(unmatched)} matched no Boarder.")
+        unparseable = len(self.diagnostics.unparseable_rows)
+        if unparseable:
+            parts.append(
+                f"{unparseable} log {self._row_word(unparseable)} "
+                "had an unreadable Transaction Time."
+            )
+        return " ".join(parts)
+
+    @staticmethod
+    def _row_word(count: int) -> str:
+        return "row" if count == 1 else "rows"
 
 
 @dataclass

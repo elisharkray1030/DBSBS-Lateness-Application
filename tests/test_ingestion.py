@@ -234,7 +234,7 @@ class TestIngestLog:
         saved = storage.get_month_report(conn, "2026-01")
         assert saved[0].frequency == 2
 
-    def test_saved_outcome_message_contains_only_month_confirmation(self, conn):
+    def test_saved_message_reports_recorded_and_late_counts(self, conn):
         outcome = ingest(
             LOG_HEADER + "ALICE,07:42\n" + "GHOST,07:43\n" + "BOB,7:45\n",
             month="2026-06",
@@ -242,31 +242,46 @@ class TestIngestLog:
         )
 
         assert isinstance(outcome, SavedOutcome)
-        assert outcome.message == "Monthly report saved for '2026-06'."
+        assert outcome.message == (
+            "Monthly report saved for '2026-06'. "
+            "3 Boarders recorded, 1 with lateness. "
+            "1 log row matched no Boarder. "
+            "1 log row had an unreadable Transaction Time."
+        )
 
-    def test_clean_import_message_contains_only_month_confirmation(self, conn):
+    def test_clean_import_message_reports_counts_without_diagnostics(self, conn):
         outcome = ingest(LOG_HEADER + "ALICE,07:42\n" + "BOB,08:00\n", conn=conn)
 
         assert isinstance(outcome, SavedOutcome)
-        assert outcome.message == "Monthly report saved for '2026-03'."
+        assert outcome.message == (
+            "Monthly report saved for '2026-03'. 3 Boarders recorded, 2 with lateness."
+        )
 
-    def test_unmatched_only_saved_message_contains_only_month_confirmation(self, conn):
+    def test_message_uses_singular_boarder_for_one_recorded(self, conn):
+        master = {"ALICE": Boarder("ALICE", "Alice", "101")}
+        outcome = ingest(LOG_HEADER + "ALICE,07:42\n", master=master, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.message.endswith("1 Boarder recorded, 1 with lateness.")
+
+    def test_unmatched_rows_reported_with_plural_count(self, conn):
         outcome = ingest(
             LOG_HEADER + "ALICE,07:42\n" + "GHOST,07:43\n" + "GHOST,07:44\n",
             conn=conn,
         )
 
         assert isinstance(outcome, SavedOutcome)
-        assert outcome.message == "Monthly report saved for '2026-03'."
+        assert "2 log rows matched no Boarder." in outcome.message
+        assert "GHOST" not in outcome.message
 
-    def test_unparseable_only_saved_message_contains_only_month_confirmation(self, conn):
+    def test_unparseable_rows_reported_with_plural_count(self, conn):
         outcome = ingest(
             LOG_HEADER + "ALICE,07:42\n" + "BOB,7:45\n" + "CAROL,07:99\n",
             conn=conn,
         )
 
         assert isinstance(outcome, SavedOutcome)
-        assert outcome.message == "Monthly report saved for '2026-03'."
+        assert "2 log rows had an unreadable Transaction Time." in outcome.message
 
     def test_clean_month_saves_report(self, conn):
         outcome = ingest(
@@ -275,7 +290,7 @@ class TestIngestLog:
         )
 
         assert isinstance(outcome, SavedOutcome)
-        assert outcome.message == "Monthly report saved for '2026-03'."
+        assert outcome.message.startswith("Monthly report saved for '2026-03'.")
         assert "2026-03" in month_labels(storage.list_months(conn))
 
     def test_only_late_boarders_do_not_change_confirmation(self, conn):
@@ -286,7 +301,7 @@ class TestIngestLog:
 
         assert isinstance(outcome, SavedOutcome)
         assert outcome.boarders_count == 2
-        assert outcome.message == "Monthly report saved for '2026-03'."
+        assert outcome.message.endswith("3 Boarders recorded, 2 with lateness.")
 
     def test_end_to_end_month_appears_in_list_and_get(self, conn):
         outcome = ingest(

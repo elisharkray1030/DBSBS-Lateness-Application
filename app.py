@@ -5,7 +5,16 @@ from contextlib import closing
 from urllib.parse import urlencode
 
 try:
-    from flask import Flask, jsonify, redirect, render_template, request, send_file
+    from flask import (
+        Flask,
+        flash,
+        get_flashed_messages,
+        jsonify,
+        redirect,
+        render_template,
+        request,
+        send_file,
+    )
 except ModuleNotFoundError as exc:
     if exc.name != 'flask':
         raise
@@ -29,12 +38,17 @@ from punishments import (
     AssignmentRejected,
     TransitionRejected,
     assign_batch,
+    humanized_status,
     list_consequences,
     transition,
 )
 from records import normalize_name
 
 app = Flask(__name__)
+# Sessions carry only transient flash feedback (no auth, no secrets); the
+# fallback key keeps single-process local deployments working without config.
+app.secret_key = os.environ.get("SECRET_KEY", "dbs-lateness-dashboard-local")
+app.jinja_env.globals["humanized_status"] = humanized_status
 
 DB_PATH = os.environ.get("DB_PATH", "lateness_history.db")
 NAMELIST_PATH = os.environ.get("NAMELIST_PATH", "namelist.csv")
@@ -68,6 +82,18 @@ def _punishment_months(conn, report_months):
         | set(storage.list_punishment_months(conn)),
         reverse=True,
     )
+
+
+def _consume_flashes():
+    """Returns (message, error) from one-shot session flash feedback."""
+    message = None
+    error = None
+    for category, text in get_flashed_messages(with_categories=True):
+        if category == "error":
+            error = text
+        else:
+            message = text
+    return message, error
 
 
 def build_csv_response(boarders, download_name):
@@ -119,25 +145,26 @@ def home():
                     if isinstance(outcome, RejectedOutcome):
                         error = f"Error: {outcome.reason}"
                     else:
-                        query = urlencode({'month': month_label, 'message': outcome.message})
+                        flash(outcome.message, "success")
+                        query = urlencode({"month": month_label})
                         return redirect(f"/?{query}")
 
-        elif request.form.get('search_name') is not None:
-            selected_tab = 'history'
-            search_name = request.form.get('search_name', '').strip()
-            if not search_name:
-                error = "Please enter a boarder name to search Boarder History."
-            else:
-                with connect() as conn:
-                    history_results = storage.search_history(conn, search_name)
-                if not history_results:
-                    message = f"No Boarder History found for '{search_name}'."
+    # Boarder History search submits as a native GET form; every search
+    # renders its results (or the neutral no-matches empty state) directly.
+    search_name = request.args.get('search_name')
+    if search_name is not None:
+        selected_tab = 'history'
+        search_name = search_name.strip()
+        if not search_name:
+            error = "Please enter a boarder name to search Boarder History."
         else:
             with connect() as conn:
-                all_months = storage.list_months(conn)
+                history_results = storage.search_history(conn, search_name)
 
-    if request.args.get('message'):
-        message = request.args['message']
+    flash_message, flash_error = _consume_flashes()
+    message = message or flash_message
+    error = error or flash_error
+
     if request.args.get('month'):
         month_param = request.args['month']
         with connect() as conn:
@@ -359,26 +386,36 @@ def delete_month(month):
 def assign_month(month):
     deadline = request.form.get('deadline', '').strip()
     if not deadline:
-        return "Error: a deadline is required to assign punishments.", 400
+        flash("Error: a deadline is required to assign punishments.", "error")
+        return _consequences_redirect()
 
-    exempted = set(request.form.getlist('exempt'))
+    # Positive consent: each checked box means "assign a punishment to this
+    # boarder"; every eligible boarder not checked is exempted.
+    selected = set(request.form.getlist('assign'))
     with connect() as conn:
         boarders = storage.get_month_report(conn, month)
         if not boarders:
             return f"Error: No report found for {month}.", 404
 
+        exemptions = {
+            boarder.name
+            for boarder in boarders
+            if boarder.total_points > 0 and boarder.name not in selected
+        }
         outcome = assign_batch(
             conn,
             month=month,
             boarders=boarders,
-            exemptions=exempted,
+            exemptions=exemptions,
             deadline=deadline,
         )
 
     if isinstance(outcome, AssignmentRejected):
-        return f"Error: {outcome.reason}", 400
+        flash(f"Error: {outcome.reason}", "error")
+        return _consequences_redirect()
 
-    query = urlencode({'month': month, 'message': outcome.message})
+    flash(outcome.message, "success")
+    query = urlencode({'month': month})
     return redirect(f"/?{query}")
 
 
@@ -393,12 +430,14 @@ def consequences():
         boarders = storage.list_boarders(conn)
         punishment_months = _punishment_months(conn, all_months)
 
+    message, error = _consume_flashes()
+
     return render_template(
         'index.html',
         history_results=None,
         selected_tab='consequences',
-        message=None,
-        error=None,
+        message=message,
+        error=error,
         all_months=all_months,
         current_month=None,
         boarders=boarders,
@@ -408,6 +447,22 @@ def consequences():
         consequences_month=month,
         consequences_status=status,
     )
+
+
+def _consequences_redirect():
+    """Builds the /consequences redirect, preserving submitted filter fields."""
+    params = {}
+    month = request.form.get('month', '').strip()
+    status = request.form.get('status', '').strip()
+    show_all = request.form.get('show_all', '').strip()
+    if month:
+        params['month'] = month
+    if status:
+        params['status'] = status
+    if show_all == '1':
+        params['show_all'] = show_all
+    query = f"?{urlencode(params)}" if params else ""
+    return redirect(f"/consequences{query}")
 
 
 @app.route('/punishment/<int:punishment_id>/transition', methods=['POST'])
@@ -424,9 +479,11 @@ def transition_punishment(punishment_id):
         )
 
     if isinstance(outcome, TransitionRejected):
-        return f"Error: {outcome.reason}", 400
+        flash(f"Error: {outcome.reason}", "error")
+    else:
+        flash(outcome.message, "success")
 
-    return redirect("/consequences")
+    return _consequences_redirect()
 
 
 if __name__ == '__main__':

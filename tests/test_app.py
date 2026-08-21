@@ -4,6 +4,8 @@ import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from html import unescape
+from typing import ClassVar
+from urllib.parse import urlparse
 
 import pytest
 from helpers import record
@@ -129,7 +131,7 @@ class TestBoardersTab:
         boarders_panel = re.search(r'<section id="boarders".*?</section>', html, re.S)
         assert boarders_panel is not None
         panel = boarders_panel.group(0)
-        assert '<th class="boarder-actions"></th>' in panel
+        assert '<th scope="col" class="boarder-actions"></th>' in panel
         assert '>Actions<' not in panel
         assert 'id="boarder-edit"' in panel
         assert 'icon-trash' in html
@@ -144,8 +146,8 @@ class TestBoardersTab:
 
     def test_boarders_table_has_bed_and_name_columns(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
-        assert '<th>Bed</th>' in html
-        assert '<th>Boarder Name</th>' in html
+        assert '<th scope="col">Bed</th>' in html
+        assert '<th scope="col">Boarder Name</th>' in html
 
 
 class TestBoarderSeeding:
@@ -765,6 +767,7 @@ class TestImportPostRedirectGet:
 
         assert resp.status_code == 302
         assert "month=2026-07" in resp.headers["Location"]
+        assert "message=" not in resp.headers["Location"]
 
     def test_redirect_target_renders_archive_with_message_and_auto_open(self, fresh_client):
         resp = self._import(fresh_client)
@@ -773,7 +776,7 @@ class TestImportPostRedirectGet:
         html = unescape(page.get_data(as_text=True))
         assert page.status_code == 200
         assert "Monthly report saved for '2026-07'." in html
-        assert "with 1 boarder recorded as late" not in html
+        assert "2 Boarders recorded, 1 with lateness." in html
         assert 'const initialMonthToOpen = "2026-07";' in html
 
     def test_mixed_import_redirect_shows_confirmation_only(self, fresh_client):
@@ -786,6 +789,8 @@ class TestImportPostRedirectGet:
         page = fresh_client.get(resp.headers["Location"])
         html = unescape(page.get_data(as_text=True))
         assert "Monthly report saved for '2026-07'." in html
+        assert "1 log row matched no Boarder." in html
+        assert "1 log row had an unreadable Transaction Time." in html
         assert "Unmatched names: GHOST." not in html
         assert "Unparseable times: BOB" not in html
         assert "7:47" not in html
@@ -906,6 +911,79 @@ class TestServerOwnedReportRows:
         assert "sort-indicator" in html
         assert "sort-asc" in html
         assert "sort-desc" in html
+
+    def test_sort_headers_are_keyboard_operable_buttons(self):
+        html = home_html()
+        assert html.count('<button type="button" class="sort-btn"') == 5
+        assert "aria-sort" in html
+
+    def test_server_and_client_tables_render_bare_numbers_units_in_headers(self):
+        html = home_html()
+        assert "<td>${row.total_minutes}</td>" in html
+        assert " mins</td>" not in html
+
+    def test_history_table_formats_numbers_like_month_report(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 19, 21)], "2026-03")
+        html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
+        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
+        assert "<td>19</td>" in history_panel
+        assert "<td>19 mins</td>" not in history_panel
+
+    def test_browser_sort_headers_reach_and_announce_direction(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [
+                    record("ALICE", "101", 2, 5, 7),
+                    record("BOB", "102", 4, 8, 12),
+                ],
+                "2026-07",
+            )
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [
+            {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
+            {"name": "BOB", "display_name": "Bob", "bed": "102", "frequency": 4, "total_minutes": 8, "total_points": 12},
+        ]
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                page.evaluate(
+                    """({ rows }) => {
+                        window.fetch = url => Promise.resolve({
+                            json: () => Promise.resolve({ boarders: rows })
+                        });
+                        viewMonth('2026-07');
+                    }""",
+                    {"rows": rows},
+                )
+                page.wait_for_function(
+                    "() => document.querySelectorAll('#month-detail-body tr').length === 2"
+                )
+
+                frequency_header = page.locator("#month-detail-table thead th").nth(2)
+                assert frequency_header.get_attribute("aria-sort") == "none"
+
+                frequency_header.locator("button.sort-btn").focus()
+                page.keyboard.press("Enter")
+                names = page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents()
+                assert names == ["Alice", "Bob"]
+                assert frequency_header.get_attribute("aria-sort") == "ascending"
+
+                page.keyboard.press("Enter")
+                names = page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents()
+                assert names == ["Bob", "Alice"]
+                assert frequency_header.get_attribute("aria-sort") == "descending"
+
+                bed_header = page.locator("#month-detail-table thead th").nth(0)
+                assert bed_header.get_attribute("aria-sort") == "none"
+            finally:
+                browser.close()
+
 
     def test_report_sorting_keeps_server_fields_and_resets_for_each_month(self):
         html = home_html()
@@ -1055,10 +1133,73 @@ class TestServerOwnedReportRows:
         assert ">Search History</button>" not in html
 
     def test_empty_history_uses_boarder_history_terminology(self, fresh_client):
-        resp = fresh_client.post("/", data={"search_name": "ZZZ"})
+        resp = fresh_client.get("/?search_name=ZZZ")
         html = resp.get_data(as_text=True)
         assert "No Boarder History entries matched your search." in html
         assert "No history records matched" not in html
+
+    def test_search_submits_as_native_get_form(self):
+        html = home_html()
+        assert re.search(
+            r'<form action="/" method="get"[^>]*>.*?name="search_name"', html, re.S
+        )
+        assert "performSearch" not in html
+
+    def test_zero_hit_search_renders_neutral_empty_state_not_success_banner(self, fresh_client):
+        html = fresh_client.get("/?search_name=ZZZ").get_data(as_text=True)
+        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
+        assert "No Boarder History entries matched your search." in history_panel
+        assert "banner-success" not in history_panel
+
+    def test_hit_search_renders_results_table(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+        html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
+        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
+        assert "Alice" in history_panel
+        assert "<table>" in history_panel
+
+    def test_blank_search_name_prompts_without_results_section(self, fresh_client):
+        html = fresh_client.get("/?search_name=").get_data(as_text=True)
+        assert "enter a boarder name" in html.lower()
+        assert "No Boarder History entries matched your search." not in html
+
+    def test_browser_first_search_after_load_shows_miss_feedback(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+
+        def fulfill_from_server(route):
+            parsed = urlparse(route.request.url)
+            if parsed.path.startswith("/static"):
+                route.fulfill(
+                    body=fresh_client.get(parsed.path).get_data(),
+                    content_type="image/png",
+                )
+                return
+            target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+            response = fresh_client.get(target)
+            route.fulfill(
+                status=response.status_code,
+                body=response.get_data(as_text=True),
+                content_type="text/html",
+            )
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.route("**/*", fulfill_from_server)
+                page.goto("http://dbs.local/")
+                page.locator('.tab-link[data-tab="history"]').click()
+                page.fill("#search_name", "ZZZ")
+                page.locator("#history button[type=submit]").click()
+
+                page.wait_for_selector("#history .empty-state")
+                assert page.locator("#history .banner-success").count() == 0
+                assert "No Boarder History entries matched your search." in (
+                    page.locator("#history .empty-state").text_content()
+                )
+            finally:
+                browser.close()
 
     def test_empty_reports_copy_uses_import(self, fresh_client):
         html = fresh_client.get("/").get_data(as_text=True)
@@ -1084,17 +1225,20 @@ class TestAssignRoute:
             )
 
     def test_assign_creates_punishments_for_late_boarders(self):
-        response = client.post("/assign/2026-03", data={"deadline": "2026-04-10"})
+        response = client.post(
+            "/assign/2026-03",
+            data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
+        )
 
         assert response.status_code == 302
         with app_module.connect() as conn:
             rows = storage.list_punishments(conn, statuses=("assigned",))
             assert {r.normalized_name for r in rows} == {"ALICE", "BOB"}
 
-    def test_exemptions_excluded(self):
+    def test_unchecked_boarders_are_not_assigned(self):
         response = client.post(
             "/assign/2026-03",
-            data={"deadline": "2026-04-10", "exempt": ["BOB"]},
+            data={"deadline": "2026-04-10", "assign": ["ALICE"]},
         )
 
         assert response.status_code == 302
@@ -1102,16 +1246,60 @@ class TestAssignRoute:
             rows = storage.list_punishments(conn, statuses=("assigned",))
             assert {r.normalized_name for r in rows} == {"ALICE"}
 
-    def test_missing_deadline_is_an_error(self):
+    def test_checked_boarders_are_assigned(self):
+        response = client.post(
+            "/assign/2026-03",
+            data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
+        )
+
+        assert response.status_code == 302
+        with app_module.connect() as conn:
+            rows = storage.list_punishments(conn, statuses=("assigned",))
+            assert {r.normalized_name for r in rows} == {"ALICE", "BOB"}
+
+    def test_confirmation_names_boarders_by_display_name(self):
+        response = client.post(
+            "/assign/2026-03",
+            data={"deadline": "2026-04-10", "assign": ["ALICE"]},
+            follow_redirects=True,
+        )
+
+        html = unescape(response.get_data(as_text=True))
+        assert "Alice" in html
+        assert "ALICE" not in html
+
+    def test_missing_deadline_redirects_to_consequences_with_error(self):
         response = client.post("/assign/2026-03", data={})
 
-        assert response.status_code == 400
-        assert b"deadline" in response.data.lower()
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/consequences")
+        page = client.get(response.headers["Location"])
+        html = page.get_data(as_text=True)
+        assert "banner-error" in html
+        assert "deadline" in html.lower()
+
+    def test_rejected_assignment_preserves_consequences_filters(self):
+        response = client.post(
+            "/assign/2026-03",
+            data={
+                "deadline": "",
+                "month": "2026-03",
+                "status": "assigned",
+                "show_all": "1",
+            },
+        )
+
+        assert response.status_code == 302
+        location = response.headers["Location"]
+        assert location.startswith("/consequences")
+        assert "month=2026-03" in location
+        assert "status=assigned" in location
+        assert "show_all=1" in location
 
     def test_assign_redirect_shows_message_and_opens_month(self):
         response = client.post(
             "/assign/2026-03",
-            data={"deadline": "2026-04-10"},
+            data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
             follow_redirects=True,
         )
 
@@ -1119,6 +1307,12 @@ class TestAssignRoute:
         html = response.get_data(as_text=True)
         assert "Assigned 2 punishments" in html
         assert "report_month" in html
+
+    def test_assign_success_url_carries_no_message_payload(self):
+        response = client.post("/assign/2026-03", data={"deadline": "2026-04-10"})
+
+        assert response.status_code == 302
+        assert "message=" not in response.headers["Location"]
 
     def test_month_with_no_report_is_an_error(self):
         response = client.post("/assign/2026-99", data={"deadline": "2026-04-10"})
@@ -1275,6 +1469,38 @@ class TestConsequencesRoute:
         assert "Alice" in panel
         assert "Mark overdue" not in panel
 
+    def test_filter_options_use_humanized_labels(self):
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert re.search(r'<option value="phone_held" ?(selected)?>Phone held</option>', panel)
+        assert re.search(r'<option value="voided" ?(selected)?>Voided</option>', panel)
+        assert "<option>phone_held</option>" not in panel
+
+    def test_group_headings_and_status_cells_use_humanized_labels(self):
+        with app_module.connect() as conn:
+            row = storage.list_punishments(conn, statuses=("assigned",))[0]
+            storage.transition_punishment(
+                conn, row.id, "phone_held", timestamp="2026-04-11T09:00:00+00:00"
+            )
+
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert '>Phone held</h4>' in panel
+        assert "<td>Phone held</td>" in panel
+        assert "<td>phone_held</td>" not in panel
+
+    def test_consequences_table_has_last_action_column_with_timestamp(self):
+        with app_module.connect() as conn:
+            row = storage.list_punishments(conn, statuses=("assigned",))[0]
+            storage.transition_punishment(
+                conn, row.id, "overdue", timestamp="2026-04-11T10:30:00+00:00"
+            )
+
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert '<th scope="col">Last action</th>' in panel
+        assert "2026-04-11 10:30" in panel
+
 
 class TestTransitionRoute:
     @pytest.fixture(autouse=True)
@@ -1364,8 +1590,9 @@ class TestTransitionRoute:
             f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
         )
 
-        assert response.status_code == 400
-        assert b"deadline" in response.data.lower()
+        assert response.status_code == 302
+        page = client.get(response.headers["Location"])
+        assert b"deadline" in page.data.lower()
         with app_module.connect() as conn:
             assert storage.get_punishment(conn, punishment_id).status == "assigned"
 
@@ -1419,5 +1646,846 @@ class TestTransitionRoute:
             )
         response = client.post(f"/punishment/{self._alice_id()}/transition", data={"to": "phone_held"})
 
-        assert response.status_code == 400
-        assert b"not allowed" in response.data.lower()
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/consequences")
+        page = client.get(response.headers["Location"])
+        assert b"not allowed" in page.data.lower()
+
+
+def stub_form_submit(page):
+    """Replaces native form.submit() so tests can observe submission without navigation."""
+    page.evaluate(
+        """() => {
+            window.__submitCalled = null;
+            HTMLFormElement.prototype.submit = function() {
+                window.__submitCalled = this.getAttribute('action');
+            };
+        }"""
+    )
+
+
+class TestDestructiveActionsNameTarget:
+    def test_void_opens_confirm_dialog_naming_boarder_and_month(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                stub_form_submit(page)
+                page.locator("form.void-form button[type=submit]").click()
+
+                assert page.locator("#confirmModal.show").count() == 1
+                message = page.locator("#confirm-modal-message").text_content()
+                assert "Alice" in message
+                assert "2026-03" in message
+
+                page.locator("#confirmModal .btn-danger").click()
+                submitted = page.evaluate("() => window.__submitCalled")
+                assert submitted is not None
+                assert "/transition" in submitted
+            finally:
+                browser.close()
+
+    def test_void_reason_stays_in_form_after_confirm(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                stub_form_submit(page)
+                page.locator("form.void-form input[name=void_reason]").fill("left school")
+                page.locator("form.void-form button[type=submit]").click()
+                page.locator("#confirmModal .btn-danger").click()
+
+                submitted = page.evaluate("() => window.__submitCalled")
+                assert submitted is not None
+            finally:
+                browser.close()
+
+    def test_delete_report_confirmation_names_exact_month_and_punishment_impact(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 1, 1, 2)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [
+            {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 1, "total_minutes": 1, "total_points": 2}
+        ]
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                page.evaluate(
+                    """({ rows }) => {
+                        window.fetch = url => Promise.resolve({
+                            json: () => Promise.resolve({ boarders: rows })
+                        });
+                        viewMonth('2026-07');
+                    }""",
+                    {"rows": rows},
+                )
+                page.wait_for_function(
+                    "() => document.querySelectorAll('#month-detail-body tr').length === 1"
+                )
+                page.locator("#month-detail-delete").click()
+
+                message = page.locator("#confirm-modal-message").text_content()
+                assert "2026-07" in message
+                assert "Punishments" in message
+            finally:
+                browser.close()
+
+
+def _relative_luminance(rgb):
+    def channel(value):
+        value = value / 255
+        return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+    r, g, b = rgb
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def _contrast_ratio(rgb1, rgb2):
+    lighter = max(_relative_luminance(rgb1), _relative_luminance(rgb2))
+    darker = min(_relative_luminance(rgb1), _relative_luminance(rgb2))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _parse_rgb(text):
+    numbers = re.findall(r"\d+(?:\.\d+)?", text)
+    return tuple(int(float(n)) for n in numbers[:3])
+
+
+class TestConfirmModalDialogSemantics:
+    def _consequences_html(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+        return fresh_client.get("/consequences").get_data(as_text=True)
+
+    def _open_modal(self, page):
+        stub_form_submit(page)
+        page.locator("form.void-form button[type=submit]").click()
+        page.wait_for_selector("#confirmModal.show")
+
+    def test_modal_has_dialog_role_accessible_name_and_initial_focus(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = self._consequences_html(fresh_client)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                self._open_modal(page)
+
+                modal = page.locator("#confirmModal")
+                assert modal.get_attribute("role") == "dialog"
+                assert modal.get_attribute("aria-modal") == "true"
+                assert modal.get_attribute("aria-labelledby") == "confirm-modal-title"
+
+                focused = page.evaluate(
+                    "() => document.activeElement.className"
+                )
+                assert "btn-danger" in focused
+            finally:
+                browser.close()
+
+    def test_tab_is_trapped_esc_cancels_and_focus_is_restored(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = self._consequences_html(fresh_client)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                self._open_modal(page)
+
+                for _ in range(4):
+                    page.keyboard.press("Tab")
+                    contained = page.evaluate(
+                        """() => document.getElementById('confirmModal').contains(document.activeElement)"""
+                    )
+                    assert contained
+
+                page.keyboard.press("Escape")
+                assert page.locator("#confirmModal.show").count() == 0
+
+                restored = page.evaluate(
+                    """() => document.activeElement.closest('form.void-form') !== null"""
+                )
+                assert restored
+            finally:
+                browser.close()
+
+
+class TestUnsavedEditGuard:
+    def _enter_dirty_edit(self, page):
+        page.locator("#boarder-edit").click()
+        page.locator(".boarder-edit-name").first.fill("Alicia")
+
+    def _fulfill_navigation(self, page):
+        page.route(
+            "**/*",
+            lambda route: route.fulfill(
+                body="<html><body>elsewhere</body></html>",
+                content_type="text/html",
+            ),
+        )
+
+    def test_beforeunload_warns_with_unsaved_edits(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            dialogs = []
+            page.on(
+                "dialog",
+                lambda dialog: (dialogs.append(dialog.type), dialog.accept()),
+            )
+            try:
+                self._fulfill_navigation(page)
+                page.set_content(html)
+                self._enter_dirty_edit(page)
+                page.goto("http://dbs.local/elsewhere")
+
+                assert len(dialogs) == 1
+                assert dialogs[0] == "beforeunload"
+            finally:
+                browser.close()
+
+    def test_no_beforeunload_warning_without_unsaved_edits(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            dialogs = []
+            page.on(
+                "dialog",
+                lambda dialog: (dialogs.append(dialog.type), dialog.accept()),
+            )
+            try:
+                self._fulfill_navigation(page)
+                page.set_content(html)
+                page.locator("#boarder-edit").click()
+                page.goto("http://dbs.local/elsewhere")
+
+                assert dialogs == []
+            finally:
+                browser.close()
+
+    def test_tab_click_guard_unchanged_for_unsaved_edits(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                self._enter_dirty_edit(page)
+                page.locator('.tab-link[data-tab="reports"]').click()
+
+                assert page.locator("#confirmModal.show").count() == 1
+                assert page.locator("#boarders.active").count() == 1
+            finally:
+                browser.close()
+
+
+class TestAccessibilityPolish:
+    def _seed_punishments(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [
+                    record("ALICE", "101", 2, 5, 7),
+                    record("BOB", "102", 1, 19, 20),
+                ],
+                "2026-03",
+            )
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[
+                    record("ALICE", "101", 2, 5, 7),
+                    record("BOB", "102", 1, 19, 20),
+                ],
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+            rows = storage.list_punishments(conn, statuses=("assigned",))
+            bob = next(r for r in rows if r.normalized_name == "BOB")
+            storage.transition_punishment(
+                conn, bob.id, "submitted", timestamp="2026-04-11T09:00:00+00:00"
+            )
+
+    def test_void_reason_input_has_programmatic_label(self, fresh_client):
+        self._seed_punishments(fresh_client)
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+        assert re.search(
+            r'<input type="text" name="void_reason"[^>]*aria-label=', html
+        )
+
+    def test_data_table_headers_carry_scope(self, fresh_client):
+        self._seed_punishments(fresh_client)
+        home = home_html()
+        for table_id in ("boarders-table", "month-detail-table"):
+            table = re.search(rf'<table[^>]*id="{table_id}".*?</table>', home, re.S)
+            assert table is not None
+            assert 'scope="col"' in table.group(0)
+
+        history_html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
+        history_section = re.search(
+            r'<section id="history".*?</section>', history_html, re.S
+        ).group(0)
+        assert '<th scope="col">' in history_section
+
+        consequences_html = fresh_client.get("/consequences").get_data(as_text=True)
+        consequences_section = re.search(
+            r'<section id="consequences".*?</section>', consequences_html, re.S
+        ).group(0)
+        assert '<th scope="col">' in consequences_section
+
+    def test_tab_bar_wraps_at_narrow_width(self):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = home_html()
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 360, "height": 800})
+            try:
+                page.set_content(html)
+                wrap = page.evaluate(
+                    """() => getComputedStyle(document.querySelector('.tabs')).flexWrap"""
+                )
+                assert wrap == "wrap"
+                overflow = page.evaluate(
+                    """() => {
+                        const tabs = document.querySelector('.tabs');
+                        return tabs.scrollWidth > tabs.clientWidth;
+                    }"""
+                )
+                assert not overflow
+            finally:
+                browser.close()
+
+    def test_month_input_shows_visible_focus_indicator(self):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = home_html()
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                page.locator('.tab-link[data-tab="reports"]').click()
+                page.focus("#report_month")
+                outline_width = page.evaluate(
+                    """() => getComputedStyle(document.getElementById('report_month')).outlineWidth"""
+                )
+                outline_style = page.evaluate(
+                    """() => getComputedStyle(document.getElementById('report_month')).outlineStyle"""
+                )
+                assert outline_style != "none"
+                assert outline_width not in ("", "0px")
+            finally:
+                browser.close()
+
+    def test_badge_and_disabled_styles_meet_aa_contrast(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        self._seed_punishments(fresh_client)
+        consequences_html = fresh_client.get("/consequences?show_all=1").get_data(as_text=True)
+        boarders_html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(consequences_html)
+
+                def computed_colors(selector):
+                    return page.locator(selector).first.evaluate(
+                        """el => [
+                            getComputedStyle(el).backgroundColor,
+                            getComputedStyle(el).color
+                        ]"""
+                    )
+
+                for selector in (".due-badge", ".late-badge"):
+                    background, foreground = computed_colors(selector)
+                    ratio = _contrast_ratio(_parse_rgb(background), _parse_rgb(foreground))
+                    assert ratio >= 4.5, f"{selector} contrast {ratio:.2f} < 4.5"
+
+                page.set_content(boarders_html)
+                disabled_background, disabled_foreground = computed_colors("#boarder-save")
+                ratio = _contrast_ratio(
+                    _parse_rgb(disabled_background), _parse_rgb(disabled_foreground)
+                )
+                assert ratio >= 4.5, f"disabled contrast {ratio:.2f} < 4.5"
+
+                enabled_background, _ = computed_colors(".btn-primary:not(:disabled)")
+                assert _parse_rgb(disabled_background) != _parse_rgb(enabled_background), (
+                    "disabled controls must be visually distinct from enabled ones"
+                )
+            finally:
+                browser.close()
+
+
+class TestPrintOutputsActiveView:
+    ROWS: ClassVar = [
+        {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
+        {"name": "BOB", "display_name": "Bob", "bed": "102", "frequency": 1, "total_minutes": 19, "total_points": 20},
+    ]
+
+    def _open_report(self, page):
+        page.evaluate(
+            """({ rows }) => {
+                window.fetch = url => Promise.resolve({
+                    json: () => Promise.resolve({ boarders: rows })
+                });
+                viewMonth('2026-07');
+            }""",
+            {"rows": self.ROWS},
+        )
+        page.wait_for_function(
+            "() => !document.getElementById('month-detail').classList.contains('hidden')"
+        )
+
+    def _printed_text(self, page):
+        page.emulate_media(media="print")
+        return page.evaluate("() => document.body.innerText")
+
+    def test_printing_open_month_report_yields_only_that_report(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                self._open_report(page)
+                printed = self._printed_text(page)
+
+                assert "Alice" in printed
+                assert "101" in printed
+                assert "View Reports in Database" not in printed
+                assert "Search Boarder History" not in printed
+                assert "Assign Punishments" not in printed
+                assert "Import Monthly Log" not in printed
+            finally:
+                browser.close()
+
+    def test_empty_month_detail_skeleton_never_prints(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                printed = self._printed_text(page)
+                assert "Report for" not in printed
+
+                display = page.evaluate(
+                    """() => getComputedStyle(document.getElementById('month-detail')).display"""
+                )
+                assert display == "none"
+            finally:
+                browser.close()
+
+    def test_printing_consequences_tab_excludes_other_views_and_skeleton(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                printed = self._printed_text(page)
+
+                assert "Alice" in printed
+                assert "Points Owed" in printed
+                assert "Report for" not in printed
+                assert "Add Boarder" not in printed
+                assert "View Reports in Database" not in printed
+            finally:
+                browser.close()
+
+    def test_printing_history_tab_shows_results_not_search_form(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+        html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                page.locator('.tab-link[data-tab="history"]').click()
+                printed = self._printed_text(page)
+
+                assert "Alice" in printed
+                assert "Minutes Late" in printed
+                assert "Enter name or partial name" not in printed
+                assert "Report for" not in printed
+            finally:
+                browser.close()
+
+
+class TestAsyncActionsNeverFailSilently:
+    ROWS: ClassVar = [
+        {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
+    ]
+
+    def _watch_alerts(self, page):
+        page.evaluate("() => { window.__alerted = false; window.alert = () => { window.__alerted = true; }; }")
+
+    def test_month_detail_fetch_shows_loading_indicator(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                page.evaluate(
+                    """({ rows }) => {
+                        window.fetch = url => new Promise(resolve => setTimeout(() => resolve({
+                            json: () => Promise.resolve({ boarders: rows })
+                        }), 300));
+                        viewMonth('2026-07');
+                    }""",
+                    {"rows": self.ROWS},
+                )
+                page.wait_for_selector("#month-detail-loading:not(.hidden)")
+                page.wait_for_selector("#month-detail-loading.hidden", state="attached")
+                assert page.locator("#month-detail-loading").is_hidden()
+            finally:
+                browser.close()
+
+    def test_failed_month_fetch_renders_inline_error_not_alert(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                self._watch_alerts(page)
+                page.evaluate(
+                    """() => {
+                        window.fetch = url => Promise.resolve({
+                            json: () => Promise.resolve({ error: 'No report found for 2026-07.' })
+                        });
+                        viewMonth('2026-07');
+                    }"""
+                )
+                page.wait_for_selector("#month-detail-error:not(.hidden)")
+                assert "No report found" in page.locator("#month-detail-error").text_content()
+                assert not page.evaluate("() => window.__alerted")
+            finally:
+                browser.close()
+
+    def test_double_click_save_sends_one_request(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                page.evaluate(
+                    """() => {
+                        window.__saveCount = 0;
+                        window.fetch = (url, opts) => {
+                            if (url.includes('/api/boarders') && opts && opts.method === 'PATCH') {
+                                window.__saveCount++;
+                                return new Promise(resolve => setTimeout(() => resolve({
+                                    json: () => Promise.resolve({ ok: true })
+                                }), 300));
+                            }
+                            return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
+                        };
+                    }"""
+                )
+                page.locator("#boarder-edit").click()
+                page.locator(".boarder-edit-name").first.fill("Alicia")
+                save_button = page.locator("#boarder-save")
+                save_button.click()
+                page.evaluate("() => document.getElementById('boarder-save').click()")
+                page.wait_for_timeout(600)
+                assert page.evaluate("() => window.__saveCount") == 1
+            finally:
+                browser.close()
+
+    def test_remove_button_disabled_while_delete_in_flight(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                page.evaluate(
+                    """() => {
+                        window.fetch = (url, opts) => {
+                            if (opts && opts.method === 'DELETE') {
+                                return new Promise(resolve => setTimeout(() => resolve({
+                                    json: () => Promise.resolve({ ok: true })
+                                }), 300));
+                            }
+                            return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
+                        };
+                    }"""
+                )
+                page.locator("#boarder-edit").click()
+                remove_button = page.locator(".boarder-remove").first
+                remove_button.click()
+                page.locator("#confirmModal .btn-danger").click()
+                assert remove_button.is_disabled()
+                page.wait_for_timeout(600)
+            finally:
+                browser.close()
+
+
+class TestAssignPanelPositiveConsent:
+    def _open_assign_panel(self, page, rows, row_count):
+        page.evaluate(
+            """({ rows }) => {
+                window.fetch = url => Promise.resolve({
+                    json: () => Promise.resolve({ boarders: rows })
+                });
+                viewMonth('2026-07');
+            }""",
+            {"rows": rows},
+        )
+        page.wait_for_function(
+            f"() => document.querySelectorAll('#month-detail-body tr').length === {row_count}"
+        )
+        page.locator("#month-detail-assign-btn").click()
+
+    def test_panel_prechecks_eligible_boarders_with_positive_labels(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [
+                    record("ALICE", "101", 2, 5, 7, display_name="Alice"),
+                    record("BOB", "102", 1, 19, 20, display_name="Bob"),
+                    record("CAROL", "103", 0, 0, 0, display_name="Carol"),
+                ],
+                "2026-07",
+            )
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [
+            {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
+            {"name": "BOB", "display_name": "Bob", "bed": "102", "frequency": 1, "total_minutes": 19, "total_points": 20},
+            {"name": "CAROL", "display_name": "Carol", "bed": "103", "frequency": 0, "total_minutes": 0, "total_points": 0},
+        ]
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                self._open_assign_panel(page, rows, 3)
+
+                checkboxes = page.locator('#assign-boarders input[type="checkbox"]')
+                assert checkboxes.count() == 2
+                assert all(checkboxes.nth(i).is_checked() for i in range(2))
+                assert all(
+                    checkboxes.nth(i).get_attribute("name") == "assign"
+                    for i in range(2)
+                )
+                labels = page.locator("#assign-boarders label").all_text_contents()
+                assert any("Assign punishment to Alice (7 pts)" in text for text in labels)
+                assert any("Assign punishment to Bob (20 pts)" in text for text in labels)
+
+                counter = page.locator("#assign-counter")
+                assert counter.text_content().strip() == "2 punishments will be assigned."
+
+                checkboxes.nth(0).uncheck()
+                assert counter.text_content().strip() == "1 punishment will be assigned."
+            finally:
+                browser.close()
+
+    def test_submitting_sends_only_checked_boarders(self, fresh_client):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [
+                    record("ALICE", "101", 2, 5, 7, display_name="Alice"),
+                    record("BOB", "102", 1, 19, 20, display_name="Bob"),
+                ],
+                "2026-07",
+            )
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [
+            {"name": "ALICE", "display_name": "Alice", "bed": "101", "frequency": 2, "total_minutes": 5, "total_points": 7},
+            {"name": "BOB", "display_name": "Bob", "bed": "102", "frequency": 1, "total_minutes": 19, "total_points": 20},
+        ]
+
+        with playwright_api.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.set_content(html)
+                self._open_assign_panel(page, rows, 2)
+                page.locator("#assign-deadline").fill("2026-08-10")
+                page.evaluate(
+                    """() => {
+                        window.__submitted = null;
+                        document.getElementById('assign-form').addEventListener('submit', event => {
+                            event.preventDefault();
+                            window.__submitted = new URLSearchParams(
+                                new FormData(event.target)
+                            ).toString();
+                        });
+                    }"""
+                )
+                page.locator('#assign-boarders input[type="checkbox"]').first.uncheck()
+                page.locator("#assign-form button[type=\"submit\"]").click()
+
+                submitted = page.evaluate("() => window.__submitted")
+                assert "assign=BOB" in submitted
+                assert "assign=ALICE" not in submitted
+                assert "deadline=2026-08-10" in submitted
+            finally:
+                browser.close()
+
+
+class TestTransitionFeedbackLivesOnPage:
+    @pytest.fixture(autouse=True)
+    def _seed_punishment(self):
+        with app_module.connect() as conn:
+            conn.execute("DELETE FROM punishments")
+            conn.execute("DELETE FROM boarder_history")
+            conn.commit()
+            storage.save_month(
+                conn,
+                [record("ALICE", "101", 2, 5, 7)],
+                "2026-03",
+            )
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+
+    def _alice_id(self):
+        with app_module.connect() as conn:
+            return storage.list_punishments(conn)[0].id
+
+    def _post_transition(self, data):
+        return client.post(f"/punishment/{self._alice_id()}/transition", data=data)
+
+    def test_rejected_transition_redirects_to_consequences_preserving_filters(self):
+        response = self._post_transition(
+            {
+                "to": "phone_held",
+                "month": "2026-03",
+                "status": "assigned",
+                "show_all": "1",
+            }
+        )
+
+        assert response.status_code == 302
+        location = response.headers["Location"]
+        assert location.startswith("/consequences")
+        assert "month=2026-03" in location
+        assert "status=assigned" in location
+        assert "show_all=1" in location
+        assert "message=" not in location
+
+    def test_rejected_transition_renders_inline_error_on_consequences(self):
+        response = self._post_transition({"to": "phone_held"})
+
+        page = client.get(response.headers["Location"])
+        html = page.get_data(as_text=True)
+        assert "banner-error" in html
+        assert "not allowed" in html
+
+    def test_successful_transition_preserves_filters_and_flashes_message(self):
+        response = self._post_transition(
+            {"to": "overdue", "month": "2026-03", "show_all": "1"}
+        )
+
+        assert response.status_code == 302
+        location = response.headers["Location"]
+        assert "month=2026-03" in location
+        assert "show_all=1" in location
+
+        page = client.get(location)
+        html = page.get_data(as_text=True)
+        assert "banner-success" in html
+        assert "marked overdue" in html
+
+    def test_punishment_status_unchanged_after_rejected_transition(self):
+        self._post_transition({"to": "phone_held"})
+
+        with app_module.connect() as conn:
+            assert storage.get_punishment(conn, self._alice_id()).status == "assigned"

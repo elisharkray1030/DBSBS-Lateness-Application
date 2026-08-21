@@ -9,6 +9,57 @@ STATUSES = ("assigned", "overdue", "phone_held", "submitted", "voided")
 IN_FLIGHT_STATUSES = ("assigned", "overdue", "phone_held")
 NON_VOIDED_STATUSES = ("assigned", "overdue", "phone_held", "submitted")
 
+# One shared humanized-label map driving status wording everywhere staff
+# see it: filter options, group headings, and table cells.
+STATUS_LABELS = {
+    "assigned": "Assigned",
+    "overdue": "Overdue",
+    "phone_held": "Phone held",
+    "submitted": "Submitted",
+    "voided": "Voided",
+}
+
+_TRANSITION_STAMPS = (
+    "assigned_at",
+    "overdue_at",
+    "phone_held_at",
+    "submitted_at",
+    "voided_at",
+)
+
+
+def humanized_status(status: str) -> str:
+    """Returns the staff-facing label for a punishment status code."""
+    return STATUS_LABELS.get(status, status)
+
+
+def last_action_at(punishment) -> str | None:
+    """Returns the most recent transition timestamp, or None."""
+    stamps = [
+        getattr(punishment, field)
+        for field in _TRANSITION_STAMPS
+        if getattr(punishment, field)
+    ]
+    if not stamps:
+        return None
+    return max(stamps, key=_stamp_moment)
+
+
+def _stamp_moment(stamp: str) -> datetime:
+    try:
+        return datetime.fromisoformat(stamp)
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def format_timestamp(stamp: str) -> str:
+    """Renders a stored timestamp as 'YYYY-MM-DD HH:MM' for table display."""
+    try:
+        moment = datetime.fromisoformat(stamp)
+    except ValueError:
+        return stamp
+    return moment.strftime("%Y-%m-%d %H:%M")
+
 
 @dataclass
 class AssignmentSaved:
@@ -172,7 +223,7 @@ def assign_batch(
     storage.assign_punishments(conn, month, eligible, deadline, assigned_at)
     return AssignmentSaved(
         count=len(eligible),
-        names=[boarder.name for boarder in eligible],
+        names=[boarder.display_name for boarder in eligible],
         month=month,
         deadline=deadline,
     )
@@ -235,6 +286,10 @@ def list_consequences(
     for punishment in punishments:
         punishment.is_due = _is_due(punishment, now)
         punishment.was_late = _was_late(punishment)
+        last_action = last_action_at(punishment)
+        punishment.last_action = (
+            format_timestamp(last_action) if last_action else None
+        )
     return sorted(
         punishments,
         key=lambda p: (_status_rank(p.status), p.deadline, p.normalized_name),
