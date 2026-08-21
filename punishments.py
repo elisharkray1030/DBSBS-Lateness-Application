@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-from records import BoarderRecord
+from records import BoarderRecord, Punishment
 
 import storage
 
@@ -95,6 +95,60 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     "submitted": {"voided"},
     "voided": set(),
 }
+
+
+@dataclass(frozen=True)
+class OfferedAction:
+    """One transition button the Consequences view offers on a row.
+
+    ``reason_input`` marks the void variant: its form gains the optional
+    reason field and the data attributes feeding the confirm dialog.
+    """
+
+    target: str
+    label: str
+    style: str = "primary"
+    reason_input: bool = False
+
+
+# Which actions each status offers on the Consequences view, defined once
+# beside the POST-time legality table so UI offers cannot drift from what
+# the server accepts. Targets in _DUE_GATED_TARGETS appear only when the
+# server flags the row due. VALID_TRANSITIONS remains the POST-time
+# authority for what a submission may do (ADR 0001: manual-only machine).
+_OFFERED_TRANSITIONS = {
+    "assigned": (
+        ("overdue", "Mark overdue"),
+        ("submitted", "Submitted"),
+    ),
+    "overdue": (
+        ("phone_held", "Phone held"),
+        ("submitted", "Submitted"),
+    ),
+    "phone_held": (("submitted", "Submitted (release phone)"),),
+    "submitted": (),
+}
+
+_DUE_GATED_TARGETS = frozenset({"overdue"})
+
+_VOID_ACTION = OfferedAction(
+    target="voided",
+    label="Void",
+    style="neutral",
+    reason_input=True,
+)
+
+
+def offered_actions(punishment: Punishment) -> list[OfferedAction]:
+    """Returns the ready-to-render action list for one Consequences row."""
+    actions = [
+        OfferedAction(target=target, label=label)
+        for target, label in _OFFERED_TRANSITIONS.get(punishment.status, ())
+        if target not in _DUE_GATED_TARGETS or punishment.is_due
+    ]
+    if punishment.status in NON_VOIDED_STATUSES:
+        actions.append(_VOID_ACTION)
+    return actions
 
 
 @dataclass
@@ -290,6 +344,7 @@ def list_consequences(
         punishment.last_action = (
             format_timestamp(last_action) if last_action else None
         )
+        punishment.actions = offered_actions(punishment)
     return sorted(
         punishments,
         key=lambda p: (_status_rank(p.status), p.deadline, p.normalized_name),

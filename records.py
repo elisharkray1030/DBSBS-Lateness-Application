@@ -1,6 +1,10 @@
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from punishments import OfferedAction
 
 
 def normalize_name(name: str) -> str:
@@ -107,3 +111,4 @@ class Punishment:
     is_due: bool = False
     was_late: bool = False
     last_action: str | None = None
+    actions: list["OfferedAction"] = field(default_factory=list)

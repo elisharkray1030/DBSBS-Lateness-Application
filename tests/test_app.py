@@ -8,7 +8,7 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import pytest
-from helpers import month_row, record, seed_punishments
+from helpers import month_row, open_month_detail, record, seed_punishments
 from records import Boarder
 
 import app as app_module
@@ -945,18 +945,7 @@ class TestServerOwnedReportRows:
 
         page = browser_page
         page.set_content(html)
-        page.evaluate(
-            """({ rows }) => {
-                window.fetch = url => Promise.resolve({
-                    json: () => Promise.resolve({ boarders: rows })
-                });
-                viewMonth('2026-07');
-            }""",
-            {"rows": rows},
-        )
-        page.wait_for_function(
-            "() => document.querySelectorAll('#month-detail-body tr').length === 2"
-        )
+        open_month_detail(page, rows)
 
         frequency_header = page.locator("#month-detail-table thead th").nth(2)
         assert frequency_header.get_attribute("aria-sort") == "none"
@@ -1611,18 +1600,7 @@ class TestDestructiveActionsNameTarget:
 
         page = browser_page
         page.set_content(html)
-        page.evaluate(
-            """({ rows }) => {
-                window.fetch = url => Promise.resolve({
-                    json: () => Promise.resolve({ boarders: rows })
-                });
-                viewMonth('2026-07');
-            }""",
-            {"rows": rows},
-        )
-        page.wait_for_function(
-            "() => document.querySelectorAll('#month-detail-body tr').length === 1"
-        )
+        open_month_detail(page, rows)
         page.locator("#month-detail-delete").click()
 
         message = page.locator("#confirm-modal-message").text_content()
@@ -1877,18 +1855,7 @@ class TestPrintOutputsActiveView:
     ]
 
     def _open_report(self, page):
-        page.evaluate(
-            """({ rows }) => {
-                window.fetch = url => Promise.resolve({
-                    json: () => Promise.resolve({ boarders: rows })
-                });
-                viewMonth('2026-07');
-            }""",
-            {"rows": self.ROWS},
-        )
-        page.wait_for_function(
-            "() => !document.getElementById('month-detail').classList.contains('hidden')"
-        )
+        open_month_detail(page, self.ROWS)
 
     def _printed_text(self, page):
         page.emulate_media(media="print")
@@ -2056,19 +2023,8 @@ class TestAsyncActionsNeverFailSilently:
 
 
 class TestAssignPanelPositiveConsent:
-    def _open_assign_panel(self, page, rows, row_count):
-        page.evaluate(
-            """({ rows }) => {
-                window.fetch = url => Promise.resolve({
-                    json: () => Promise.resolve({ boarders: rows })
-                });
-                viewMonth('2026-07');
-            }""",
-            {"rows": rows},
-        )
-        page.wait_for_function(
-            f"() => document.querySelectorAll('#month-detail-body tr').length === {row_count}"
-        )
+    def _open_assign_panel(self, page, rows):
+        open_month_detail(page, rows)
         page.locator("#month-detail-assign-btn").click()
 
     def test_panel_prechecks_eligible_boarders_with_positive_labels(self, fresh_client, browser_page):
@@ -2091,7 +2047,7 @@ class TestAssignPanelPositiveConsent:
 
         page = browser_page
         page.set_content(html)
-        self._open_assign_panel(page, rows, 3)
+        self._open_assign_panel(page, rows)
 
         checkboxes = page.locator('#assign-boarders input[type="checkbox"]')
         assert checkboxes.count() == 2
@@ -2128,7 +2084,7 @@ class TestAssignPanelPositiveConsent:
 
         page = browser_page
         page.set_content(html)
-        self._open_assign_panel(page, rows, 2)
+        self._open_assign_panel(page, rows)
         page.locator("#assign-deadline").fill("2026-08-10")
         page.evaluate(
             """() => {
@@ -2331,18 +2287,7 @@ class TestMonthReportToolbarOrdering:
 
         page = browser_page
         page.set_content(html)
-        page.evaluate(
-            """({ rows }) => {
-                window.fetch = url => Promise.resolve({
-                    json: () => Promise.resolve({ boarders: rows })
-                });
-                viewMonth('2026-07');
-            }""",
-            {"rows": rows},
-        )
-        page.wait_for_function(
-            "() => !document.getElementById('month-detail').classList.contains('hidden')"
-        )
+        open_month_detail(page, rows)
 
         boxes = page.evaluate(
             """ids => ids.map(id => {
@@ -2362,6 +2307,227 @@ class TestMonthReportToolbarOrdering:
                 .map(el => el.id)"""
         )
         assert danger_controls == ["month-detail-delete"]
+
+
+class TestConsequencesRowActionContract:
+    """Pins exactly what /consequences renders as row actions per status.
+
+    Characterization safety net for the row-action decomposition: every
+    assertion here must keep passing unmodified when the duplicated form
+    blocks collapse into one macro backed by server-owned offered actions.
+    """
+
+    PRIMARY = "btn btn-primary btn-sm"
+    NEUTRAL = "btn btn-neutral btn-sm"
+
+    def _seed(self, fresh_client, deadline="2099-01-01"):
+        with app_module.connect() as conn:
+            seeded = seed_punishments(
+                conn,
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                deadline=deadline,
+                include_report=False,
+            )
+            return seeded[0]
+
+    def _move(self, punishment_id, target, timestamp="2026-04-11T09:00:00+00:00"):
+        with app_module.connect() as conn:
+            storage.transition_punishment(
+                conn, punishment_id, target, timestamp=timestamp
+            )
+
+    def _row(self, fresh_client, punishment_id, query=""):
+        html = fresh_client.get(f"/consequences{query}").get_data(as_text=True)
+        panel = panel_html(html, "consequences")
+        match = re.search(
+            rf'<tr data-punishment-id="{punishment_id}">.*?</tr>', panel, re.S
+        )
+        assert match is not None, f"row {punishment_id} is not rendered"
+        return match.group(0)
+
+    def _forms(self, row):
+        return re.findall(r"<form\b.*?</form>", row, re.S)
+
+    def _contract(self, form):
+        """Returns (hidden 'to' value, button label, button class) for one action form."""
+        to = re.search(r'<input type="hidden" name="to" value="([^"]*)"', form)
+        button = re.search(r'<button type="submit" class="([^"]*)">([^<]*)</button>', form)
+        assert to is not None and button is not None, form
+        return to.group(1), button.group(2), button.group(1)
+
+    def _contracts(self, row):
+        return [self._contract(form) for form in self._forms(row)]
+
+    def test_assigned_row_offers_submission_and_void_only_before_deadline(self, fresh_client):
+        punishment = self._seed(fresh_client, deadline="2099-01-01")
+
+        row = self._row(fresh_client, punishment.id)
+
+        assert self._contracts(row) == [
+            ("submitted", "Submitted", self.PRIMARY),
+            ("voided", "Void", self.NEUTRAL),
+        ]
+
+    def test_due_assigned_row_offers_mark_overdue_first(self, fresh_client):
+        today = datetime.now(tz=timezone.utc).date().isoformat()
+        punishment = self._seed(fresh_client, deadline=today)
+
+        row = self._row(fresh_client, punishment.id)
+
+        assert self._contracts(row) == [
+            ("overdue", "Mark overdue", self.PRIMARY),
+            ("submitted", "Submitted", self.PRIMARY),
+            ("voided", "Void", self.NEUTRAL),
+        ]
+
+    def test_overdue_row_offers_phone_held_submission_and_void(self, fresh_client):
+        punishment = self._seed(fresh_client)
+        self._move(punishment.id, "overdue")
+
+        row = self._row(fresh_client, punishment.id)
+
+        assert self._contracts(row) == [
+            ("phone_held", "Phone held", self.PRIMARY),
+            ("submitted", "Submitted", self.PRIMARY),
+            ("voided", "Void", self.NEUTRAL),
+        ]
+
+    def test_phone_held_row_offers_release_submission_and_void(self, fresh_client):
+        punishment = self._seed(fresh_client)
+        self._move(punishment.id, "overdue")
+        self._move(punishment.id, "phone_held")
+
+        row = self._row(fresh_client, punishment.id)
+
+        assert self._contracts(row) == [
+            ("submitted", "Submitted (release phone)", self.PRIMARY),
+            ("voided", "Void", self.NEUTRAL),
+        ]
+
+    def test_submitted_row_offers_only_void(self, fresh_client):
+        punishment = self._seed(fresh_client)
+        self._move(punishment.id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
+
+        row = self._row(fresh_client, punishment.id, query="?status=submitted")
+
+        assert self._contracts(row) == [("voided", "Void", self.NEUTRAL)]
+
+    def test_voided_row_offers_no_actions(self, fresh_client):
+        punishment = self._seed(fresh_client)
+        with app_module.connect() as conn:
+            storage.transition_punishment(
+                conn,
+                punishment.id,
+                "voided",
+                timestamp="2026-04-12T09:00:00+00:00",
+                void_reason="exempt",
+            )
+
+        row = self._row(fresh_client, punishment.id, query="?show_all=1&status=voided")
+
+        assert self._forms(row) == []
+
+    def test_every_action_form_posts_to_its_own_punishment(self, fresh_client):
+        punishment = self._seed(fresh_client)
+
+        row = self._row(fresh_client, punishment.id)
+
+        for form in self._forms(row):
+            assert f'action="/punishment/{punishment.id}/transition"' in form
+            assert 'method="post"' in form
+
+    def test_void_form_keeps_reason_input_target_data_and_styling(self, fresh_client):
+        punishment = self._seed(fresh_client)
+
+        row = self._row(fresh_client, punishment.id)
+
+        void_form = next(form for form in self._forms(row) if 'value="voided"' in form)
+        assert 'class="void-form"' in void_form
+        assert f'data-boarder="{punishment.display_name}"' in void_form
+        assert f'data-month="{punishment.month}"' in void_form
+        assert (
+            '<input type="text" name="void_reason" placeholder="Reason (optional)" '
+            'aria-label="Void reason (optional)">'
+        ) in void_form
+        assert '<button type="submit" class="btn btn-neutral btn-sm">Void</button>' in void_form
+
+    def test_every_action_form_preserves_active_month_status_and_show_all_filters(self, fresh_client):
+        punishment = self._seed(fresh_client)
+
+        filtered_row = self._row(
+            fresh_client, punishment.id, query="?month=2026-03&status=assigned"
+        )
+        for form in self._forms(filtered_row):
+            assert '<input type="hidden" name="month" value="2026-03">' in form
+            assert '<input type="hidden" name="status" value="assigned">' in form
+
+        show_all_row = self._row(fresh_client, punishment.id, query="?show_all=1")
+        for form in self._forms(show_all_row):
+            assert '<input type="hidden" name="show_all" value="1">' in form
+
+    def test_action_forms_carry_no_filter_fields_when_no_filter_is_active(self, fresh_client):
+        punishment = self._seed(fresh_client)
+
+        row = self._row(fresh_client, punishment.id)
+
+        for form in self._forms(row):
+            assert 'name="month"' not in form
+            assert 'name="status"' not in form
+            assert 'name="show_all"' not in form
+
+    def test_whole_page_exposes_the_expected_action_set_per_status_at_once(self, fresh_client):
+        today = datetime.now(tz=timezone.utc).date().isoformat()
+        names = ["ALICE", "BOB", "CAROL", "DANA", "ELLE", "FRAN"]
+        with app_module.connect() as conn:
+            seeded = seed_punishments(
+                conn,
+                boarders=[
+                    record(name, str(101 + i), 1, 2, 3) for i, name in enumerate(names)
+                ],
+                deadline=today,
+                include_report=False,
+            )
+            alice = next(p for p in seeded if p.normalized_name == "ALICE")
+            conn.execute(
+                "UPDATE punishments SET deadline = '2099-01-01' WHERE id = ?", (alice.id,)
+            )
+            conn.commit()
+        ids = {p.normalized_name: p.id for p in seeded}
+        self._move(ids["CAROL"], "overdue")
+        self._move(ids["DANA"], "overdue")
+        self._move(ids["DANA"], "phone_held")
+        self._move(ids["ELLE"], "submitted", timestamp="2026-04-09T09:00:00+00:00")
+        self._move(ids["FRAN"], "voided", timestamp="2026-04-12T09:00:00+00:00")
+
+        html = fresh_client.get("/consequences?show_all=1").get_data(as_text=True)
+        panel = panel_html(html, "consequences")
+        rows = {}
+        for match in re.finditer(r'<tr data-punishment-id="(\d+)">.*?</tr>', panel, re.S):
+            rows[int(match.group(1))] = match.group(0)
+
+        expected = {
+            ids["ALICE"]: [
+                ("submitted", "Submitted", self.PRIMARY),
+                ("voided", "Void", self.NEUTRAL),
+            ],
+            ids["BOB"]: [
+                ("overdue", "Mark overdue", self.PRIMARY),
+                ("submitted", "Submitted", self.PRIMARY),
+                ("voided", "Void", self.NEUTRAL),
+            ],
+            ids["CAROL"]: [
+                ("phone_held", "Phone held", self.PRIMARY),
+                ("submitted", "Submitted", self.PRIMARY),
+                ("voided", "Void", self.NEUTRAL),
+            ],
+            ids["DANA"]: [
+                ("submitted", "Submitted (release phone)", self.PRIMARY),
+                ("voided", "Void", self.NEUTRAL),
+            ],
+            ids["ELLE"]: [("voided", "Void", self.NEUTRAL)],
+            ids["FRAN"]: [],
+        }
+        assert {pid: self._contracts(row) for pid, row in rows.items()} == expected
 
 
 class TestConsequencesRowActionTidiness:
@@ -2495,18 +2661,7 @@ class TestUiTidinessHoldsEverywhere:
         page = browser_page
         page.set_viewport_size({"width": 360, "height": 800})
         page.set_content(html)
-        page.evaluate(
-            """({ rows }) => {
-                window.fetch = url => Promise.resolve({
-                    json: () => Promise.resolve({ boarders: rows })
-                });
-                viewMonth('2026-07');
-            }""",
-            {"rows": rows},
-        )
-        page.wait_for_function(
-            "() => !document.getElementById('month-detail').classList.contains('hidden')"
-        )
+        open_month_detail(page, rows)
 
         toolbar_direction = page.evaluate(
             """() => {

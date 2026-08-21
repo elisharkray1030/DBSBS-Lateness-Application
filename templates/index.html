@@ -804,6 +804,14 @@
             {% if consequences_status %}<input type="hidden" name="status" value="{{ consequences_status }}">{% endif %}
             {% if consequences_show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
         {% endmacro %}
+        {% macro transition_form(p, action) -%}
+            <form action="/punishment/{{ p.id }}/transition" method="post"{% if action.reason_input %} class="void-form" data-boarder="{{ p.display_name }}" data-month="{{ p.month }}"{% endif %}>
+                <input type="hidden" name="to" value="{{ action.target }}">
+                {{ consequence_filters() }}
+                {% if action.reason_input %}<input type="text" name="void_reason" placeholder="Reason (optional)" aria-label="Void reason (optional)">{% endif %}
+                <button type="submit" class="btn btn-{{ action.style }} btn-sm">{{ action.label }}</button>
+            </form>
+        {%- endmacro %}
         <h2>Consequences</h2>
         <div class="month-detail-toolbar">
             <h3>Punishments</h3>
@@ -872,47 +880,9 @@
                                 <td>{{ p.last_action or '&mdash;' }}</td>
                                 <td>
                                     <div class="row-actions">
-                                        {% if p.status == 'assigned' %}
-                                            {% if p.is_due %}
-                                                <form action="/punishment/{{ p.id }}/transition" method="post">
-                                                    <input type="hidden" name="to" value="overdue">
-                                                    {{ consequence_filters() }}
-                                                    <button type="submit" class="btn btn-primary btn-sm">Mark overdue</button>
-                                                </form>
-                                            {% endif %}
-                                            <form action="/punishment/{{ p.id }}/transition" method="post">
-                                                <input type="hidden" name="to" value="submitted">
-                                                {{ consequence_filters() }}
-                                                <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
-                                            </form>
-                                        {% endif %}
-                                        {% if p.status == 'overdue' %}
-                                            <form action="/punishment/{{ p.id }}/transition" method="post">
-                                                <input type="hidden" name="to" value="phone_held">
-                                                {{ consequence_filters() }}
-                                                <button type="submit" class="btn btn-primary btn-sm">Phone held</button>
-                                            </form>
-                                            <form action="/punishment/{{ p.id }}/transition" method="post">
-                                                <input type="hidden" name="to" value="submitted">
-                                                {{ consequence_filters() }}
-                                                <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
-                                            </form>
-                                        {% endif %}
-                                        {% if p.status == 'phone_held' %}
-                                            <form action="/punishment/{{ p.id }}/transition" method="post">
-                                                <input type="hidden" name="to" value="submitted">
-                                                {{ consequence_filters() }}
-                                                <button type="submit" class="btn btn-primary btn-sm">Submitted (release phone)</button>
-                                            </form>
-                                        {% endif %}
-                                        {% if p.status in ['assigned', 'overdue', 'phone_held', 'submitted'] %}
-                                            <form action="/punishment/{{ p.id }}/transition" method="post" class="void-form" data-boarder="{{ p.display_name }}" data-month="{{ p.month }}">
-                                                <input type="hidden" name="to" value="voided">
-                                                {{ consequence_filters() }}
-                                                <input type="text" name="void_reason" placeholder="Reason (optional)" aria-label="Void reason (optional)">
-                                                <button type="submit" class="btn btn-neutral btn-sm">Void</button>
-                                            </form>
-                                        {% endif %}
+                                        {% for action in p.actions %}
+                                            {{ transition_form(p, action) }}
+                                        {% endfor %}
                                     </div>
                                 </td>
                             </tr>
