@@ -101,6 +101,9 @@
             border: none;
             background: transparent;
             color: var(--text-muted);
+            /* Buttons do not inherit document fonts by default; forcing
+               inheritance keeps link tabs and button tabs identically sized. */
+            font: inherit;
             font-weight: 600;
             cursor: pointer;
             text-decoration: none;
@@ -500,6 +503,25 @@
             margin-left: 6px;
         }
 
+        .row-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .row-actions form {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .row-actions input[name="void_reason"] {
+            width: 150px;
+            padding: 6px 12px;
+        }
+
         .consequences-filters {
             display: flex;
             gap: 12px;
@@ -849,47 +871,49 @@
                                 <td>{{ humanized_status(p.status) }}</td>
                                 <td>{{ p.last_action or '&mdash;' }}</td>
                                 <td>
-                                    {% if p.status == 'assigned' %}
-                                        {% if p.is_due %}
-                                            <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                                <input type="hidden" name="to" value="overdue">
+                                    <div class="row-actions">
+                                        {% if p.status == 'assigned' %}
+                                            {% if p.is_due %}
+                                                <form action="/punishment/{{ p.id }}/transition" method="post">
+                                                    <input type="hidden" name="to" value="overdue">
+                                                    {{ consequence_filters() }}
+                                                    <button type="submit" class="btn btn-primary btn-sm">Mark overdue</button>
+                                                </form>
+                                            {% endif %}
+                                            <form action="/punishment/{{ p.id }}/transition" method="post">
+                                                <input type="hidden" name="to" value="submitted">
                                                 {{ consequence_filters() }}
-                                                <button type="submit" class="btn btn-primary btn-sm">Mark overdue</button>
+                                                <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
                                             </form>
                                         {% endif %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="submitted">
-                                            {{ consequence_filters() }}
-                                            <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
-                                        </form>
-                                    {% endif %}
-                                    {% if p.status == 'overdue' %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="phone_held">
-                                            {{ consequence_filters() }}
-                                            <button type="submit" class="btn btn-primary btn-sm">Phone held</button>
-                                        </form>
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="submitted">
-                                            {{ consequence_filters() }}
-                                            <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
-                                        </form>
-                                    {% endif %}
-                                    {% if p.status == 'phone_held' %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="submitted">
-                                            {{ consequence_filters() }}
-                                            <button type="submit" class="btn btn-primary btn-sm">Submitted (release phone)</button>
-                                        </form>
-                                    {% endif %}
-                                    {% if p.status in ['assigned', 'overdue', 'phone_held', 'submitted'] %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline" class="void-form" data-boarder="{{ p.display_name }}" data-month="{{ p.month }}">
-                                            <input type="hidden" name="to" value="voided">
-                                            {{ consequence_filters() }}
-                                            <input type="text" name="void_reason" placeholder="Reason (optional)" aria-label="Void reason (optional)">
-                                            <button type="submit" class="btn btn-neutral btn-sm">Void</button>
-                                        </form>
-                                    {% endif %}
+                                        {% if p.status == 'overdue' %}
+                                            <form action="/punishment/{{ p.id }}/transition" method="post">
+                                                <input type="hidden" name="to" value="phone_held">
+                                                {{ consequence_filters() }}
+                                                <button type="submit" class="btn btn-primary btn-sm">Phone held</button>
+                                            </form>
+                                            <form action="/punishment/{{ p.id }}/transition" method="post">
+                                                <input type="hidden" name="to" value="submitted">
+                                                {{ consequence_filters() }}
+                                                <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
+                                            </form>
+                                        {% endif %}
+                                        {% if p.status == 'phone_held' %}
+                                            <form action="/punishment/{{ p.id }}/transition" method="post">
+                                                <input type="hidden" name="to" value="submitted">
+                                                {{ consequence_filters() }}
+                                                <button type="submit" class="btn btn-primary btn-sm">Submitted (release phone)</button>
+                                            </form>
+                                        {% endif %}
+                                        {% if p.status in ['assigned', 'overdue', 'phone_held', 'submitted'] %}
+                                            <form action="/punishment/{{ p.id }}/transition" method="post" class="void-form" data-boarder="{{ p.display_name }}" data-month="{{ p.month }}">
+                                                <input type="hidden" name="to" value="voided">
+                                                {{ consequence_filters() }}
+                                                <input type="text" name="void_reason" placeholder="Reason (optional)" aria-label="Void reason (optional)">
+                                                <button type="submit" class="btn btn-neutral btn-sm">Void</button>
+                                            </form>
+                                        {% endif %}
+                                    </div>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -929,9 +953,12 @@
                 <label for="boarder_csv"><strong>Replace roster from CSV</strong></label>
                 <input type="file" id="boarder_csv" name="boarder_csv" accept=".csv" required>
                 <button type="submit" class="btn btn-primary btn-sm">Import</button>
-                <button id="boarder-edit" type="button" class="btn btn-neutral btn-sm" {% if not boarders %}disabled{% endif %}>Edit</button>
             </form>
-            <a class="btn btn-neutral btn-sm" href="/boarders/export">Download roster (CSV)</a>
+            <button id="boarder-edit" type="button" class="btn btn-neutral btn-sm" {% if not boarders %}disabled{% endif %}>Edit</button>
+            <a class="btn btn-neutral btn-sm" href="/boarders/export">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
+                Download roster (CSV)
+            </a>
         </div>
         <div id="boarder-edit-actions" class="boarder-edit-actions" hidden>
             <button id="boarder-save" type="button" class="btn btn-primary btn-sm" disabled>Save</button>
@@ -965,7 +992,9 @@
     </section>
 
     <!-- Reports Database Panel -->
-    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">        <div class="upload-panel">
+    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
+        <h2>View Reports in Database</h2>
+        <div class="upload-panel">
             <h3 class="upload-title">Import Monthly Log</h3>
             <form action="/" method="POST" enctype="multipart/form-data">
                 <div class="form-row">
@@ -1020,11 +1049,11 @@
                         Download
                     </button>
                     <button id="month-detail-assign-btn" type="button" class="btn btn-primary">Assign Punishments</button>
+                    <button id="month-detail-close" type="button" class="btn btn-neutral" onclick="closeMonthDetail()">Close</button>
                     <button id="month-detail-delete" type="button" class="btn btn-danger">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
                         Delete
                     </button>
-                    <button id="month-detail-close" type="button" class="btn btn-neutral" onclick="closeMonthDetail()">Close</button>
                 </div>
                 <div id="month-detail-assign" class="assign-panel hidden">
                     <h4>Assign Punishments</h4>

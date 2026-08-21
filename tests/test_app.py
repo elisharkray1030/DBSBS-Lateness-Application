@@ -41,6 +41,20 @@ def tab_button_class(html, tab_name):
     return match.group(1)
 
 
+TAB_LABELS = {
+    "reports": "View Reports in Database",
+    "history": "Search Boarder History",
+    "consequences": "Consequences",
+    "boarders": "Boarders",
+}
+
+
+def panel_html(html, panel_id):
+    match = re.search(rf'<section id="{panel_id}".*?</section>', html, re.S)
+    assert match is not None, f"no panel found for {panel_id!r}"
+    return match.group(0)
+
+
 class TestHomeRender:
     def test_report_archive_tab_precedes_history_tab(self):
         html = home_html()
@@ -2198,3 +2212,310 @@ class TestTransitionFeedbackLivesOnPage:
 
         with app_module.connect() as conn:
             assert storage.get_punishment(conn, self._alice_id()).status == "assigned"
+
+
+class TestChromeConsistency:
+    def test_every_panel_opens_with_h2_matching_its_tab_label(self):
+        html = home_html()
+        for panel_id, label in TAB_LABELS.items():
+            panel = panel_html(html, panel_id)
+            assert f"<h2>{label}</h2>" in panel, (
+                f"{panel_id} panel lacks an <h2> matching its tab label"
+            )
+
+    def test_section_subheadings_nest_one_level_beneath_panel_titles(self):
+        html = home_html()
+        subheadings = {
+            "reports": "Import Monthly Log",
+            "boarders": "Add Boarder",
+            "consequences": "Punishments",
+        }
+        for panel_id, subheading in subheadings.items():
+            panel = panel_html(html, panel_id)
+            assert re.search(rf"<h3[^>]*>{subheading}</h3>", panel), (
+                f"{panel_id} panel lost its {subheading!r} section sub-heading"
+            )
+
+    def test_history_results_subheading_nests_beneath_panel_title(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+        html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
+
+        panel = panel_html(html, "history")
+        title_index = panel.index("<h2>Search Boarder History</h2>")
+        results_index = panel.index("<h3>Search Results</h3>")
+        assert title_index < results_index
+
+    def test_all_four_tabs_share_identical_computed_typography(self, fresh_client, browser_page):
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        typography = page.evaluate(
+            """() => [...document.querySelectorAll('.tab-link')].map(tab => {
+                const style = getComputedStyle(tab);
+                return style.fontSize + '|' + style.fontFamily;
+            })"""
+        )
+
+        assert len(typography) == 4
+        assert len(set(typography)) == 1, typography
+
+
+class TestBoardersToolbarRegroup:
+    def _toolbar(self, fresh_client):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        panel = panel_html(html, "boarders")
+        start = panel.index('<div class="month-detail-toolbar">')
+        end = panel.index('<div id="boarder-edit-actions"')
+        return panel[start:end]
+
+    def test_import_form_holds_only_label_file_input_and_submit(self, fresh_client):
+        toolbar = self._toolbar(fresh_client)
+        form = re.search(r'<form action="/boarders/import"[^>]*>.*?</form>', toolbar, re.S)
+        assert form is not None, "roster-import form is missing"
+
+        form_html = form.group(0)
+        assert '<label for="boarder_csv">' in form_html
+        assert 'type="file"' in form_html
+        assert ">Import</button>" in form_html
+        assert "boarder-edit" not in form_html
+
+    def test_edit_sits_outside_the_form_beside_download_roster(self, fresh_client):
+        toolbar = self._toolbar(fresh_client)
+        form_end = toolbar.index("</form>")
+        edit_index = toolbar.index('id="boarder-edit"')
+        download_index = toolbar.index("Download roster")
+        assert form_end < edit_index < download_index
+
+    def test_download_roster_carries_the_shared_download_icon(self, fresh_client):
+        toolbar = self._toolbar(fresh_client)
+        link = re.search(r'<a[^>]*href="/boarders/export".*?</a>', toolbar, re.S)
+        assert link is not None, "Download roster link is missing"
+        assert 'href="#icon-download"' in link.group(0)
+
+    def test_edit_button_stays_wired_after_regroup(self, fresh_client, browser_page):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        page.locator("#boarder-edit").click()
+
+        assert page.locator("#boarders-table .boarder-remove").count() >= 1
+
+
+MONTH_TOOLBAR_IDS = [
+    "month-detail-print",
+    "month-detail-download",
+    "month-detail-assign-btn",
+    "month-detail-close",
+    "month-detail-delete",
+]
+
+
+class TestMonthReportToolbarOrdering:
+    def test_toolbar_dom_order_puts_close_before_delete(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+        indices = [html.index(f'id="{control_id}"') for control_id in MONTH_TOOLBAR_IDS]
+        assert indices == sorted(indices), (
+            f"toolbar order must be {MONTH_TOOLBAR_IDS}, got {indices}"
+        )
+
+    def test_delete_is_rightmost_and_only_danger_control_when_report_open(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [month_row("ALICE", "101", 2, 5, 7)]
+
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """({ rows }) => {
+                window.fetch = url => Promise.resolve({
+                    json: () => Promise.resolve({ boarders: rows })
+                });
+                viewMonth('2026-07');
+            }""",
+            {"rows": rows},
+        )
+        page.wait_for_function(
+            "() => !document.getElementById('month-detail').classList.contains('hidden')"
+        )
+
+        boxes = page.evaluate(
+            """ids => ids.map(id => {
+                const rect = document.getElementById(id).getBoundingClientRect();
+                return { id, left: rect.left, right: rect.right };
+            })""",
+            MONTH_TOOLBAR_IDS,
+        )
+        lefts = [box["left"] for box in boxes]
+        assert lefts == sorted(lefts), boxes
+        delete_box = boxes[-1]
+        assert delete_box["id"] == "month-detail-delete"
+        assert delete_box["right"] == max(box["right"] for box in boxes)
+
+        danger_controls = page.evaluate(
+            """() => [...document.querySelectorAll('#month-detail .btn-danger')]
+                .map(el => el.id)"""
+        )
+        assert danger_controls == ["month-detail-delete"]
+
+
+class TestConsequencesRowActionTidiness:
+    def _consequences_html_with_punishment(self, fresh_client):
+        with app_module.connect() as conn:
+            seed_punishments(conn)
+        return fresh_client.get("/consequences").get_data(as_text=True)
+
+    def test_action_forms_sit_in_one_row_actions_wrapper_without_inline_styles(self, fresh_client):
+        html = self._consequences_html_with_punishment(fresh_client)
+        panel = panel_html(html, "consequences")
+
+        assert 'style="display:inline"' not in panel
+        rows = re.findall(r'<tr data-punishment-id="\d+">.*?</tr>', panel, re.S)
+        assert rows, "expected at least one rendered punishment row"
+        for row in rows:
+            assert row.count('<div class="row-actions">') == 1, row
+            before_wrapper = row.split('<div class="row-actions">')[0]
+            assert "<form" not in before_wrapper
+
+    def test_row_actions_container_is_wrapping_evenly_gapped_and_centred(self, fresh_client, browser_page):
+        html = self._consequences_html_with_punishment(fresh_client)
+
+        page = browser_page
+        page.set_content(html)
+        style = page.evaluate(
+            """() => {
+                const style = getComputedStyle(document.querySelector('.row-actions'));
+                return {
+                    display: style.display,
+                    flexWrap: style.flexWrap,
+                    justifyContent: style.justifyContent,
+                    gap: parseFloat(style.rowGap),
+                };
+            }"""
+        )
+        assert style["display"] == "flex"
+        assert style["flexWrap"] == "wrap"
+        assert style["justifyContent"] == "center"
+        assert style["gap"] > 0
+
+    def test_void_reason_input_is_compact_like_neighbouring_buttons(self, fresh_client, browser_page):
+        html = self._consequences_html_with_punishment(fresh_client)
+
+        page = browser_page
+        page.set_content(html)
+        metrics = page.evaluate(
+            """() => {
+                const input = document.querySelector('form.void-form input[name="void_reason"]');
+                const button = input.closest('form').querySelector('button[type="submit"]');
+                const inputStyle = getComputedStyle(input);
+                const buttonStyle = getComputedStyle(button);
+                return {
+                    width: parseFloat(inputStyle.width),
+                    inputPadding: inputStyle.paddingTop + '/' + inputStyle.paddingRight
+                        + '/' + inputStyle.paddingBottom + '/' + inputStyle.paddingLeft,
+                    buttonPadding: buttonStyle.paddingTop + '/' + buttonStyle.paddingRight
+                        + '/' + buttonStyle.paddingBottom + '/' + buttonStyle.paddingLeft,
+                    buttonWidth: parseFloat(buttonStyle.width),
+                };
+            }"""
+        )
+        assert 0 < metrics["width"] < 220, metrics
+        assert metrics["inputPadding"] == metrics["buttonPadding"], metrics
+
+
+class TestUiTidinessHoldsEverywhere:
+    def test_conditional_controls_share_the_button_system(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        page.locator("#boarder-edit").click()
+
+        assert (
+            page.locator("#boarders-table .boarder-remove").count()
+            == page.locator("#boarders-table tbody tr").count()
+        )
+
+        page.locator("#boarders-table .boarder-remove").first.click()
+        page.wait_for_selector("#confirmModal.show")
+        page.keyboard.press("Escape")
+
+        typography = page.evaluate(
+            """() => {
+                const tiers = {
+                    regular: [
+                        '#boarders form button[type="submit"]',
+                        '#confirmModal .btn-danger',
+                        '#confirmModal .btn-neutral',
+                        '#assign-form button[type="submit"]',
+                    ],
+                    small: [
+                        '#boarder-save',
+                        '#boarder-cancel',
+                        '.boarder-remove',
+                    ],
+                };
+                const measured = {};
+                for (const [tier, selectors] of Object.entries(tiers)) {
+                    measured[tier] = selectors.map(selector => {
+                        const el = document.querySelector(selector);
+                        if (!el) return null;
+                        const style = getComputedStyle(el);
+                        return {
+                            selector,
+                            family: style.fontFamily,
+                            size: style.fontSize,
+                        };
+                    });
+                }
+                return measured;
+            }"""
+        )
+        entries = typography["regular"] + typography["small"]
+        assert all(entry is not None for entry in entries), typography
+        families = {entry["family"] for entry in entries}
+        assert len(families) == 1, families
+        for tier in ("regular", "small"):
+            sizes = {entry["size"] for entry in typography[tier]}
+            assert len(sizes) == 1, typography[tier]
+
+    def test_narrow_viewport_stacks_open_report_toolbar_without_overflow(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [month_row("ALICE", "101", 2, 5, 7)]
+
+        page = browser_page
+        page.set_viewport_size({"width": 360, "height": 800})
+        page.set_content(html)
+        page.evaluate(
+            """({ rows }) => {
+                window.fetch = url => Promise.resolve({
+                    json: () => Promise.resolve({ boarders: rows })
+                });
+                viewMonth('2026-07');
+            }""",
+            {"rows": rows},
+        )
+        page.wait_for_function(
+            "() => !document.getElementById('month-detail').classList.contains('hidden')"
+        )
+
+        toolbar_direction = page.evaluate(
+            """() => {
+                const toolbar = document.querySelector('#month-detail .month-detail-toolbar');
+                return getComputedStyle(toolbar).flexDirection;
+            }"""
+        )
+        assert toolbar_direction == "column"
+        overflow = page.evaluate(
+            """() => document.documentElement.scrollWidth > document.documentElement.clientWidth"""
+        )
+        assert not overflow
