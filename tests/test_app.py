@@ -131,6 +131,16 @@ class TestImportMonthPicker:
         assert re.search(r'<button[^>]*aria-label="Next year"', html)
         assert len(re.findall(r'class="month-option', html)) == 12
 
+    def test_month_picker_lives_inside_print_excluded_upload_panel(self):
+        html = home_html()
+        title_index = html.index("Import Monthly Log")
+        upload_panel_start = html.rindex('<div class="upload-panel">', 0, title_index)
+        reports_section_end = html.index("</section>", title_index)
+        popover_index = html.index('id="month-picker-popover"')
+        assert (
+            upload_panel_start < popover_index < reports_section_end
+        ), "popover must stay inside the upload panel that print styles exclude"
+
     def test_bad_month_label_import_is_rejected_with_error(self):
         data = {
             "report_month": "March 2026",
@@ -1986,6 +1996,129 @@ class TestMonthPickerPopover:
         page.locator("h3.upload-title", has_text="Import Monthly Log").click()
 
         assert page.locator("#month-picker-popover.hidden").count() == 1
+
+
+class TestMonthPickerVisualPolish:
+    def _open_picker(self, page):
+        page.locator('.tab-link[data-tab="reports"]').click()
+        page.locator("#report-month-toggle").click()
+        page.wait_for_selector("#month-picker-popover:not(.hidden)")
+
+    def _computed(self, page, selector, properties):
+        return page.locator(selector).first.evaluate(
+            """(el, names) => Object.fromEntries(
+                names.map(name => [name, getComputedStyle(el)[name]])
+            )""",
+            properties,
+        )
+
+    def test_selected_month_is_solid_navy_and_current_month_outlined(self, browser_page):
+        now = datetime.now()
+        year = now.year
+        picked = 12 if now.month == 12 else now.month + 1
+
+        page = browser_page
+        page.set_content(home_html())
+        page.fill("#report_month", f"{year}-{picked:02d}")
+        self._open_picker(page)
+
+        selected = self._computed(
+            page,
+            ".month-option.selected",
+            ["backgroundColor", "color"],
+        )
+        assert selected["backgroundColor"] == "rgb(29, 43, 83)"
+        assert selected["color"] == "rgb(255, 255, 255)"
+
+    def test_unpicked_current_calendar_month_is_outlined(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+
+        current_border = self._computed(
+            page, ".month-option.current", ["borderColor"]
+        )["borderColor"]
+        assert current_border == "rgb(29, 43, 83)"
+
+    def test_hover_state_matches_month_card_styling(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+
+        option = page.locator(".month-option:not(.selected)").first
+        option.hover()
+        hover_styles = option.evaluate(
+            """el => [
+                getComputedStyle(el).backgroundColor,
+                getComputedStyle(el).borderColor
+            ]"""
+        )
+        assert hover_styles[0] == "rgb(248, 249, 250)"  # --page-bg
+        assert hover_styles[1] == "rgb(29, 43, 83)"  # --navy
+
+    def test_popover_radius_and_shadow_match_modal_family(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+
+        popover_styles = self._computed(
+            page,
+            "#month-picker-popover",
+            ["borderRadius", "boxShadow"],
+        )
+        modal_styles = self._computed(
+            page,
+            "#confirmModal .modal-content",
+            ["borderRadius", "boxShadow"],
+        )
+        assert popover_styles["borderRadius"] == modal_styles["borderRadius"]
+        assert popover_styles["boxShadow"] == modal_styles["boxShadow"]
+
+    def test_popover_fits_360px_viewport_without_overflow(self, browser_page):
+        page = browser_page
+        page.set_viewport_size({"width": 360, "height": 800})
+        page.set_content(home_html())
+        self._open_picker(page)
+
+        overflow = page.evaluate(
+            """() => ({
+                horizontal: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+                left: document.getElementById('month-picker-popover').getBoundingClientRect().left,
+                right: document.getElementById('month-picker-popover').getBoundingClientRect().right
+            })"""
+        )
+        assert not overflow["horizontal"]
+        assert overflow["left"] >= 0
+        assert overflow["right"] <= 360
+
+    def test_month_picker_text_meets_aa_contrast(self, fresh_client, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+
+        popover_background = self._computed(
+            page, "#month-picker-popover", ["backgroundColor"]
+        )["backgroundColor"]
+
+        pairs = []
+        for selector in (".month-option", ".month-picker-year"):
+            styles = self._computed(page, selector, ["color"])
+            pairs.append(
+                (f"{selector} on surface", popover_background, styles["color"])
+            )
+
+        year = datetime.now().year
+        page.fill("#report_month", f"{year}-01")
+        self._open_picker(page)
+        selected = self._computed(
+            page,
+            ".month-option.selected",
+            ["backgroundColor", "color"],
+        )
+        pairs.append((".month-option.selected", selected["backgroundColor"], selected["color"]))
+
+        for label, background, foreground in pairs:
+            ratio = _contrast_ratio(_parse_rgb(background), _parse_rgb(foreground))
+            assert ratio >= 4.5, f"{label} contrast {ratio:.2f} < 4.5"
 
 
 class TestPrintOutputsActiveView:

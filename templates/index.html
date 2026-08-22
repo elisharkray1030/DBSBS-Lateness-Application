@@ -256,6 +256,33 @@
             text-align: center;
         }
 
+        /* Hover mirrors the report-archive month cards: page wash plus a
+           navy edge and soft shadow. */
+        .month-option:hover {
+            background: var(--page-bg);
+            border-color: var(--navy);
+            box-shadow: 0 2px 8px rgba(29, 43, 83, 0.2);
+        }
+
+        .month-option.current {
+            border-color: var(--navy);
+        }
+
+        /* Declared after :hover so an already-picked month stays solid navy
+           under the cursor, like active month cards in the archive. */
+        .month-option.selected {
+            background: var(--navy);
+            border-color: var(--navy);
+            color: var(--surface);
+        }
+
+        .month-chevron:disabled {
+            background: var(--disabled-bg);
+            border-color: var(--disabled-bg);
+            color: var(--disabled-text);
+            cursor: default;
+        }
+
         .upload-panel,
         .history-panel,
         .reports-panel {
