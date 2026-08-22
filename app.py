@@ -38,6 +38,7 @@ from parser import (
 )
 from punishments import (
     AssignmentRejected,
+    NON_VOIDED_STATUSES,
     TransitionRejected,
     assign_batch,
     humanized_status,
@@ -457,7 +458,7 @@ def consequences():
     status = request.args.get('status') or None
     with connect() as conn:
         punishments = list_consequences(conn, show_all=show_all, month=month, status=status)
-        consequences_total = len(list_consequences(conn, show_all=True))
+        consequences_total = len(storage.list_punishments(conn, statuses=NON_VOIDED_STATUSES))
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
         punishment_months = _punishment_months(conn, all_months)

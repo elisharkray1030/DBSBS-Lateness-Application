@@ -1576,6 +1576,17 @@ class TestConsequencesRoute:
         panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
         assert "Showing 0 of 0 punishments" in panel
 
+    def test_voided_punishments_do_not_count_in_the_total(self):
+        with app_module.connect() as conn:
+            row = storage.list_punishments(conn, statuses=("assigned",))[0]
+            storage.transition_punishment(
+                conn, row.id, "voided", timestamp="2026-04-05T09:00:00+00:00"
+            )
+
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert "Showing 1 of 1 punishment</p>" in panel
+
 
 class TestTransitionRoute:
     @pytest.fixture(autouse=True)
