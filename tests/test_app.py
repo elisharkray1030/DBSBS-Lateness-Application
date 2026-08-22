@@ -97,10 +97,39 @@ class TestTabNavigation:
 
 
 class TestImportMonthPicker:
-    def test_report_month_input_is_a_month_picker(self):
+    def _report_month_input(self):
+        match = re.search(r'<input[^>]*id="report_month"[^>]*>', home_html())
+        assert match is not None, "no Report Month input found"
+        return match.group(0)
+
+    def test_report_month_is_editable_text_with_pattern_hint_and_required(self):
+        tag = self._report_month_input()
+        assert 'type="text"' in tag
+        assert 'name="report_month"' in tag
+        assert "required" in tag
+        assert 'placeholder="YYYY-MM"' in tag
+        assert 'pattern="' in tag
+
+    def test_report_month_has_calendar_toggle_button_wired_to_popover(self):
         html = home_html()
-        assert 'name="report_month"' in html
-        assert re.search(r'<input[^>]*type="month"', html) is not None
+        match = re.search(r'<button[^>]*id="report-month-toggle"[^>]*>', html)
+        assert match is not None, "no month picker toggle button found"
+        tag = match.group(0)
+        assert 'type="button"' in tag
+        assert 'aria-haspopup="dialog"' in tag
+        assert 'aria-expanded="false"' in tag
+        assert 'aria-controls="month-picker-popover"' in tag
+
+    def test_popover_renders_dialog_semantics_year_header_and_twelve_months(self):
+        html = home_html()
+        popover = re.search(r'<div[^>]*id="month-picker-popover"[^>]*>', html)
+        assert popover is not None, "no month picker popover found"
+        assert 'role="dialog"' in popover.group(0)
+        assert "hidden" in popover.group(0)
+        assert "month-grid" in html
+        assert re.search(r'<button[^>]*aria-label="Previous year"', html)
+        assert re.search(r'<button[^>]*aria-label="Next year"', html)
+        assert len(re.findall(r'class="month-option', html)) == 12
 
     def test_bad_month_label_import_is_rejected_with_error(self):
         data = {
@@ -1890,6 +1919,73 @@ class TestAccessibilityPolish:
         assert _parse_rgb(disabled_background) != _parse_rgb(enabled_background), (
             "disabled controls must be visually distinct from enabled ones"
         )
+
+
+class TestMonthPickerPopover:
+    def _open_picker(self, page):
+        page.locator('.tab-link[data-tab="reports"]').click()
+        page.locator("#report-month-toggle").click()
+        page.wait_for_selector("#month-picker-popover:not(.hidden)")
+
+    def test_open_pick_writes_value_closes_and_restores_focus(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+
+        year = datetime.now().year
+        page.locator(
+            f'#month-picker-popover .month-option[data-month-value="{year}-03"]'
+        ).click()
+
+        assert page.input_value("#report_month") == f"{year}-03"
+        assert page.locator("#month-picker-popover.hidden").count() == 1
+        assert page.evaluate("() => document.activeElement.id") == "report_month"
+        assert (
+            page.get_attribute("#report-month-toggle", "aria-expanded") == "false"
+        )
+
+    def test_opening_shows_typed_year_when_field_holds_valid_month(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        page.fill("#report_month", "2023-07")
+        self._open_picker(page)
+
+        assert page.text_content("#month-picker-year") == "2023"
+
+    def test_opening_defaults_to_current_year_for_invalid_text(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        page.fill("#report_month", "March 2026")
+        self._open_picker(page)
+
+        assert page.text_content("#month-picker-year") == str(datetime.now().year)
+
+    def test_picking_uses_browsed_year_from_typed_value(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        page.fill("#report_month", "2023-07")
+        self._open_picker(page)
+        page.locator(
+            '#month-picker-popover .month-option[data-month-value="2023-11"]'
+        ).click()
+
+        assert page.input_value("#report_month") == "2023-11"
+
+    def test_escape_closes_the_popover(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+        page.keyboard.press("Escape")
+
+        assert page.locator("#month-picker-popover.hidden").count() == 1
+
+    def test_clicking_outside_closes_the_popover(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+        page.locator("h3.upload-title", has_text="Import Monthly Log").click()
+
+        assert page.locator("#month-picker-popover.hidden").count() == 1
 
 
 class TestPrintOutputsActiveView:
