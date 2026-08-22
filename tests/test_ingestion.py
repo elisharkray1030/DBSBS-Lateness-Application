@@ -6,6 +6,7 @@ from records import Boarder
 
 import storage
 from parser import RejectedOutcome, SavedOutcome, ingest_log
+from records import normalize_name
 
 MASTER = {
     "ALICE": Boarder("ALICE", "Alice", "101"),
@@ -113,6 +114,31 @@ class TestIngestLog:
         by_name = {r.name: r for r in outcome.boarders}
         assert by_name["ALICE"].frequency == 1
         assert by_name["ALICE"].total_minutes == 1
+
+    def test_comma_style_master_list_matches_log_names_without_punctuation(self, conn):
+        """Regression: the master list enters some names in 'SURNAME, Given'
+        form while the access-control log drops the comma ('SURNAME Given').
+        The comma-only match key silently dropped that boarder from every
+        report; matching must be punctuation-insensitive.
+        """
+        key = normalize_name("CHAVEZ MOCAN, Lucas")
+        master = {key: Boarder(key, "CHAVEZ MOCAN, Lucas", "607B")}
+        text = (
+            "Transaction Date,Transaction Time,Transaction Type,Panel,Door,Name,"
+            "Other Name,Staff Code,Department,Position,Card ID,Transaction Log\n"
+            "5/4/2026,7:51:27,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            "CHAVEZ MOCAN Lucas,G12T,419,Boarders,607B,E56407B7,\n"
+        )
+        outcome = ingest(text, master=master, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        assert outcome.diagnostics.unmatched_names == []
+        assert outcome.diagnostics.matched_rows == 1
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name[key].display_name == "CHAVEZ MOCAN, Lucas"
+        assert by_name[key].bed == "607B"
+        assert by_name[key].frequency == 1
+        assert by_name[key].total_minutes == 11
 
     def test_clean_month_with_zero_lateness_saves(self, conn):
         outcome = ingest(
@@ -293,6 +319,42 @@ class TestIngestLog:
         assert isinstance(outcome, SavedOutcome)
         assert "2 log rows matched no Boarder." in outcome.message
         assert "GHOST" not in outcome.message
+
+    def test_message_ignores_known_non_boarder_names(self, conn):
+        """Staff ('M.' prefix), guest cards, and shared/system cards never
+        match the master list; reporting them every import taught staff to
+        ignore the diagnostic. The saved message counts only unknown names."""
+        outcome = ingest(
+            LOG_HEADER
+            + "ALICE,07:42\n"
+            + "GUEST027,07:43\n"
+            + "M. NEO NG,07:44\n"
+            + "[RT14] HOUSEPARENT'S FAMILY,07:45\n"
+            + "BA1 (DY),07:46\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "matched no Boarder" not in outcome.message
+        # Raw diagnostics keep every unmatched name for triage.
+        assert sorted(outcome.diagnostics.unmatched_names) == [
+            "BA1 DY",
+            "GUEST027",
+            "M NEO NG",
+            "RT14 HOUSEPARENT S FAMILY",
+        ]
+
+    def test_message_still_counts_unknown_unmatched_names(self, conn):
+        outcome = ingest(
+            LOG_HEADER
+            + "ALICE,07:42\n"
+            + "GHOST,07:43\n"
+            + "GUEST027,07:44\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        assert "1 log row matched no Boarder." in outcome.message
 
     def test_unparseable_rows_reported_with_plural_count(self, conn):
         outcome = ingest(

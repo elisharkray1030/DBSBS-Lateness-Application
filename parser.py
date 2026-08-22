@@ -20,6 +20,25 @@ MONTH_LABEL_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
 CSV_HEADERS = ['Bed', 'Name', 'Frequency', 'Total Minutes Late', 'Total Points']
 
+# Log names that are known never to match a Boarder: staff badges carry the
+# 'M.' prefix, guests check out GUEST cards, and shared/system cards belong
+# to the house itself. They are excluded from the saved-message count so a
+# genuinely unknown name stands out; raw diagnostics keep every name.
+_STAFF_NAME_PATTERN = re.compile(r"^M ")
+_GUEST_NAME_PATTERN = re.compile(r"^GUEST\d+$")
+_HOUSEPARENT_FAMILY_PATTERN = re.compile(r"^RT\d+ HOUSEPARENT")
+_SYSTEM_CARD_NAMES = {"BA1 DY", "BA2 SL", "BA3 ED", "HOUSEPARENT", "STEPS GATE GUARD"}
+
+
+def _is_expected_non_boarder(normalized_name: str) -> bool:
+    """True for log names known never to match a Boarder on the master list."""
+    return bool(
+        _STAFF_NAME_PATTERN.match(normalized_name)
+        or _GUEST_NAME_PATTERN.match(normalized_name)
+        or _HOUSEPARENT_FAMILY_PATTERN.match(normalized_name)
+        or normalized_name in _SYSTEM_CARD_NAMES
+    )
+
 
 def _format_unparseable_rows(unparseable_rows):
     return ', '.join(
@@ -29,11 +48,17 @@ def _format_unparseable_rows(unparseable_rows):
 
 @dataclass
 class ParseDiagnostics:
-    """Diagnostics collected while parsing a monthly log."""
+    """Diagnostics collected while parsing a monthly log.
+
+    unmatched_names lists each distinct unmatched name in first-seen order;
+    unmatched_row_counts maps the same names to their row counts so the
+    saved message can report rows while filtering known non-boarders.
+    """
 
     rows_read: int
     matched_rows: int
     unmatched_names: list[str] = field(default_factory=list)
+    unmatched_row_counts: dict[str, int] = field(default_factory=dict)
     unparseable_rows: list[UnparsedTimeRow] = field(default_factory=list)
     has_parseable_data: bool = False
 
@@ -58,7 +83,11 @@ class SavedOutcome:
             f"Monthly report saved for '{self.month_label}'.",
             f"{recorded} {boarder_word} recorded, {self.boarders_count} with lateness.",
         ]
-        unmatched = self.diagnostics.rows_read - self.diagnostics.matched_rows
+        unmatched = sum(
+            count
+            for name, count in self.diagnostics.unmatched_row_counts.items()
+            if not _is_expected_non_boarder(name)
+        )
         if unmatched > 0:
             parts.append(f"{unmatched} log {self._row_word(unmatched)} matched no Boarder.")
         unparseable = len(self.diagnostics.unparseable_rows)
@@ -172,6 +201,7 @@ def parse_log_stream(log_stream, master_list):
     rows_read = 0
     matched_rows = 0
     unmatched_names = []
+    unmatched_row_counts: dict[str, int] = {}
     unparseable_rows = []
     has_parseable_data = False
 
@@ -187,6 +217,7 @@ def parse_log_stream(log_stream, master_list):
         if name not in boarders:
             if name not in unmatched_names:
                 unmatched_names.append(name)
+            unmatched_row_counts[name] = unmatched_row_counts.get(name, 0) + 1
             continue
 
         matched_rows += 1
@@ -213,6 +244,7 @@ def parse_log_stream(log_stream, master_list):
         rows_read=rows_read,
         matched_rows=matched_rows,
         unmatched_names=unmatched_names,
+        unmatched_row_counts=unmatched_row_counts,
         unparseable_rows=unparseable_rows,
         has_parseable_data=has_parseable_data,
     )

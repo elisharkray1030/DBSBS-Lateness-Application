@@ -80,7 +80,35 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
     _migrate_boarders_bed_unique(conn)
+    _migrate_normalized_name_keys(conn)
     conn.commit()
+
+
+def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
+    """Re-keys stored rows onto the punctuation-insensitive match key.
+
+    Older builds stored match keys under uppercase-and-trim only, so
+    master-list entries like 'SURNAME, Given' never matched log rows like
+    'SURNAME Given'. Re-normalizes every stored key in place so joins between
+    boarders, history, and punishments stay intact. When two rows collapse
+    onto the same key, the first row (lowest id) claims it and later rows
+    keep their previous key rather than failing startup.
+    """
+    for table in ("boarders", "boarder_history", "punishments"):
+        rows = conn.execute(
+            f"SELECT id, normalized_name FROM {table} ORDER BY id"
+        ).fetchall()
+        for row_id, old_key in rows:
+            new_key = normalize_name(old_key)
+            if new_key == old_key:
+                continue
+            try:
+                conn.execute(
+                    f"UPDATE {table} SET normalized_name = ? WHERE id = ?",
+                    (new_key, row_id),
+                )
+            except sqlite3.IntegrityError:
+                continue
 
 
 def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:

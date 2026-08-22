@@ -79,6 +79,21 @@ class TestNormalizeName:
     def test_leaves_uppercase_untouched(self):
         assert normalize_name("CAROL") == "CAROL"
 
+    def test_comma_form_matches_space_form(self):
+        # Master lists enter 'SURNAME, Given'; access-control logs emit
+        # 'SURNAME Given'. Both must collapse to the same key.
+        assert normalize_name("CHAVEZ MOCAN, Lucas") == normalize_name(
+            "CHAVEZ MOCAN Lucas"
+        )
+
+    def test_collapses_punctuation_runs_to_single_spaces(self):
+        assert normalize_name("O'BRIEN-SMITH,. J.R.") == "O BRIEN SMITH J R"
+
+    def test_is_idempotent(self):
+        assert normalize_name(normalize_name("CHAVEZ MOCAN, Lucas")) == (
+            normalize_name("CHAVEZ MOCAN, Lucas")
+        )
+
 
 class TestMasterListToCsv:
     def test_header_and_rows(self):

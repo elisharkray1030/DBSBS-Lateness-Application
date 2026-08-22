@@ -75,6 +75,92 @@ class TestBedUniqueMigration:
         connection.close()
 
 
+class TestNormalizedNameKeyMigration:
+    """Older builds stored match keys under uppercase-and-trim only, so
+    master-list entries like 'SURNAME, Given' could never match log rows like
+    'SURNAME Given'. create_schema re-keys every stored row in place."""
+
+    def _seed_legacy_keys(self, connection):
+        storage.create_schema(connection)
+        connection.execute(
+            """
+            INSERT INTO boarders (normalized_name, display_name, bed)
+            VALUES ('LUCAS CHAVEZ MOCAN, LUCAS', 'Lucas CHAVEZ MOCAN, Lucas', '607B')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO boarder_history
+                (normalized_name, display_name, bed, month, frequency,
+                 total_minutes, total_points, imported_at)
+            VALUES ('LUCAS CHAVEZ MOCAN, LUCAS', 'Lucas CHAVEZ MOCAN, Lucas',
+                    '607B', '2026-04', 0, 0, 0, '2026-05-01T00:00:00')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO punishments
+                (normalized_name, display_name, bed, month, points_owed,
+                 deadline, status, assigned_at)
+            VALUES ('LUCAS CHAVEZ MOCAN, LUCAS', 'Lucas CHAVEZ MOCAN, Lucas',
+                    '607B', '2026-04', 5, '2026-05-10', 'assigned',
+                    '2026-05-02T00:00:00')
+            """
+        )
+        connection.commit()
+
+    def test_migration_rekeys_all_three_tables(self):
+        connection = sqlite3.connect(":memory:")
+        self._seed_legacy_keys(connection)
+        storage.create_schema(connection)
+
+        assert [b.normalized_name for b in storage.list_boarders(connection)] == [
+            "LUCAS CHAVEZ MOCAN LUCAS"
+        ]
+        assert [(b.display_name, b.bed) for b in storage.list_boarders(connection)] == [
+            ("Lucas CHAVEZ MOCAN, Lucas", "607B")
+        ]
+        history = storage.search_history(connection, "chavez")
+        assert [entry.month for entry in history] == ["2026-04"]
+        punishments = storage.list_punishments(connection)
+        assert [p.normalized_name for p in punishments] == [
+            "LUCAS CHAVEZ MOCAN LUCAS"
+        ]
+        connection.close()
+
+    def test_migration_is_idempotent(self):
+        connection = sqlite3.connect(":memory:")
+        self._seed_legacy_keys(connection)
+        storage.create_schema(connection)
+        storage.create_schema(connection)
+        assert [b.normalized_name for b in storage.list_boarders(connection)] == [
+            "LUCAS CHAVEZ MOCAN LUCAS"
+        ]
+        connection.close()
+
+    def test_migration_leaves_clean_keys_untouched(self, conn):
+        assert [b.normalized_name for b in storage.list_boarders(conn)] == []
+
+    def test_migration_keeps_first_row_when_keys_collapse(self):
+        connection = sqlite3.connect(":memory:")
+        storage.create_schema(connection)
+        connection.executemany(
+            "INSERT INTO boarders (normalized_name, display_name, bed) VALUES (?, ?, ?)",
+            [
+                ("CHEN WEI", "Chen Wei A", "701A"),
+                ("CHEN, WEI", "Chen Wei B", "701B"),
+            ],
+        )
+        connection.commit()
+        storage.create_schema(connection)
+
+        keys = sorted(b.normalized_name for b in storage.list_boarders(connection))
+        assert keys == ["CHEN WEI", "CHEN, WEI"]
+        beds = sorted(b.bed for b in storage.list_boarders(connection))
+        assert beds == ["701A", "701B"]
+        connection.close()
+
+
 class TestMeta:
     def test_set_and_get_meta(self, conn):
         storage.set_meta(conn, "k", "v")

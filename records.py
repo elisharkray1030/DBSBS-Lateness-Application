@@ -7,9 +7,17 @@ if TYPE_CHECKING:
     from punishments import OfferedAction
 
 
+_NAME_KEY_NOISE = re.compile(r"(?:[^\w]|_)+")
+
+
 def normalize_name(name: str) -> str:
-    """Normalizes a boarder name to the uppercased match key."""
-    return name.strip().upper()
+    """Normalizes a boarder name to its punctuation-insensitive match key.
+
+    Uppercases and collapses every run of punctuation and whitespace (commas,
+    periods, apostrophes, newlines...) to a single space, so master-list
+    entries like 'SURNAME, Given' match log rows like 'SURNAME Given'.
+    """
+    return _NAME_KEY_NOISE.sub(" ", name.strip().upper()).strip()
 
 
 def boarder_sort_key(boarder: "Boarder") -> tuple[tuple[int, int, str], str]:
