@@ -20,6 +20,10 @@ _BOARDERS_COLUMNS = """
     bed TEXT NOT NULL UNIQUE
 """
 
+# Meta key holding how many stored rows kept their legacy Match Key because
+# another row already claimed their new key (same pattern as boarders_seeded).
+MIGRATION_SKIPS_KEY = "match_key_migration_skips"
+
 
 def create_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
@@ -92,8 +96,10 @@ def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
     'SURNAME Given'. Re-normalizes every stored key in place so joins between
     boarders, history, and punishments stay intact. When two rows collapse
     onto the same key, the first row (lowest id) claims it and later rows
-    keep their previous key rather than failing startup.
+    keep their previous key rather than failing startup; each kept key is
+    counted under MIGRATION_SKIPS_KEY so the collision stays visible.
     """
+    skipped = 0
     for table in ("boarders", "boarder_history", "punishments"):
         rows = conn.execute(
             f"SELECT id, normalized_name FROM {table} ORDER BY id"
@@ -108,11 +114,14 @@ def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
                     (new_key, row_id),
                 )
             except sqlite3.IntegrityError:
+                skipped += 1
                 continue
 
+    _set_meta_row(conn, MIGRATION_SKIPS_KEY, str(skipped))
 
-def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
-    """Stores one key/value row in the meta table, overwriting an existing key."""
+
+def _set_meta_row(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Upserts one meta row without committing; callers own transaction scope."""
     conn.execute(
         """
         INSERT INTO meta (key, value) VALUES (?, ?)
@@ -120,6 +129,24 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
         """,
         (key, value),
     )
+
+
+def get_migration_skips(conn: sqlite3.Connection) -> int:
+    """Returns how many rows kept a legacy Match Key in the last migration.
+
+    The migration rewrites this count on every startup, so zero means the
+    stored roster currently has no collapsed-key collisions at all.
+    """
+    raw = get_meta(conn, MIGRATION_SKIPS_KEY)
+    try:
+        return int(raw) if raw is not None else 0
+    except ValueError:
+        return 0
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Stores one key/value row in the meta table, overwriting an existing key."""
+    _set_meta_row(conn, key, value)
     conn.commit()
 
 

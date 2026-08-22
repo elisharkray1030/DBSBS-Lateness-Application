@@ -17,6 +17,11 @@
             --text-muted: #5b6470;
             --border: #e2e6ea;
             --neutral: #6c757d;
+            --deep-red: #ce1736;
+            --deep-neutral: #616970;
+            /* Shared navy wash for repeated tinted chrome (scrollbars); the
+               sticky-header shadow keeps a deliberate weaker literal. */
+            --navy-alpha: rgba(29, 43, 83, 0.35);
             --success-bg: #d1e7dd;
             --success-text: #0f5132;
             --error-bg: #f8d7da;
@@ -88,6 +93,12 @@
             margin-bottom: 5px;
         }
 
+        /* Navy belongs to panel headings only: modal titles keep their own
+           color, and future non-panel headings are not captured silently. */
+        .panel > h2 {
+            color: var(--navy);
+        }
+
         .tabs {
             display: flex;
             flex-wrap: wrap;
@@ -152,12 +163,216 @@
             background: var(--surface);
         }
 
+        /* Native controls restyled to the house look: selects match the text
+           inputs' rhythm with a painted navy chevron, checkboxes swap the OS
+           glyph for a rounded tile, and file inputs keep their field but wear
+           a .btn-primary-style picker button. */
+        select {
+            padding: 8px 32px 8px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background-color: var(--surface);
+            color: var(--text);
+            font: inherit;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d2b53' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            background-size: 14px;
+        }
+
+        input[type="checkbox"] {
+            appearance: none;
+            flex: none;
+            width: 16px;
+            height: 16px;
+            margin: 0;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--surface);
+            display: inline-grid;
+            place-content: center;
+            cursor: pointer;
+            transition: background-color 0.15s, border-color 0.15s;
+        }
+
+        input[type="checkbox"]::before {
+            content: "";
+            width: 10px;
+            height: 10px;
+            transform: scale(0);
+            transition: transform 0.1s ease-in-out;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+            background: var(--surface);
+        }
+
+        input[type="checkbox"]:checked {
+            background: var(--navy);
+            border-color: var(--navy);
+        }
+
+        input[type="checkbox"]:checked::before {
+            transform: scale(1);
+        }
+
+        input[type="file"]::file-selector-button {
+            margin-right: 12px;
+            padding: 8px 14px;
+            border: none;
+            border-radius: 6px;
+            background: var(--navy);
+            color: var(--surface);
+            font: inherit;
+            font-weight: 600;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        input[type="file"]::file-selector-button:hover {
+            background: var(--deep-navy);
+        }
+
         input:focus-visible,
         select:focus-visible,
         button:focus-visible,
         a:focus-visible {
             outline: 2px solid var(--navy);
             outline-offset: 2px;
+        }
+
+        /* Month picker: calendar toggle inside the field, popover grid below. */
+        .month-field-controls {
+            position: relative;
+        }
+
+        .month-field-controls input[type="text"] {
+            padding-right: 44px;
+        }
+
+        .month-toggle {
+            position: absolute;
+            top: 50%;
+            right: 6px;
+            transform: translateY(-50%);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 32px;
+            padding: 0;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--navy);
+            cursor: pointer;
+        }
+
+        .month-toggle svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        .month-picker-popover {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 500;
+            animation: picker-pop 0.18s ease-out;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            padding: 12px;
+            width: min(320px, 100%);
+        }
+
+        .month-picker-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .month-picker-year {
+            font-weight: 700;
+            color: var(--navy);
+        }
+
+        .month-chevron {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--navy);
+            cursor: pointer;
+        }
+
+        .month-chevron svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .month-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 4px;
+            margin-top: 10px;
+        }
+
+        /* Row wrappers exist for the ARIA grid roles only; dissolve them so
+           all twelve cells join this grid directly and fill it edge to edge,
+           instead of stacking inside three narrow strips on the left. */
+        .month-grid > [role="row"] {
+            display: contents;
+        }
+
+        .month-option {
+            width: 100%;
+            padding: 8px 2px;
+            border: 2px solid transparent;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text);
+            font: inherit;
+            font-size: 0.85em;
+            cursor: pointer;
+            text-align: center;
+            transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+        }
+
+        /* Hover mirrors the report-archive month cards: page wash plus a
+           navy edge and soft shadow. */
+        .month-option:hover {
+            background: var(--page-bg);
+            border-color: var(--navy);
+            box-shadow: 0 2px 8px rgba(29, 43, 83, 0.2);
+        }
+
+        .month-option.current {
+            border-color: var(--navy);
+        }
+
+        /* Declared after :hover so an already-picked month stays solid navy
+           under the cursor, like active month cards in the archive. */
+        .month-option.selected {
+            background: var(--navy);
+            border-color: var(--navy);
+            color: var(--surface);
+        }
+
+        .month-chevron:disabled {
+            background: var(--disabled-bg);
+            border-color: var(--disabled-bg);
+            color: var(--disabled-text);
+            cursor: default;
         }
 
         .upload-panel,
@@ -185,7 +400,7 @@
             font-size: 0.95em;
             cursor: pointer;
             text-decoration: none;
-            transition: background-color 0.2s, filter 0.2s;
+            transition: background-color 0.2s, transform 0.15s;
         }
 
         .btn svg {
@@ -208,7 +423,7 @@
         }
 
         .btn-danger:hover {
-            filter: brightness(0.9);
+            background-color: var(--deep-red);
         }
 
         .btn-neutral {
@@ -217,13 +432,17 @@
         }
 
         .btn-neutral:hover {
-            filter: brightness(1.1);
+            background-color: var(--deep-neutral);
         }
 
         .btn:disabled {
             background-color: var(--disabled-bg);
             color: var(--disabled-text);
             cursor: not-allowed;
+        }
+
+        .btn:not(:disabled):active {
+            transform: translateY(1px);
         }
 
         .btn-sm {
@@ -251,8 +470,35 @@
             margin-top: 30px;
         }
 
+        /* Tables read as cards: a rounded bordered wrapper like every other
+           surface, navy-tinted scrollbars, and a shadow cue on sticky headers
+           once rows scroll beneath them. */
         .table-scroll {
             overflow: auto;
+            margin-top: 20px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            scrollbar-width: thin;
+            scrollbar-color: var(--navy-alpha) transparent;
+        }
+
+        .table-scroll::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        .table-scroll::-webkit-scrollbar-thumb {
+            background: var(--navy-alpha);
+            border-radius: 999px;
+        }
+
+        .table-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .table-scroll.scrolled thead th {
+            box-shadow: 0 2px 6px rgba(29, 43, 83, 0.12);
         }
 
         .month-report-scroll {
@@ -262,8 +508,6 @@
         .table-scroll table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 20px;
-            background: var(--surface);
         }
 
         th,
@@ -274,7 +518,7 @@
         }
 
         th {
-            background-color: var(--surface);
+            background-color: var(--page-bg);
             color: var(--navy);
             font-weight: 600;
             white-space: nowrap;
@@ -427,6 +671,25 @@
             border-radius: 8px;
         }
 
+        .empty-state svg {
+            width: 30px;
+            height: 30px;
+            margin-bottom: 10px;
+            opacity: 0.7;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            margin-right: 8px;
+            vertical-align: -4px;
+            border: 2px solid var(--border);
+            border-top-color: var(--navy);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
         .month-detail {
             margin-top: 40px;
         }
@@ -536,6 +799,20 @@
             font-size: 0.9em;
         }
 
+        .consequences-toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .consequences-count {
+            margin: -12px 0 16px;
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
         .consequences-group {
             margin-bottom: 24px;
         }
@@ -543,12 +820,6 @@
         .consequences-group-title {
             margin: 0 0 6px;
             color: var(--navy);
-        }
-
-        .consequences-panel select {
-            padding: 8px 12px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
         }
 
         .modal {
@@ -562,10 +833,58 @@
             background-color: rgba(0, 0, 0, 0.5);
         }
 
+        /* Entrance motion, kept inside the 0.2s idiom and gated by the
+           reduced-motion media query below. The picker's keyframes bake in
+           its translateX(-50%) centering so the rise never shifts the box. */
+        @keyframes picker-pop {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -4px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translate(-50%, 0);
+            }
+        }
+
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes rise-in {
+            from {
+                opacity: 0;
+                transform: translateY(-4px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
         .modal.show {
             display: flex;
             justify-content: center;
             align-items: center;
+            animation: fade-in 0.18s ease-out;
+        }
+
+        .modal.show .modal-content {
+            animation: rise-in 0.18s ease-out;
         }
 
         .modal-content {
@@ -629,6 +948,11 @@
             .month-detail-toolbar h3 {
                 flex: none;
             }
+
+            .consequences-toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
         }
 
         @media print {
@@ -643,6 +967,8 @@
             .reports-panel > :not(#month-detail),
             .month-actions,
             .month-detail-toolbar,
+            .consequences-toolbar,
+            .consequences-count,
             .banner,
             #month-detail-loading,
             #month-detail-error {
@@ -675,17 +1001,29 @@
                 color: var(--navy);
             }
 
-            #month-detail table {
+            #month-detail .table-scroll {
                 margin-top: 0;
             }
 
             .table-scroll {
                 overflow: visible;
                 max-height: none;
+                /* Strip the on-screen card chrome so printed output matches
+                   the pre-pass baseline, and suppress any sticky-header lift
+                   picked up from scrolling before printing. */
+                border: none;
+                border-radius: 0;
+            }
+
+            .table-scroll.scrolled thead th {
+                box-shadow: none;
             }
 
             .table-scroll thead th {
                 position: static;
+                /* The on-screen page tint stays on screen: printed output
+                   keeps the pre-pass white header band. */
+                background-color: var(--surface);
             }
 
             #month-detail th,
@@ -702,6 +1040,16 @@
                 box-shadow: none;
                 max-width: 100%;
                 padding: 0;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
             }
         }
     </style>
@@ -721,6 +1069,22 @@
     <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="3 6 5 6 21 6"/>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+    </symbol>
+    <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2"/>
+        <line x1="16" y1="2" x2="16" y2="6"/>
+        <line x1="8" y1="2" x2="8" y2="6"/>
+        <line x1="3" y1="10" x2="21" y2="10"/>
+    </symbol>
+    <symbol id="icon-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+    </symbol>
+    <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 18 15 12 9 6"/>
+    </symbol>
+    <symbol id="icon-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/>
+        <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
     </symbol>
 </svg>
 <header class="site-header">
@@ -791,7 +1155,10 @@
                         </table>
                     </div>
                 {% else %}
-                    <div class="empty-state">No Boarder History entries matched your search.</div>
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                        No Boarder History entries matched your search.
+                    </div>
                 {% endif %}
             </div>
         {% endif %}
@@ -813,27 +1180,25 @@
             </form>
         {%- endmacro %}
         <h2>Consequences</h2>
-        <div class="month-detail-toolbar">
-            <h3>Punishments</h3>
+        <div class="consequences-toolbar">
             <form action="/consequences" method="get" class="consequences-filters">
                 {% if consequences_show_all %}
                     <input type="hidden" name="show_all" value="1">
                 {% endif %}
                 <label for="consequences-month"><strong>Month</strong></label>
-                <select id="consequences-month" name="month">
+                <select id="consequences-month" name="month" onchange="this.form.submit()">
                     <option value="">All months</option>
                     {% for month in punishment_months %}
                         <option value="{{ month }}" {% if consequences_month == month %}selected{% endif %}>{{ month }}</option>
                     {% endfor %}
                 </select>
                 <label for="consequences-status"><strong>Status</strong></label>
-                <select id="consequences-status" name="status">
+                <select id="consequences-status" name="status" onchange="this.form.submit()">
                     <option value="">{% if consequences_show_all %}All statuses{% else %}In-flight only{% endif %}</option>
                     {% for s in ['assigned', 'overdue', 'phone_held', 'submitted', 'voided'] %}
                         <option value="{{ s }}" {% if consequences_status == s %}selected{% endif %}>{{ humanized_status(s) }}</option>
                     {% endfor %}
                 </select>
-                <button type="submit" class="btn btn-primary btn-sm">Filter</button>
             </form>
             <form action="/consequences" method="get">
                 {% if consequences_month %}
@@ -850,6 +1215,7 @@
                 </button>
             </form>
         </div>
+        <p class="consequences-count" aria-live="polite">Showing {{ punishments|length }} of {{ consequences_total }} {{ 'punishment' if consequences_total == 1 else 'punishments' }}</p>
         {% if punishments %}
             {% for group in punishments|groupby('status') %}
             <div class="consequences-group">
@@ -893,7 +1259,10 @@
             </div>
             {% endfor %}
         {% else %}
-            <div class="empty-state">No punishments to show.</div>
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                No punishments to show.
+            </div>
         {% endif %}
     </section>
 
@@ -920,14 +1289,14 @@
         </div>
         <div class="month-detail-toolbar">
             <form action="/boarders/import" method="POST" enctype="multipart/form-data" class="consequences-filters">
-                <label for="boarder_csv"><strong>Replace roster from CSV</strong></label>
+                <label for="boarder_csv"><strong>Replace Master List from CSV</strong></label>
                 <input type="file" id="boarder_csv" name="boarder_csv" accept=".csv" required>
                 <button type="submit" class="btn btn-primary btn-sm">Import</button>
             </form>
             <button id="boarder-edit" type="button" class="btn btn-neutral btn-sm" {% if not boarders %}disabled{% endif %}>Edit</button>
             <a class="btn btn-neutral btn-sm" href="/boarders/export">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
-                Download roster (CSV)
+                Download Master List (CSV)
             </a>
         </div>
         <div id="boarder-edit-actions" class="boarder-edit-actions" hidden>
@@ -957,7 +1326,7 @@
                 </table>
             </div>
         {% else %}
-            <div class="empty-state">No boarders on the master list. Add a boarder here, or import a CSV to replace the roster.</div>
+            <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>No boarders on the master list. Add a boarder here, or import a CSV to replace it.</div>
         {% endif %}
     </section>
 
@@ -972,9 +1341,47 @@
                         <label for="log_file"><strong>Select Monthly Log CSV</strong></label>
                         <input type="file" id="log_file" name="log_file" required>
                     </div>
-                    <div class="form-field">
+                    <div class="form-field month-field">
                         <label for="report_month"><strong>Report Month</strong></label>
-                        <input type="month" id="report_month" name="report_month" required>
+                        <div class="month-field-controls">
+                            <input type="text" id="report_month" name="report_month" required
+                                   placeholder="YYYY-MM" pattern="\d{4}-(0[1-9]|1[0-2])"
+                                   title="Enter the month as YYYY-MM" autocomplete="off">
+                            <button type="button" id="report-month-toggle" class="month-toggle"
+                                    aria-haspopup="dialog" aria-expanded="false"
+                                    aria-controls="month-picker-popover"
+                                    aria-label="Open month picker">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-calendar"/></svg>
+                            </button>
+                            <div id="month-picker-popover" class="month-picker-popover hidden"
+                                 role="dialog" aria-label="Report Month picker">
+                                <div class="month-picker-header">
+                                    <button type="button" id="month-picker-prev-year" class="month-chevron"
+                                            aria-label="Previous year">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-left"/></svg>
+                                    </button>
+                                    <span class="month-picker-year" id="month-picker-year" aria-live="polite"></span>
+                                    <button type="button" id="month-picker-next-year" class="month-chevron"
+                                            aria-label="Next year">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
+                                    </button>
+                                </div>
+                                <div class="month-grid" role="grid" aria-label="Months">
+                                    {% set picker_months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+                                    {% for row_start in [0, 4, 8] %}
+                                    <div role="row">
+                                        {% for offset in range(4) %}
+                                        {% set month_number = row_start + offset + 1 %}
+                                        <div role="gridcell">
+                                            <button type="button" tabindex="-1" class="month-option"
+                                                    data-month-value="{{ '%04d-%02d'|format(current_year, month_number) }}">{{ picker_months[row_start + offset] }}</button>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div>
                         <button type="submit" class="btn btn-primary">Import and Save</button>
@@ -1001,7 +1408,10 @@
                     </div>
                 {% endfor %}
             </div>
-            <div id="month-detail-loading" class="empty-state hidden">Loading report&hellip;</div>
+            <div id="month-detail-loading" class="empty-state hidden">
+                <span class="spinner" aria-hidden="true"></span><br>
+                Loading report&hellip;
+            </div>
             <div id="month-detail-error" class="banner banner-error hidden" role="alert"></div>
             <div id="month-detail" class="month-detail hidden">
                 <div class="print-brand">
@@ -1058,6 +1468,7 @@
             </div>
         {% else %}
             <div class="empty-state">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
                 <p>No reports have been saved yet. Import a Monthly Log to get started!</p>
             </div>
         {% endif %}
@@ -1632,7 +2043,7 @@
         if (tbody && tbody.children.length === 0) {
             const table = document.getElementById('boarders-table');
             const container = table.closest('.table-scroll');
-            container.innerHTML = '<div class="empty-state">No boarders on the master list. Add a boarder here, or import a CSV to replace the roster.</div>';
+            container.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>No boarders on the master list. Add a boarder here, or import a CSV to replace it.</div>';
             exitBoarderEditMode();
             boarderEditButton.disabled = true;
         }
@@ -1666,6 +2077,180 @@
             event.returnValue = '';
             return '';
         }
+    });
+
+    // Month picker popover for the Report Month import field. Replaces the
+    // unstyleable native <input type="month"> popup; chevron browsing stops
+    // at 2020 and next year so far-future/old typos stay out of reach.
+    const MONTH_PICKER_MIN_YEAR = 2020;
+    const MONTH_PICKER_NAMES = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    const monthPickerInput = document.getElementById('report_month');
+    const monthPickerToggle = document.getElementById('report-month-toggle');
+    const monthPickerPopover = document.getElementById('month-picker-popover');
+    const monthPickerGrid = monthPickerPopover.querySelector('.month-grid');
+    const monthPickerYearLabel = document.getElementById('month-picker-year');
+    const monthPickerPrevYear = document.getElementById('month-picker-prev-year');
+    const monthPickerNextYear = document.getElementById('month-picker-next-year');
+    let monthPickerBrowsedYear = null;
+
+    function monthPickerBounds() {
+        return {
+            min: MONTH_PICKER_MIN_YEAR,
+            max: new Date().getFullYear() + 1
+        };
+    }
+
+    function monthValue(year, zeroBasedMonth) {
+        return `${year}-${String(zeroBasedMonth + 1).padStart(2, '0')}`;
+    }
+
+    function renderMonthGrid() {
+        const selectedValue = monthPickerInput.value.trim();
+        const now = new Date();
+        monthPickerYearLabel.textContent = String(monthPickerBrowsedYear);
+
+        let html = '';
+        for (let rowStart = 0; rowStart < 12; rowStart += 4) {
+            html += '<div role="row">';
+            for (let offset = 0; offset < 4; offset++) {
+                const zeroBasedMonth = rowStart + offset;
+                const value = monthValue(monthPickerBrowsedYear, zeroBasedMonth);
+                const classes = ['month-option'];
+                if (value === selectedValue) classes.push('selected');
+                if (
+                    monthPickerBrowsedYear === now.getFullYear() &&
+                    zeroBasedMonth === now.getMonth()
+                ) {
+                    classes.push('current');
+                }
+                html += `<div role="gridcell"><button type="button" tabindex="-1" class="${classes.join(' ')}" data-month-value="${value}">${MONTH_PICKER_NAMES[zeroBasedMonth]}</button></div>`;
+            }
+            html += '</div>';
+        }
+        monthPickerGrid.innerHTML = html;
+
+        monthPickerPrevYear.disabled = monthPickerBrowsedYear <= monthPickerBounds().min;
+        monthPickerNextYear.disabled = monthPickerBrowsedYear >= monthPickerBounds().max;
+    }
+
+    function monthPickerFocusTargetButton() {
+        const selected = monthPickerGrid.querySelector('.month-option.selected');
+        if (selected) return selected;
+        const current = monthPickerGrid.querySelector('.month-option.current');
+        if (current) return current;
+        return monthPickerGrid.querySelector('.month-option');
+    }
+
+    function openMonthPicker() {
+        const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(monthPickerInput.value.trim());
+        const typedYear = match ? parseInt(match[1], 10) : NaN;
+        monthPickerBrowsedYear = Number.isInteger(typedYear)
+            ? typedYear
+            : new Date().getFullYear();
+
+        renderMonthGrid();
+        monthPickerPopover.classList.remove('hidden');
+        monthPickerToggle.setAttribute('aria-expanded', 'true');
+
+        // Roving tabindex keeps Tab cycling short; arrows handle the grid.
+        const target = monthPickerFocusTargetButton();
+        target.tabIndex = 0;
+        target.focus();
+    }
+
+    function closeMonthPicker(restoreFocusToField) {
+        monthPickerPopover.classList.add('hidden');
+        monthPickerToggle.setAttribute('aria-expanded', 'false');
+        if (restoreFocusToField) {
+            monthPickerInput.focus();
+        }
+    }
+
+    function isMonthPickerOpen() {
+        return !monthPickerPopover.classList.contains('hidden');
+    }
+
+    monthPickerToggle.addEventListener('click', function() {
+        if (isMonthPickerOpen()) {
+            closeMonthPicker(false);
+        } else {
+            openMonthPicker();
+        }
+    });
+
+    monthPickerPrevYear.addEventListener('click', function() {
+        monthPickerBrowsedYear -= 1;
+        renderMonthGrid();
+    });
+
+    monthPickerNextYear.addEventListener('click', function() {
+        monthPickerBrowsedYear += 1;
+        renderMonthGrid();
+    });
+
+    monthPickerGrid.addEventListener('click', function(event) {
+        const option = event.target.closest('.month-option');
+        if (!option) return;
+        monthPickerInput.value = option.getAttribute('data-month-value');
+        closeMonthPicker(true);
+    });
+
+    // Clicking anywhere outside the popover or its toggle dismisses it.
+    document.addEventListener('mousedown', function(event) {
+        if (!isMonthPickerOpen()) return;
+        if (monthPickerPopover.contains(event.target)) return;
+        if (monthPickerToggle.contains(event.target)) return;
+        closeMonthPicker(false);
+    });
+
+    monthPickerPopover.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            closeMonthPicker(true);
+            return;
+        }
+
+        // Focus trap mirroring the confirm dialog: Tab cycles inside only.
+        if (event.key === 'Tab') {
+            const focusables = this.querySelectorAll(
+                'button:not([disabled]):not([tabindex="-1"]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+            );
+            if (!focusables.length) return;
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+            return;
+        }
+
+        const arrowMoves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -4, ArrowDown: 4 };
+        if (!(event.key in arrowMoves)) return;
+        const focusedOption =
+            document.activeElement && document.activeElement.closest('.month-option');
+        if (!focusedOption || !this.contains(document.activeElement)) return;
+
+        event.preventDefault();
+        const options = [...this.querySelectorAll('.month-option')];
+        const index = options.indexOf(focusedOption);
+        const nextIndex = (index + arrowMoves[event.key] + options.length) % options.length;
+        focusedOption.tabIndex = -1;
+        options[nextIndex].tabIndex = 0;
+        options[nextIndex].focus();
+    });
+
+    // Card cue: shade sticky headers while rows scroll beneath them.
+    document.querySelectorAll('.table-scroll').forEach(function(scroller) {
+        scroller.addEventListener('scroll', function() {
+            this.classList.toggle('scrolled', this.scrollTop > 0 || this.scrollLeft > 0);
+        }, { passive: true });
     });
 
     document.addEventListener('DOMContentLoaded', function() {

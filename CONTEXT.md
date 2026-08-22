@@ -12,9 +12,21 @@ _Avoid_: student, pupil, resident
 The boarder's assigned bed, designated by a unique string (e.g., "601A"). Each bed is assigned to exactly one boarder; each boarder has exactly one bed.
 _Avoid_: room, dorm
 
+**Master List**:
+The editable roster of Boarders staff maintain in the app; Monthly Log names match against it during an Import.
+_Avoid_: roster, namelist, pupil list
+
+**Match Key**:
+A Boarder's punctuation-insensitive identity: the uppercased name with every run of punctuation and whitespace collapsed to a single space, so "SURNAME, Given" and "SURNAME Given" share one key. Used to match log rows, join stored records, and detect duplicates.
+_Avoid_: normalized name, key, login
+
 **Monthly Log**:
 The CSV of lateness incidents for one month, imported to create or refresh that month's report.
 _Avoid_: CSV, file, timesheet
+
+**Expected Non-Boarder**:
+A Monthly Log name known never to match a Boarder on the Master List: staff badge names carry the "M." prefix, guests check out numbered GUEST cards, houseparent-family cards read "[RTnn] HOUSEPARENT'S FAMILY", and a fixed set of shared/system cards (e.g. "BA1 DY", "STEPS GATE GUARD") belongs to the house. Hidden from the saved-Import count so a genuinely unknown name stands out; raw diagnostics keep every name.
+_Avoid_: staff name, system card, ignored name
 
 **Monthly Report**:
 The saved aggregate for one month — each boarder's frequency, minutes late, and total points.

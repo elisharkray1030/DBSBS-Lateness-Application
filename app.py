@@ -2,6 +2,7 @@ import io
 import os
 import sqlite3
 from contextlib import closing
+from datetime import datetime
 from urllib.parse import urlencode
 
 try:
@@ -14,6 +15,7 @@ try:
         render_template,
         request,
         send_file,
+        session,
     )
 except ModuleNotFoundError as exc:
     if exc.name != 'flask':
@@ -36,6 +38,7 @@ from parser import (
 )
 from punishments import (
     AssignmentRejected,
+    NON_VOIDED_STATUSES,
     TransitionRejected,
     assign_batch,
     humanized_status,
@@ -96,6 +99,32 @@ def _consume_flashes():
     return message, error
 
 
+def _migration_banner(skip_count: int) -> str:
+    """Words the legacy-Match-Key banner in glossary vocabulary."""
+    noun = "record" if skip_count == 1 else "records"
+    pronoun = "its" if skip_count == 1 else "their"
+    key_word = "Match Key" if skip_count == 1 else "Match Keys"
+    return (
+        f"{skip_count} stored {noun} kept {pronoun} legacy {key_word} because "
+        "another record claims the same identity. "
+        "Review duplicates in the Boarders tab."
+    )
+
+
+def _flash_migration_skips(conn):
+    """Flashes the legacy-Match-Key banner once per session when nonzero.
+
+    The stored-key migration persists its skip count on every startup; the
+    session flag keeps that standing fact from re-nagging on every visit,
+    while a count of zero stays completely silent.
+    """
+    skip_count = storage.get_migration_skips(conn)
+    if skip_count <= 0 or session.get("match_key_skips_reported"):
+        return
+    session["match_key_skips_reported"] = True
+    flash(_migration_banner(skip_count), "error")
+
+
 def build_csv_response(boarders, download_name):
     csv_bytes = io.BytesIO(boarders_to_csv(boarders).encode('utf-8'))
     csv_bytes.seek(0)
@@ -123,6 +152,7 @@ def home():
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
         punishment_months = _punishment_months(conn, all_months)
+        _flash_migration_skips(conn)
 
     if request.method == 'POST':
         if 'log_file' in request.files:
@@ -186,6 +216,7 @@ def home():
         consequences_show_all=False,
         consequences_month=None,
         consequences_status=None,
+        current_year=datetime.now().astimezone().year,
     )
 
 
@@ -334,6 +365,7 @@ def _render_boarders(error=None, message=None):
         consequences_show_all=False,
         consequences_month=None,
         consequences_status=None,
+        current_year=datetime.now().astimezone().year,
     )
 
 
@@ -426,6 +458,7 @@ def consequences():
     status = request.args.get('status') or None
     with connect() as conn:
         punishments = list_consequences(conn, show_all=show_all, month=month, status=status)
+        consequences_total = len(storage.list_punishments(conn, statuses=NON_VOIDED_STATUSES))
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
         punishment_months = _punishment_months(conn, all_months)
@@ -443,9 +476,11 @@ def consequences():
         boarders=boarders,
         punishment_months=punishment_months,
         punishments=punishments,
+        consequences_total=consequences_total,
         consequences_show_all=show_all,
         consequences_month=month,
         consequences_status=status,
+        current_year=datetime.now().astimezone().year,
     )
 
 
