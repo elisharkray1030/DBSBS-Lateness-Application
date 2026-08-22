@@ -215,7 +215,7 @@ def home():
         consequences_show_all=False,
         consequences_month=None,
         consequences_status=None,
-        current_year=datetime.now().year,
+        current_year=datetime.now().astimezone().year,
     )
 
 
@@ -364,7 +364,7 @@ def _render_boarders(error=None, message=None):
         consequences_show_all=False,
         consequences_month=None,
         consequences_status=None,
-        current_year=datetime.now().year,
+        current_year=datetime.now().astimezone().year,
     )
 
 
@@ -477,7 +477,7 @@ def consequences():
         consequences_show_all=show_all,
         consequences_month=month,
         consequences_status=status,
-        current_year=datetime.now().year,
+        current_year=datetime.now().astimezone().year,
     )
 
 

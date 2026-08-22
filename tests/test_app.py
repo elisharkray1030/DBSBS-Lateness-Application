@@ -1942,7 +1942,7 @@ class TestMonthPickerPopover:
         page.set_content(home_html())
         self._open_picker(page)
 
-        year = datetime.now().year
+        year = datetime.now().astimezone().year
         page.locator(
             f'#month-picker-popover .month-option[data-month-value="{year}-03"]'
         ).click()
@@ -1968,7 +1968,9 @@ class TestMonthPickerPopover:
         page.fill("#report_month", "March 2026")
         self._open_picker(page)
 
-        assert page.text_content("#month-picker-year") == str(datetime.now().year)
+        assert page.text_content("#month-picker-year") == str(
+            datetime.now().astimezone().year
+        )
 
     def test_picking_uses_browsed_year_from_typed_value(self, browser_page):
         page = browser_page
@@ -2013,7 +2015,7 @@ class TestMonthPickerVisualPolish:
         )
 
     def test_selected_month_is_solid_navy_and_current_month_outlined(self, browser_page):
-        now = datetime.now()
+        now = datetime.now().astimezone()
         year = now.year
         picked = 12 if now.month == 12 else now.month + 1
 
@@ -2106,7 +2108,7 @@ class TestMonthPickerVisualPolish:
                 (f"{selector} on surface", popover_background, styles["color"])
             )
 
-        year = datetime.now().year
+        year = datetime.now().astimezone().year
         page.fill("#report_month", f"{year}-01")
         self._open_picker(page)
         selected = self._computed(
@@ -2119,6 +2121,107 @@ class TestMonthPickerVisualPolish:
         for label, background, foreground in pairs:
             ratio = _contrast_ratio(_parse_rgb(background), _parse_rgb(foreground))
             assert ratio >= 4.5, f"{label} contrast {ratio:.2f} < 4.5"
+
+
+class TestMonthPickerKeyboardAccess:
+    def _open_picker(self, page):
+        page.locator('.tab-link[data-tab="reports"]').click()
+        page.locator("#report-month-toggle").click()
+        page.wait_for_selector("#month-picker-popover:not(.hidden)")
+
+    def test_popover_announces_dialog_semantics_and_labelled_controls(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+
+        popover = page.locator("#month-picker-popover")
+        assert popover.get_attribute("role") == "dialog"
+        assert popover.get_attribute("aria-label")
+        assert page.get_attribute("#report-month-toggle", "aria-expanded") == "true"
+        assert page.get_attribute(".month-grid", "role") == "grid"
+        assert (
+            page.locator('#month-picker-popover [role="gridcell"]').count() == 12
+        )
+
+        for name in ("Previous year", "Next year"):
+            assert page.get_by_role("button", name=name).count() == 1
+
+    def test_focus_is_trapped_while_popover_is_open(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+
+        def focus_inside_popover():
+            return page.evaluate(
+                """() => document.getElementById('month-picker-popover')
+                    .contains(document.activeElement)"""
+            )
+
+        for _ in range(6):
+            page.keyboard.press("Tab")
+            assert focus_inside_popover()
+        for _ in range(6):
+            page.keyboard.press("Shift+Tab")
+            assert focus_inside_popover()
+
+    def test_arrow_keys_move_between_months_and_enter_selects(self, browser_page):
+        year = datetime.now().astimezone().year
+        page = browser_page
+        page.set_content(home_html())
+        page.fill("#report_month", f"{year}-05")
+        self._open_picker(page)
+
+        # Opening focuses the picked month; arrows move through the grid.
+        assert (
+            page.evaluate(
+                "() => document.activeElement.getAttribute('data-month-value')"
+            )
+            == f"{year}-05"
+        )
+        page.keyboard.press("ArrowRight")
+        assert (
+            page.evaluate(
+                "() => document.activeElement.getAttribute('data-month-value')"
+            )
+            == f"{year}-06"
+        )
+        page.keyboard.press("Enter")
+
+        assert page.input_value("#report_month") == f"{year}-06"
+        assert page.locator("#month-picker-popover.hidden").count() == 1
+        assert page.evaluate("() => document.activeElement.id") == "report_month"
+
+    def test_escape_restores_focus_to_the_field(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+        page.keyboard.press("Escape")
+
+        assert page.evaluate("() => document.activeElement.id") == "report_month"
+
+    def test_chevrons_are_real_buttons_disabled_at_year_bounds(self, browser_page):
+        min_year = 2020
+        max_year = datetime.now().astimezone().year + 1
+
+        page = browser_page
+        page.set_content(home_html())
+        self._open_picker(page)
+
+        prev_button = page.locator("#month-picker-prev-year")
+        next_button = page.locator("#month-picker-next-year")
+        assert prev_button.evaluate("el => el.tagName") == "BUTTON"
+        assert next_button.evaluate("el => el.tagName") == "BUTTON"
+        assert not next_button.is_disabled()
+
+        for expected_year in range(datetime.now().astimezone().year + 1, max_year + 1):
+            next_button.click()
+            assert page.text_content("#month-picker-year") == str(expected_year)
+        assert next_button.is_disabled(), "Next year must disable at the bound"
+
+        for expected_year in range(max_year - 1, min_year - 1, -1):
+            prev_button.click()
+            assert page.text_content("#month-picker-year") == str(expected_year)
+        assert prev_button.is_disabled(), "Previous year must disable at 2020"
 
 
 class TestPrintOutputsActiveView:
