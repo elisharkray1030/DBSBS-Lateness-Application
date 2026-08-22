@@ -688,6 +688,19 @@ class TestBoarderBulkImport:
         assert "Add a boarder" in html
         assert "namelist.csv" not in html
 
+    def test_empty_roster_empty_state_names_the_master_list(self, fresh_client):
+        fresh_client.post(
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        # Same sentence the client injects when the last boarder is removed
+        # live, so both renderings stay glossary-clean.
+        assert "Add a boarder here, or import a CSV to replace it." in html
+
     def test_empty_roster_rejects_monthly_log_import(self, fresh_client):
         fresh_client.post(
             "/boarders/import",
@@ -2011,6 +2024,16 @@ class TestMonthPickerVisualPolish:
             properties,
         )
 
+    def _wait_for_hover_settle(self, page):
+        """The month-option hover wash animates in over 0.15s; block until it
+        lands so computed-style sampling never catches a mid-transition frame."""
+        page.wait_for_function(
+            """() => {
+                const el = document.querySelector('.month-option:hover');
+                return el && getComputedStyle(el).backgroundColor === 'rgb(248, 249, 250)';
+            }"""
+        )
+
     def test_selected_month_is_solid_navy_and_current_month_outlined(self, browser_page):
         now = datetime.now().astimezone()
         year = now.year
@@ -2046,6 +2069,7 @@ class TestMonthPickerVisualPolish:
 
         option = page.locator(".month-option:not(.selected)").first
         option.hover()
+        self._wait_for_hover_settle(page)
         hover_styles = option.evaluate(
             """el => [
                 getComputedStyle(el).backgroundColor,
@@ -2116,6 +2140,7 @@ class TestMonthPickerVisualPolish:
         pairs.append((".month-option.selected", selected["backgroundColor"], selected["color"]))
 
         page.locator(".month-option:not(.selected)").first.hover()
+        self._wait_for_hover_settle(page)
         hover_styles = self._computed(
             page,
             ".month-option:hover",
@@ -2331,11 +2356,54 @@ class TestPrintOutputsActiveView:
         assert "601A" in printed
         assert "Boarder Name" in printed
         assert "Add Boarder" not in printed
-        assert "Replace roster from CSV" not in printed
+        assert "Replace Master List from CSV" not in printed
         assert "Report for" not in printed
         assert "Points Owed" not in printed
         assert "Minutes Late" not in printed
         assert "View Reports in Database" not in printed
+
+    def test_print_strips_card_chrome_and_pre_scroll_header_shadow(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        rows = [month_row(f"S{i:02d}", f"{600 + i}A", 1, 10, 10) for i in range(30)]
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        open_month_detail(page, rows)
+
+        # Scroll first so the sticky header carries its on-screen lift cue,
+        # then confirm printing suppresses it along with the card chrome.
+        page.evaluate(
+            """() => {
+                const scroller = document.querySelector('#month-detail .table-scroll');
+                scroller.scrollTop = 40;
+            }"""
+        )
+        page.wait_for_selector("#month-detail .table-scroll.scrolled")
+        page.emulate_media(media="print")
+
+        chrome = page.evaluate(
+            """() => {
+                const scroller = document.querySelector('#month-detail .table-scroll');
+                const header = document.querySelector('#month-detail .table-scroll.scrolled thead th');
+                const styles = getComputedStyle(scroller);
+                return {
+                    borderStyle: styles.borderTopStyle,
+                    borderWidth: styles.borderTopWidth,
+                    radius: styles.borderRadius,
+                    headerShadow: getComputedStyle(header).boxShadow,
+                    headerBackground: getComputedStyle(header).backgroundColor,
+                };
+            }"""
+        )
+        assert chrome["borderStyle"] == "none"
+        assert chrome["borderWidth"] == "0px"
+        assert chrome["radius"] == "0px"
+        assert chrome["headerShadow"] == "none"
+        # Printed output matches the pre-pass baseline: white header band,
+        # not the on-screen page tint (print-color-adjust is forced exact).
+        assert chrome["headerBackground"] == "rgb(255, 255, 255)"
 
 
 class TestAsyncActionsNeverFailSilently:
@@ -2632,6 +2700,357 @@ class TestChromeConsistency:
         assert len(set(typography)) == 1, typography
 
 
+class TestVisualConsistencyPass:
+    """Acceptance sweep for the whole-UI visual-consistency pass (#97):
+    every story re-proven through the browser seam via computed styles,
+    sampled only after animations settle."""
+
+    def test_panel_headings_are_navy_but_modal_title_keeps_its_own_color(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+
+        colors = page.evaluate(
+            """() => ({
+                panels: [...document.querySelectorAll('.panel > h2')].map(
+                    h => getComputedStyle(h).color
+                ),
+                modalTitle: getComputedStyle(document.getElementById('confirm-modal-title')).color,
+            })"""
+        )
+
+        assert len(colors["panels"]) == 4, colors
+        assert set(colors["panels"]) == {"rgb(29, 43, 83)"}, colors  # --navy
+        assert colors["modalTitle"] == "rgb(26, 26, 26)", colors  # --text
+
+    def test_table_scrollbar_chrome_is_navy_tinted_from_shared_token(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        tint = page.evaluate(
+            """() => {
+                const scroller = document.querySelector('.table-scroll');
+                return getComputedStyle(scroller).scrollbarColor;
+            }"""
+        )
+        # Chromium reports the transparent track as rgba(0, 0, 0, 0).
+        assert tint == "rgba(29, 43, 83, 0.35) rgba(0, 0, 0, 0)"
+
+    def test_month_picker_popover_centers_on_its_field(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        open_month_picker(page)
+
+        offset = page.evaluate(
+            """() => {
+                const field = document.querySelector('.month-field-controls');
+                const popover = document.getElementById('month-picker-popover');
+                const fld = field.getBoundingClientRect();
+                const pop = popover.getBoundingClientRect();
+                return Math.abs((fld.left + fld.right) / 2 - (pop.left + pop.right) / 2);
+            }"""
+        )
+        assert offset < 1
+
+    def test_month_grid_cells_fill_the_popover_edge_to_edge(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+        open_month_picker(page)
+
+        fill = page.evaluate(
+            """() => {
+                const grid = document.querySelector('.month-grid');
+                const cells = [...grid.querySelectorAll('.month-option')];
+                const g = grid.getBoundingClientRect();
+                const widths = cells.map(c => c.getBoundingClientRect().width);
+                return {
+                    count: cells.length,
+                    widthSpread: Math.max(...widths) - Math.min(...widths),
+                    leftGap: cells[0].getBoundingClientRect().left - g.left,
+                    rightGap: g.right - cells[cells.length - 1].getBoundingClientRect().right,
+                };
+            }"""
+        )
+        assert fill["count"] == 12
+        assert fill["widthSpread"] < 0.5
+        assert abs(fill["leftGap"]) < 1 and abs(fill["rightGap"]) < 1
+
+    def test_selects_drop_os_chrome_for_house_style(self, fresh_client, browser_page):
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        style = page.evaluate(
+            """() => {
+                const s = getComputedStyle(document.querySelector('#consequences-status'));
+                return {
+                    appearance: s.appearance,
+                    image: s.backgroundImage,
+                    radius: s.borderRadius,
+                };
+            }"""
+        )
+        assert style["appearance"] == "none"
+        assert "svg+xml" in style["image"], style
+        assert "%231d2b53" in style["image"] or "#1d2b53" in style["image"], style
+        assert style["radius"] == "6px"
+
+    def test_checkboxes_render_as_navy_tiles_with_scale_in_checks(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [month_row("ALICE", "101", 2, 5, 7)]
+
+        page = browser_page
+        page.set_content(html)
+        open_month_detail(page, rows)
+        page.locator("#month-detail-assign-btn").click()
+
+        checkbox = page.locator('#assign-boarders input[type="checkbox"]').first
+        checked = checkbox.evaluate(
+            """cb => {
+                const s = getComputedStyle(cb);
+                return {
+                    appearance: s.appearance,
+                    size: s.width + 'x' + s.height,
+                    radius: s.borderRadius,
+                    background: s.backgroundColor,
+                    checkTransform: getComputedStyle(cb, '::before').transform,
+                };
+            }"""
+        )
+        assert checked["appearance"] == "none"
+        assert checked["size"] == "16pxx16px"
+        assert checked["radius"] == "4px"
+        assert checked["background"] == "rgb(29, 43, 83)"
+        assert checked["checkTransform"] == "matrix(1, 0, 0, 1, 0, 0)"
+
+        checkbox.uncheck()
+        page.wait_for_function(
+            """() => getComputedStyle(
+                document.querySelector('#assign-boarders input[type="checkbox"]')
+            ).backgroundColor === 'rgb(255, 255, 255)'"""
+        )
+        cleared = checkbox.evaluate(
+            "cb => [getComputedStyle(cb).backgroundColor, getComputedStyle(cb, '::before').transform]"
+        )
+        assert cleared[0] == "rgb(255, 255, 255)"
+        assert cleared[1] == "matrix(0, 0, 0, 0, 0, 0)"
+
+    def test_file_picker_button_wears_primary_style(self, fresh_client, browser_page):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        button = page.evaluate(
+            """() => {
+                const s = getComputedStyle(document.querySelector('input[type="file"]'),
+                    '::file-selector-button');
+                return {background: s.backgroundColor, color: s.color, radius: s.borderRadius};
+            }"""
+        )
+        assert button["background"] == "rgb(29, 43, 83)"
+        assert button["color"] == "rgb(255, 255, 255)"
+        assert button["radius"] == "6px"
+
+    def test_tables_read_as_cards_with_tinted_header_band(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        card = page.evaluate(
+            """() => {
+                const scroller = document.querySelector('.table-scroll');
+                const header = scroller.querySelector('thead th');
+                const s = getComputedStyle(scroller);
+                return {
+                    borderWidth: s.borderTopWidth,
+                    borderStyle: s.borderTopStyle,
+                    borderColor: s.borderTopColor,
+                    radius: s.borderRadius,
+                    background: s.backgroundColor,
+                    headerBackground: getComputedStyle(header).backgroundColor,
+                };
+            }"""
+        )
+        assert card["borderWidth"] == "1px"
+        assert card["borderStyle"] == "solid"
+        assert card["borderColor"] == "rgb(226, 230, 234)"  # --border
+        assert card["radius"] == "8px"
+        assert card["background"] == "rgb(255, 255, 255)"
+        assert card["headerBackground"] == "rgb(248, 249, 250)"  # --page-bg
+
+    def test_sticky_header_lift_appears_only_while_rows_pass_beneath(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        rows = [month_row(f"S{i:02d}", f"{600 + i}A", 1, 10, 10) for i in range(30)]
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        open_month_detail(page, rows)
+
+        def shadow_state():
+            return page.evaluate(
+                """() => {
+                    const scroller = document.querySelector('#month-detail .table-scroll');
+                    return {
+                        scrolled: scroller.classList.contains('scrolled'),
+                        shadow: getComputedStyle(scroller.querySelector('thead th')).boxShadow,
+                    };
+                }"""
+            )
+
+        initial = shadow_state()
+        assert not initial["scrolled"]
+        assert initial["shadow"] == "none"
+
+        page.evaluate("() => { document.querySelector('#month-detail .table-scroll').scrollTop = 40; }")
+        page.wait_for_function(
+            """() => {
+                const scroller = document.querySelector('#month-detail .table-scroll');
+                if (!scroller.classList.contains('scrolled')) return false;
+                const shadow = getComputedStyle(scroller.querySelector('thead th')).boxShadow;
+                return shadow !== 'none' && shadow.includes('rgba(29, 43, 83');
+            }"""
+        )
+
+        page.evaluate("() => { document.querySelector('#month-detail .table-scroll').scrollTop = 0; }")
+        page.wait_for_function(
+            """() => !document.querySelector('#month-detail .table-scroll')
+                .classList.contains('scrolled')"""
+        )
+        assert shadow_state()["shadow"] == "none"
+
+    def test_popups_enter_with_sub_200ms_fade_and_rise(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+
+        page.evaluate("() => showConfirmModal({ title: 'Confirm', message: 'm' })")
+        entrances = page.evaluate(
+            """() => ({
+                backdropName: getComputedStyle(document.getElementById('confirmModal')).animationName,
+                backdropDuration: parseFloat(
+                    getComputedStyle(document.getElementById('confirmModal')).animationDuration
+                ),
+                contentName: getComputedStyle(
+                    document.querySelector('#confirmModal .modal-content')
+                ).animationName,
+                contentDuration: parseFloat(
+                    getComputedStyle(document.querySelector('#confirmModal .modal-content'))
+                        .animationDuration
+                ),
+            })"""
+        )
+        page.keyboard.press("Escape")
+        open_month_picker(page)
+        picker = page.evaluate(
+            """() => ({
+                name: getComputedStyle(document.getElementById('month-picker-popover')).animationName,
+                duration: parseFloat(
+                    getComputedStyle(document.getElementById('month-picker-popover')).animationDuration
+                ),
+            })"""
+        )
+
+        assert entrances["backdropName"] == "fade-in"
+        assert entrances["contentName"] == "rise-in"
+        assert picker["name"] == "picker-pop"
+        assert entrances["backdropDuration"] <= 0.2
+        assert entrances["contentDuration"] <= 0.2
+        assert picker["duration"] <= 0.2
+
+    def test_loading_state_shows_a_spinner(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+
+        spinner = page.evaluate(
+            """() => {
+                const s = getComputedStyle(document.querySelector('#month-detail-loading .spinner'));
+                return {name: s.animationName, duration: parseFloat(s.animationDuration)};
+            }"""
+        )
+        assert spinner["name"] == "spin"
+        assert spinner["duration"] > 0
+
+    def test_buttons_give_pressed_feedback_while_held(self, fresh_client, browser_page):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        button = page.locator('#boarders form[action="/boarders/add"] button[type="submit"]')
+        box = button.bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.down()
+        try:
+            page.wait_for_function(
+                """() => getComputedStyle(
+                    document.querySelector('#boarders form[action="/boarders/add"] button[type="submit"]')
+                ).transform === 'matrix(1, 0, 0, 1, 0, 1)'"""
+            )
+        finally:
+            page.mouse.up()
+
+    def test_reduced_motion_neutralises_entrances(self, browser_page):
+        page = browser_page
+        page.emulate_media(reduced_motion="reduce")
+        page.set_content(home_html())
+
+        page.evaluate("() => showConfirmModal({ title: 'Confirm', message: 'm' })")
+        modal_durations = page.evaluate(
+            """() => [
+                getComputedStyle(document.getElementById('confirmModal')).animationDuration,
+                getComputedStyle(document.querySelector('#confirmModal .modal-content'))
+                    .animationDuration,
+            ]"""
+        )
+        page.keyboard.press("Escape")
+        open_month_picker(page)
+        picker_duration = page.evaluate(
+            "() => getComputedStyle(document.getElementById('month-picker-popover')).animationDuration"
+        )
+
+        for duration in modal_durations + [picker_duration]:
+            assert float(duration.rstrip("s")) < 0.001, duration
+
+    def test_danger_and_neutral_buttons_deepen_on_hover_like_primary(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        neutral = page.locator("#boarder-edit")
+        neutral.hover()
+        page.wait_for_function(
+            "() => getComputedStyle(document.getElementById('boarder-edit')).backgroundColor"
+            " === 'rgb(97, 105, 112)'"
+        )
+        assert neutral.evaluate("el => getComputedStyle(el).filter") == "none"
+
+        page.locator("#boarder-edit").click()
+        page.locator(".boarder-remove").first.click()
+        page.wait_for_selector("#confirmModal.show")
+        danger = page.locator("#confirmModal .btn-danger")
+        danger.hover()
+        page.wait_for_function(
+            "() => getComputedStyle(document.querySelector('#confirmModal .btn-danger'))"
+            ".backgroundColor === 'rgb(206, 23, 54)'"
+        )
+        danger_filter = danger.evaluate("el => getComputedStyle(el).filter")
+        assert danger_filter == "none"
+
+
 class TestBoardersToolbarRegroup:
     def _toolbar(self, fresh_client):
         html = fresh_client.get("/boarders").get_data(as_text=True)
@@ -2655,14 +3074,20 @@ class TestBoardersToolbarRegroup:
         toolbar = self._toolbar(fresh_client)
         form_end = toolbar.index("</form>")
         edit_index = toolbar.index('id="boarder-edit"')
-        download_index = toolbar.index("Download roster")
+        download_index = toolbar.index("Download Master List")
         assert form_end < edit_index < download_index
 
     def test_download_roster_carries_the_shared_download_icon(self, fresh_client):
         toolbar = self._toolbar(fresh_client)
         link = re.search(r'<a[^>]*href="/boarders/export".*?</a>', toolbar, re.S)
-        assert link is not None, "Download roster link is missing"
+        assert link is not None, "Download Master List link is missing"
         assert 'href="#icon-download"' in link.group(0)
+
+    def test_toolbar_copy_uses_master_list_vocabulary(self, fresh_client):
+        toolbar = self._toolbar(fresh_client)
+        assert "Replace Master List from CSV" in toolbar
+        assert "Download Master List (CSV)" in toolbar
+        assert "roster" not in toolbar.lower()
 
     def test_edit_button_stays_wired_after_regroup(self, fresh_client, browser_page):
         html = fresh_client.get("/boarders").get_data(as_text=True)
@@ -3088,3 +3513,56 @@ class TestUiTidinessHoldsEverywhere:
             """() => document.documentElement.scrollWidth > document.documentElement.clientWidth"""
         )
         assert not overflow
+
+    def test_no_rendered_copy_uses_the_master_list_avoid_term(self, fresh_client):
+        for route in ("/", "/boarders", "/consequences"):
+            html = fresh_client.get(route).get_data(as_text=True)
+            assert "roster" not in html.lower(), (
+                f"{route} renders the Master List avoid-term"
+            )
+
+    def test_static_empty_states_carry_an_icon(self, fresh_client):
+        icon = '<use href="#icon-inbox"/>'
+        # The app auto-seeds the Master List, so clear it to reach the
+        # boarders empty state.
+        fresh_client.post(
+            "/boarders/import",
+            data={"boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv")},
+            content_type="multipart/form-data",
+        )
+        boarders = panel_html(fresh_client.get("/boarders").get_data(as_text=True), "boarders")
+        consequences = panel_html(
+            fresh_client.get("/consequences").get_data(as_text=True), "consequences"
+        )
+        reports = panel_html(fresh_client.get("/").get_data(as_text=True), "reports")
+        history = panel_html(
+            fresh_client.get("/?search_name=NOSUCHNAME").get_data(as_text=True), "history"
+        )
+        for name, panel in (
+            ("boarders", boarders),
+            ("consequences", consequences),
+            ("reports", reports),
+            ("history", history),
+        ):
+            assert 'class="empty-state"' in panel, f"{name} panel lacks an empty state"
+            assert icon in panel, f"{name} empty state lacks the shared inbox icon"
+
+    def test_runtime_injected_empty_state_carries_an_icon(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """() => {
+                window.fetch = (url, opts) => new Promise(resolve => setTimeout(() =>
+                    resolve({ json: () => Promise.resolve({ ok: true }) }), 100));
+            }"""
+        )
+        page.locator("#boarder-edit").click()
+        page.locator(".boarder-remove").first.click()
+        page.locator("#confirmModal .btn-danger").click()
+
+        injected = page.wait_for_selector("#boarders .table-scroll .empty-state svg use")
+        assert injected.get_attribute("href") == "#icon-inbox"
