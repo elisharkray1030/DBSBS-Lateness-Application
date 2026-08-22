@@ -55,6 +55,13 @@ def panel_html(html, panel_id):
     return match.group(0)
 
 
+def open_month_picker(page):
+    """Opens the Report Month popover from the reports tab."""
+    page.locator('.tab-link[data-tab="reports"]').click()
+    page.locator("#report-month-toggle").click()
+    page.wait_for_selector("#month-picker-popover:not(.hidden)")
+
+
 class TestHomeRender:
     def test_report_archive_tab_precedes_history_tab(self):
         html = home_html()
@@ -1932,15 +1939,10 @@ class TestAccessibilityPolish:
 
 
 class TestMonthPickerPopover:
-    def _open_picker(self, page):
-        page.locator('.tab-link[data-tab="reports"]').click()
-        page.locator("#report-month-toggle").click()
-        page.wait_for_selector("#month-picker-popover:not(.hidden)")
-
     def test_open_pick_writes_value_closes_and_restores_focus(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
 
         year = datetime.now().astimezone().year
         page.locator(
@@ -1958,7 +1960,7 @@ class TestMonthPickerPopover:
         page = browser_page
         page.set_content(home_html())
         page.fill("#report_month", "2023-07")
-        self._open_picker(page)
+        open_month_picker(page)
 
         assert page.text_content("#month-picker-year") == "2023"
 
@@ -1966,7 +1968,7 @@ class TestMonthPickerPopover:
         page = browser_page
         page.set_content(home_html())
         page.fill("#report_month", "March 2026")
-        self._open_picker(page)
+        open_month_picker(page)
 
         assert page.text_content("#month-picker-year") == str(
             datetime.now().astimezone().year
@@ -1976,7 +1978,7 @@ class TestMonthPickerPopover:
         page = browser_page
         page.set_content(home_html())
         page.fill("#report_month", "2023-07")
-        self._open_picker(page)
+        open_month_picker(page)
         page.locator(
             '#month-picker-popover .month-option[data-month-value="2023-11"]'
         ).click()
@@ -1986,7 +1988,7 @@ class TestMonthPickerPopover:
     def test_escape_closes_the_popover(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
         page.keyboard.press("Escape")
 
         assert page.locator("#month-picker-popover.hidden").count() == 1
@@ -1994,18 +1996,13 @@ class TestMonthPickerPopover:
     def test_clicking_outside_closes_the_popover(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
         page.locator("h3.upload-title", has_text="Import Monthly Log").click()
 
         assert page.locator("#month-picker-popover.hidden").count() == 1
 
 
 class TestMonthPickerVisualPolish:
-    def _open_picker(self, page):
-        page.locator('.tab-link[data-tab="reports"]').click()
-        page.locator("#report-month-toggle").click()
-        page.wait_for_selector("#month-picker-popover:not(.hidden)")
-
     def _computed(self, page, selector, properties):
         return page.locator(selector).first.evaluate(
             """(el, names) => Object.fromEntries(
@@ -2022,7 +2019,7 @@ class TestMonthPickerVisualPolish:
         page = browser_page
         page.set_content(home_html())
         page.fill("#report_month", f"{year}-{picked:02d}")
-        self._open_picker(page)
+        open_month_picker(page)
 
         selected = self._computed(
             page,
@@ -2035,7 +2032,7 @@ class TestMonthPickerVisualPolish:
     def test_unpicked_current_calendar_month_is_outlined(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
 
         current_border = self._computed(
             page, ".month-option.current", ["borderColor"]
@@ -2045,7 +2042,7 @@ class TestMonthPickerVisualPolish:
     def test_hover_state_matches_month_card_styling(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
 
         option = page.locator(".month-option:not(.selected)").first
         option.hover()
@@ -2061,7 +2058,7 @@ class TestMonthPickerVisualPolish:
     def test_popover_radius_and_shadow_match_modal_family(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
 
         popover_styles = self._computed(
             page,
@@ -2080,7 +2077,7 @@ class TestMonthPickerVisualPolish:
         page = browser_page
         page.set_viewport_size({"width": 360, "height": 800})
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
 
         overflow = page.evaluate(
             """() => ({
@@ -2110,7 +2107,7 @@ class TestMonthPickerVisualPolish:
 
         year = datetime.now().astimezone().year
         page.fill("#report_month", f"{year}-01")
-        self._open_picker(page)
+        open_month_picker(page)
         selected = self._computed(
             page,
             ".month-option.selected",
@@ -2118,21 +2115,42 @@ class TestMonthPickerVisualPolish:
         )
         pairs.append((".month-option.selected", selected["backgroundColor"], selected["color"]))
 
+        page.locator(".month-option:not(.selected)").first.hover()
+        hover_styles = self._computed(
+            page,
+            ".month-option:hover",
+            ["backgroundColor", "color"],
+        )
+        pairs.append((".month-option:hover", hover_styles["backgroundColor"], hover_styles["color"]))
+
+        # Walk to the year bound so a chevron actually renders disabled
+        # (prior art: the badge test's disabled-control pair).
+        prev_button = page.locator("#month-picker-prev-year")
+        while not prev_button.is_disabled():
+            prev_button.click()
+        disabled_styles = self._computed(
+            page,
+            "#month-picker-prev-year:disabled",
+            ["backgroundColor", "color"],
+        )
+        pairs.append(
+            (
+                ".month-chevron:disabled",
+                disabled_styles["backgroundColor"],
+                disabled_styles["color"],
+            )
+        )
+
         for label, background, foreground in pairs:
             ratio = _contrast_ratio(_parse_rgb(background), _parse_rgb(foreground))
             assert ratio >= 4.5, f"{label} contrast {ratio:.2f} < 4.5"
 
 
 class TestMonthPickerKeyboardAccess:
-    def _open_picker(self, page):
-        page.locator('.tab-link[data-tab="reports"]').click()
-        page.locator("#report-month-toggle").click()
-        page.wait_for_selector("#month-picker-popover:not(.hidden)")
-
     def test_popover_announces_dialog_semantics_and_labelled_controls(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
 
         popover = page.locator("#month-picker-popover")
         assert popover.get_attribute("role") == "dialog"
@@ -2149,7 +2167,7 @@ class TestMonthPickerKeyboardAccess:
     def test_focus_is_trapped_while_popover_is_open(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
 
         def focus_inside_popover():
             return page.evaluate(
@@ -2169,7 +2187,7 @@ class TestMonthPickerKeyboardAccess:
         page = browser_page
         page.set_content(home_html())
         page.fill("#report_month", f"{year}-05")
-        self._open_picker(page)
+        open_month_picker(page)
 
         # Opening focuses the picked month; arrows move through the grid.
         assert (
@@ -2194,7 +2212,7 @@ class TestMonthPickerKeyboardAccess:
     def test_escape_restores_focus_to_the_field(self, browser_page):
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
         page.keyboard.press("Escape")
 
         assert page.evaluate("() => document.activeElement.id") == "report_month"
@@ -2205,7 +2223,7 @@ class TestMonthPickerKeyboardAccess:
 
         page = browser_page
         page.set_content(home_html())
-        self._open_picker(page)
+        open_month_picker(page)
 
         prev_button = page.locator("#month-picker-prev-year")
         next_button = page.locator("#month-picker-next-year")
