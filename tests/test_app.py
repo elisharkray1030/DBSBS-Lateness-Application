@@ -1923,6 +1923,26 @@ class TestPrintOutputsActiveView:
         assert "Enter name or partial name" not in printed
         assert "Report for" not in printed
 
+    def test_printing_boarders_tab_shows_roster_not_other_views(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="boarders"]').click()
+        printed = self._printed_text(page)
+
+        assert "Alice" in printed
+        assert "601A" in printed
+        assert "Boarder Name" in printed
+        assert "Add Boarder" not in printed
+        assert "Replace roster from CSV" not in printed
+        assert "Report for" not in printed
+        assert "Points Owed" not in printed
+        assert "Minutes Late" not in printed
+        assert "View Reports in Database" not in printed
+
 
 class TestAsyncActionsNeverFailSilently:
     ROWS: ClassVar = [month_row("ALICE", "101", 2, 5, 7)]
