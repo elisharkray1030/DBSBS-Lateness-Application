@@ -799,6 +799,20 @@
             font-size: 0.9em;
         }
 
+        .consequences-toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .consequences-count {
+            margin: -12px 0 16px;
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
         .consequences-group {
             margin-bottom: 24px;
         }
@@ -934,6 +948,11 @@
             .month-detail-toolbar h3 {
                 flex: none;
             }
+
+            .consequences-toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
         }
 
         @media print {
@@ -948,6 +967,8 @@
             .reports-panel > :not(#month-detail),
             .month-actions,
             .month-detail-toolbar,
+            .consequences-toolbar,
+            .consequences-count,
             .banner,
             #month-detail-loading,
             #month-detail-error {
@@ -1159,27 +1180,25 @@
             </form>
         {%- endmacro %}
         <h2>Consequences</h2>
-        <div class="month-detail-toolbar">
-            <h3>Punishments</h3>
+        <div class="consequences-toolbar">
             <form action="/consequences" method="get" class="consequences-filters">
                 {% if consequences_show_all %}
                     <input type="hidden" name="show_all" value="1">
                 {% endif %}
                 <label for="consequences-month"><strong>Month</strong></label>
-                <select id="consequences-month" name="month">
+                <select id="consequences-month" name="month" onchange="this.form.submit()">
                     <option value="">All months</option>
                     {% for month in punishment_months %}
                         <option value="{{ month }}" {% if consequences_month == month %}selected{% endif %}>{{ month }}</option>
                     {% endfor %}
                 </select>
                 <label for="consequences-status"><strong>Status</strong></label>
-                <select id="consequences-status" name="status">
+                <select id="consequences-status" name="status" onchange="this.form.submit()">
                     <option value="">{% if consequences_show_all %}All statuses{% else %}In-flight only{% endif %}</option>
                     {% for s in ['assigned', 'overdue', 'phone_held', 'submitted', 'voided'] %}
                         <option value="{{ s }}" {% if consequences_status == s %}selected{% endif %}>{{ humanized_status(s) }}</option>
                     {% endfor %}
                 </select>
-                <button type="submit" class="btn btn-primary btn-sm">Filter</button>
             </form>
             <form action="/consequences" method="get">
                 {% if consequences_month %}
@@ -1196,6 +1215,7 @@
                 </button>
             </form>
         </div>
+        <p class="consequences-count" aria-live="polite">Showing {{ punishments|length }} of {{ consequences_total }} {{ 'punishment' if consequences_total == 1 else 'punishments' }}</p>
         {% if punishments %}
             {% for group in punishments|groupby('status') %}
             <div class="consequences-group">

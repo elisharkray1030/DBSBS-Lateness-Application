@@ -457,6 +457,7 @@ def consequences():
     status = request.args.get('status') or None
     with connect() as conn:
         punishments = list_consequences(conn, show_all=show_all, month=month, status=status)
+        consequences_total = len(list_consequences(conn, show_all=True))
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
         punishment_months = _punishment_months(conn, all_months)
@@ -474,6 +475,7 @@ def consequences():
         boarders=boarders,
         punishment_months=punishment_months,
         punishments=punishments,
+        consequences_total=consequences_total,
         consequences_show_all=show_all,
         consequences_month=month,
         consequences_status=status,

@@ -1525,6 +1525,57 @@ class TestConsequencesRoute:
         assert '<th scope="col">Last action</th>' in panel
         assert "2026-04-11 10:30" in panel
 
+    def test_toolbar_has_no_punishments_subheading(self):
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert "<h3>Punishments</h3>" not in panel
+
+    def test_filter_button_is_gone_and_selects_auto_submit(self):
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+
+        assert ">Filter</button>" not in panel
+
+        month_select = re.search(r'<select id="consequences-month"[^>]*>', panel)
+        status_select = re.search(r'<select id="consequences-status"[^>]*>', panel)
+        assert month_select is not None and status_select is not None
+        assert 'onchange="this.form.submit()"' in month_select.group(0)
+        assert 'onchange="this.form.submit()"' in status_select.group(0)
+
+    def test_toolbar_uses_dedicated_consequences_class(self):
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert '<div class="consequences-toolbar">' in panel
+        assert "month-detail-toolbar" not in panel
+
+    def test_result_count_reads_showing_x_of_y(self):
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert re.search(
+            r'<p class="consequences-count" aria-live="polite">Showing 2 of 2 punishments</p>',
+            panel,
+        )
+
+    def test_result_count_reflects_active_filters(self):
+        with app_module.connect() as conn:
+            row = storage.list_punishments(conn, statuses=("assigned",))[0]
+            storage.transition_punishment(
+                conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
+            )
+
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert "Showing 1 of 2 punishments" in panel
+
+    def test_empty_view_counts_zero_of_zero(self):
+        with app_module.connect() as conn:
+            conn.execute("DELETE FROM punishments")
+            conn.commit()
+
+        html = client.get("/consequences").get_data(as_text=True)
+        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        assert "Showing 0 of 0 punishments" in panel
+
 
 class TestTransitionRoute:
     @pytest.fixture(autouse=True)
@@ -2666,13 +2717,17 @@ class TestChromeConsistency:
         subheadings = {
             "reports": "Import Monthly Log",
             "boarders": "Add Boarder",
-            "consequences": "Punishments",
         }
         for panel_id, subheading in subheadings.items():
             panel = panel_html(html, panel_id)
             assert re.search(rf"<h3[^>]*>{subheading}</h3>", panel), (
                 f"{panel_id} panel lost its {subheading!r} section sub-heading"
             )
+
+    def test_consequences_panel_has_no_section_subheading(self):
+        html = home_html()
+        panel = panel_html(html, "consequences")
+        assert "<h3" not in panel
 
     def test_history_results_subheading_nests_beneath_panel_title(self, fresh_client):
         with app_module.connect() as conn:
@@ -2798,6 +2853,28 @@ class TestVisualConsistencyPass:
         assert "svg+xml" in style["image"], style
         assert "%231d2b53" in style["image"] or "#1d2b53" in style["image"], style
         assert style["radius"] == "6px"
+
+    def test_consequences_toolbar_sits_left_with_toggle_on_select_baseline(self, fresh_client, browser_page):
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        edges = page.evaluate(
+            """() => {
+                const rect = el => el.getBoundingClientRect();
+                const heading = rect(document.querySelector('#consequences h2'));
+                const monthLabel = rect(document.querySelector('label[for="consequences-month"]'));
+                const statusSelect = rect(document.querySelector('#consequences-status'));
+                const toggle = rect(document.querySelector('.consequences-toolbar .btn-neutral'));
+                return {
+                    leftDrift: monthLabel.left - heading.left,
+                    baselineDelta: toggle.bottom - statusSelect.bottom,
+                };
+            }"""
+        )
+        assert abs(edges["leftDrift"]) < 2, edges
+        assert abs(edges["baselineDelta"]) <= 2, edges
 
     def test_checkboxes_render_as_navy_tiles_with_scale_in_checks(self, fresh_client, browser_page):
         with app_module.connect() as conn:
