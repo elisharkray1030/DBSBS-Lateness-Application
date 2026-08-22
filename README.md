@@ -20,7 +20,7 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 - [storage.py](storage.py) - SQLite persistence behind an injectable connection seam
 - [records.py](records.py) - the typed boarder record shared by ingestion, storage, the CSV writer, and the JSON body
 - [templates/index.html](templates/index.html) - dashboard UI
-- [tests/](tests/) - pytest suite covering the ingestion and storage seams (no server or browser needed)
+- [tests/](tests/) - pytest suite covering the ingestion and storage seams, plus Flask test-client route tests and Playwright browser tests for UI behavior (browser tests skip automatically when Playwright is not installed)
 - [namelist.csv](namelist.csv) - master boarder list used for matching (local-only: gitignored for privacy, not in the repo)
 - [requirements.txt](requirements.txt) - runtime dependencies
 - [requirements-dev.txt](requirements-dev.txt) - development dependencies (pytest), includes runtime deps
@@ -74,11 +74,13 @@ docker compose up -d --build
 docker compose down
 ```
 
-## Updating the namelist after setup
+## Updating the boarder list
 
-If you are using Docker Compose, update the root `namelist.csv` file and restart the stack. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
+The boarder master list lives in the SQLite database (`boarders` table). The **Boarders** tab lets staff view, add, edit, and remove boarders inline, replace the whole roster by uploading a CSV, and download the current roster as a CSV.
 
-If you are running locally, replace the `namelist.csv` in the project folder before restarting the app.
+On first startup, if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once, then sets a seed flag in a `meta` table. After that the file is no longer read — all changes happen through the Boarders tab or a CSV upload. If the roster is later emptied (every Boarder deleted), it stays empty across restarts; the seed never runs again. A fresh start with no `namelist.csv` forfeits the one-time seed — a `namelist.csv` appearing later never silently seeds a roster you did not ask for. (Deployments that emptied every Boarder before this change get one final seed on the first restart after upgrading, then stay stable thereafter.)
+
+If you are using Docker Compose, the root `namelist.csv` is only consulted for that initial seed; edits made in the app persist in the mounted database volume and survive restarts. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
 
 ## Using the application
 
@@ -89,30 +91,32 @@ If you are running locally, replace the `namelist.csv` in the project folder bef
 5. Use the month cards to view, download, or delete saved reports.
 6. Use the History tab to search boarder records by name.
 
+Printing is an intentional feature for Monthly Reports: with a report open, Print (or Ctrl/Cmd+P) outputs exactly that report — the application chrome, other tabs' content, and empty report skeletons are excluded from the printed page.
+
 ## Data expectations
 
-- `namelist.csv` should contain at least `Name` and `Bed` columns.
+- `namelist.csv` should contain at least `Name` and `Bed` columns. It is read once at first startup to seed an empty boarders table; after that, manage the boarder list through the Boarders tab.
 - Monthly log CSV files should contain at least `Name` and `Transaction Time` columns.
 - `Transaction Time` values must be strict `HH:MM` or `HH:MM:SS` (24-hour) times. Anything else is rejected with the offending rows surfaced, never silently dropped.
 - The SQLite database file is created automatically on first run if it does not already exist.
 
 ## Upload behaviour
 
-A month report is only saved when the uploaded log produced at least one row for a known boarder with a parseable time. Uploads that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful upload reports how many boarders were recorded. The upload stream is consumed directly by the ingestion module - it is never written to a temp file on disk.
+A month report is only saved when the uploaded log produced at least one row for a known boarder with a parseable time. Uploads that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful Import reports how many Boarders were recorded and how many had lateness, plus counts of unmatched or unparseable rows when present, so staff can correct bad source data. The upload stream is consumed directly by the ingestion module - it is never written to a temp file on disk.
 
 The web upload and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
 
 ## Persistence and deployment notes
 
 - The app stores month summaries in SQLite using the path from `DB_PATH`.
-- For Docker, keep the database file in a mounted folder so reports survive container restarts.
-- For Docker, keep `namelist.csv` in that same mounted folder if it changes over time.
+- The boarder master list is stored in the same SQLite database and managed through the Boarders tab; `namelist.csv` is read once at first startup to seed an empty boarders table.
+- For Docker, keep the database file in a mounted folder so reports and the boarder list survive container restarts.
 - Monthly uploads are consumed directly from the request stream and are never written to disk or stored permanently by the app.
 
 ## Development notes
 
-- Install dev dependencies (pytest, mypy) with `python -m pip install -r requirements-dev.txt`.
-- Run `python -m pytest tests` to run the suite across the ingestion and storage seams (synthetic CSVs and an in-memory SQLite connection, no server or browser required).
+- Install dev dependencies (pytest, mypy, playwright) with `python -m pip install -r requirements-dev.txt`.
+- Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium and skip automatically when it is unavailable).
 - Run `python -m mypy app.py parser.py storage.py records.py punishments.py` for typechecking.
 - Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.
@@ -130,7 +134,8 @@ Important behavior:
 
 - Each route opens its own connection and passes it into the storage functions; nothing reads a `DB_PATH` module global inside the storage layer.
 - The upload route forwards the request stream straight into `ingest_log` - no temp file on disk.
-- `serialize_boarders()` derives the JSON body from the shared `BoarderRecord`, so the wire format matches the stored rows and the CSV writer.
+- `api_month()` returns the month's rows as an ordered collection of explicit fields (name, display name, bed, frequency, total minutes, total points), so the wire format matches the stored rows and the CSV writer and carries the canonical display name.
+- A roster Import validates Bed uniqueness before replacing the master list: a CSV that assigns one Bed to two different boarders shows an actionable error and leaves the existing roster untouched, while duplicate normalized names still resolve last-row-wins.
 
 ### `parser.py` - the shared ingestion module, CSV writer, and CLI
 
@@ -138,9 +143,9 @@ Important behavior:
 
 Important behavior:
 
-- `load_namelist(namelist_filename)` reads the master list and normalizes names; returns `None` if the file is missing.
-- `ingest_log(log_stream, month_label, master_list, conn)` takes the log as a stream, the month label, the namelist, and a history store connection, and returns one outcome - either the report saved, or rejected with an exact reason. A rejected ingestion leaves the store untouched.
-- `SavedOutcome` carries the saved `BoarderRecord` list plus diagnostics (rows read, matched rows, unmatched names, unparseable rows) and builds the user-facing message.
+- `load_namelist(namelist_filename)` reads the master list into a normalized-name-to-Boarder mapping; returns `None` if the file is missing.
+- `ingest_log(log_stream, month_label, master_list, conn)` takes the log as a stream, the month label, the master list (each entry carrying the canonical display name and bed), and a history store connection, and returns one outcome - either the report saved, or rejected with an exact reason. A rejected ingestion leaves the store untouched.
+- `SavedOutcome` carries the saved `BoarderRecord` list plus diagnostics (rows read, matched rows, unmatched names, unparseable rows) and builds the user-facing saved-month confirmation.
 - `RejectedOutcome` carries the exact rejection reason (master list missing/empty, empty log, no rows matched any boarder, or no parseable time).
 - `boarders_to_csv(boarders)` renders a boarder record list to CSV text (used by the download route and the export).
 - `export_to_csv(output_filename, boarders)` writes the results to a CSV file.
@@ -155,20 +160,21 @@ Important behavior:
 - `create_schema(conn)` creates the `boarder_history` table if it does not exist.
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
 - `list_months(conn)` returns the month summaries used in the UI (month label, boarder count, total minutes late), ordered newest-first.
-- `get_month_report(conn, month_label)` returns one month's stored `BoarderRecord` rows.
+- `get_month_report(conn, month_label)` returns one month's stored `BoarderRecord` rows, ordered by the server's single Bed ordering rule (numeric part then suffix, lexical fallback). The report table may change display order without changing these stored values.
 - `search_history(conn, name_query)` performs a partial match against stored names.
 - `delete_month(conn, month_label)` removes a month and returns the deleted row count.
+- `replace_boarders(conn, rows)` replaces the master list after resolving duplicate normalized names last-row-wins and validating that no two different boarders share a Bed, raising a ValueError otherwise.
 
 ### `records.py` - the typed boarder record
 
-`records.py` defines the `BoarderRecord` (named fields for bed, frequency, total minutes late, total points, plus the normalized boarder name) once, shared by the ingestion module, the CSV writer, the storage module, and the JSON body. It also holds the `UnparsedTimeRow` and `HistoryEntry` records.
+`records.py` defines the `BoarderRecord` (normalized identity, canonical display name, bed, frequency, total minutes late, total points) once, shared by the ingestion module, the CSV writer, the storage module, and the JSON body. It also holds the `Boarder` master-list row, the `UnparsedTimeRow` and `HistoryEntry` records, and the `bed_sort_key` rule that orders Monthly Report rows.
 
 ### `templates/index.html` - User interface and client scripting
 
-The template renders the dashboard, search tab, month cards, month detail table, delete confirmation modal, and client-side sorting and fetch behavior.
+The template renders the dashboard, search tab, month cards, month detail table, delete confirmation modal, and fetch behavior. The month detail table renders canonical display names and typed values supplied by the server, starts in the server-defined Bed order, and supports display-only sorting without changing the data used for printing, downloading, or Punishment assignment.
 
 ## Troubleshooting
 
-- If the app starts but no boarders are found, confirm that the `namelist.csv` file has the expected column names.
+- If the app starts but no boarders are found, confirm that the `namelist.csv` file has the expected column names, or add boarders through the Boarders tab.
 - If Docker Compose starts but changes do not persist, check that the `data` folder is present and writable.
-- If the container cannot find `namelist.csv`, confirm that the file exists in the project root and that `NAMELIST_PATH` points to the mounted file.
+- If the container cannot find `namelist.csv` on first startup, confirm that the file exists in the project root and that `NAMELIST_PATH` points to the mounted file; you can also add boarders through the Boarders tab without a seed file.

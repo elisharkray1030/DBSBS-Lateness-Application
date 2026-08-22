@@ -9,7 +9,7 @@ A pupil at DBS Boarding School who lives in the boarding house and is assigned a
 _Avoid_: student, pupil, resident
 
 **Bed**:
-The boarder's assigned room designation (e.g., "601A").
+The boarder's assigned bed, designated by a unique string (e.g., "601A"). Each bed is assigned to exactly one boarder; each boarder has exactly one bed.
 _Avoid_: room, dorm
 
 **Monthly Log**:
@@ -31,6 +31,10 @@ _Avoid_: search history, records
 **Import**:
 Loading a monthly log to create or refresh that month's report.
 _Avoid_: upload, generate
+
+**Remove**:
+Drop a boarder from the master list. The boarder's Boarder History and Punishments persist as frozen snapshots (per ADR 0001) and are not affected. Future Monthly Log imports will no longer match a removed boarder.
+_Avoid_: delete, archive, deactivate
 
 ## Discipline
 

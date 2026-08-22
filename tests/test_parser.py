@@ -3,12 +3,16 @@ import io
 
 import pytest
 from helpers import record
+from records import Boarder, normalize_name
 
 from parser import (
     cli_ingest,
     cli_main,
     export_to_csv,
     load_namelist,
+    load_namelist_rows,
+    master_list_to_csv,
+    parse_namelist_stream,
     parse_time_seconds,
 )
 
@@ -18,9 +22,9 @@ class TestLoadNamelist:
         path = tmp_path / "namelist.csv"
         path.write_text("Name,Bed\nalice,101\nBOB,102\ncarol smith,103\n", encoding="utf-8")
         assert load_namelist(str(path)) == {
-            "ALICE": "101",
-            "BOB": "102",
-            "CAROL SMITH": "103",
+            "ALICE": Boarder(normalized_name="ALICE", display_name="alice", bed="101"),
+            "BOB": Boarder(normalized_name="BOB", display_name="BOB", bed="102"),
+            "CAROL SMITH": Boarder(normalized_name="CAROL SMITH", display_name="carol smith", bed="103"),
         }
 
     def test_missing_file_returns_none(self, tmp_path):
@@ -32,12 +36,111 @@ class TestLoadNamelist:
         assert load_namelist(str(path)) == {}
 
 
+class TestLoadNamelistRows:
+    def test_preserves_display_case(self, tmp_path):
+        path = tmp_path / "namelist.csv"
+        path.write_text("Name,Bed\nAlice,101\nbob smith,102\n", encoding="utf-8")
+        assert load_namelist_rows(str(path)) == [
+            Boarder(normalized_name="ALICE", display_name="Alice", bed="101"),
+            Boarder(normalized_name="BOB SMITH", display_name="bob smith", bed="102"),
+        ]
+
+    def test_missing_file_returns_none(self, tmp_path):
+        assert load_namelist_rows(str(tmp_path / "does-not-exist.csv")) is None
+
+    def test_empty_master_returns_empty_list(self, tmp_path):
+        path = tmp_path / "namelist.csv"
+        path.write_text("Name,Bed\n", encoding="utf-8")
+        assert load_namelist_rows(str(path)) == []
+
+
+class TestParseNamelistStream:
+    def test_parses_stream_preserving_case(self):
+        stream = io.StringIO("Name,Bed\nAlice,101\nbob smith,102\n")
+        assert parse_namelist_stream(stream) == [
+            Boarder(normalized_name="ALICE", display_name="Alice", bed="101"),
+            Boarder(normalized_name="BOB SMITH", display_name="bob smith", bed="102"),
+        ]
+
+    def test_skips_rows_with_missing_name_or_bed(self):
+        stream = io.StringIO("Name,Bed\nAlice,101\n,bad\nNoBed,\n")
+        assert parse_namelist_stream(stream) == [
+            Boarder(normalized_name="ALICE", display_name="Alice", bed="101")
+        ]
+
+    def test_empty_stream_returns_empty_list(self):
+        assert parse_namelist_stream(io.StringIO("Name,Bed\n")) == []
+
+
+class TestNormalizeName:
+    def test_strips_and_uppercases(self):
+        assert normalize_name("  carol smith  ") == "CAROL SMITH"
+
+    def test_leaves_uppercase_untouched(self):
+        assert normalize_name("CAROL") == "CAROL"
+
+    def test_comma_form_matches_space_form(self):
+        # Master lists enter 'SURNAME, Given'; access-control logs emit
+        # 'SURNAME Given'. Both must collapse to the same key.
+        assert normalize_name("CHAVEZ MOCAN, Lucas") == normalize_name(
+            "CHAVEZ MOCAN Lucas"
+        )
+
+    def test_collapses_punctuation_runs_to_single_spaces(self):
+        assert normalize_name("O'BRIEN-SMITH,. J.R.") == "O BRIEN SMITH J R"
+
+    def test_is_idempotent(self):
+        assert normalize_name(normalize_name("CHAVEZ MOCAN, Lucas")) == (
+            normalize_name("CHAVEZ MOCAN, Lucas")
+        )
+
+
+class TestMasterListToCsv:
+    def test_header_and_rows(self):
+        text = master_list_to_csv(
+            [
+                Boarder(normalized_name="ALICE", display_name="Alice", bed="601A"),
+                Boarder(normalized_name="BOB", display_name="Bob", bed="601B"),
+            ]
+        )
+        rows = list(csv.reader(io.StringIO(text)))
+        assert rows[0] == ["Name", "Bed"]
+        assert rows[1] == ["Alice", "601A"]
+        assert rows[2] == ["Bob", "601B"]
+
+    def test_deterministic_order(self):
+        text = master_list_to_csv(
+            [
+                Boarder(normalized_name="BOB", display_name="Bob", bed="601B"),
+                Boarder(normalized_name="ALICE", display_name="Alice", bed="601A"),
+            ]
+        )
+        names = [row[0] for row in csv.reader(io.StringIO(text))][1:]
+        assert names == ["Alice", "Bob"]
+
+    def test_empty_list_writes_only_header(self):
+        text = master_list_to_csv([])
+        rows = list(csv.reader(io.StringIO(text)))
+        assert rows == [["Name", "Bed"]]
+
+
 class TestParseTimeSeconds:
     def test_accepts_hh_mm(self):
         assert parse_time_seconds("07:41") == (7 * 3600) + (41 * 60)
 
     def test_accepts_hh_mm_ss(self):
         assert parse_time_seconds("07:41:30") == (7 * 3600) + (41 * 60) + 30
+
+    def test_accepts_single_digit_hour_hh_mm(self):
+        # Access-control logs emit H:MM times before 10am - the lateness window.
+        assert parse_time_seconds("7:41") == (7 * 3600) + (41 * 60)
+
+    def test_accepts_single_digit_hour_hh_mm_ss(self):
+        assert parse_time_seconds("7:41:04") == (7 * 3600) + (41 * 60) + 4
+
+    def test_bare_and_padded_hours_parse_identically(self):
+        assert parse_time_seconds("7:41") == parse_time_seconds("07:41")
+        assert parse_time_seconds("8:00:00") == parse_time_seconds("08:00:00")
 
     def test_accepts_24_hour_boundaries(self):
         assert parse_time_seconds("00:00") == 0
@@ -46,7 +149,6 @@ class TestParseTimeSeconds:
     @pytest.mark.parametrize(
         "value",
         [
-            "7:41",
             "5:41 PM",
             "07:60",
             "07:41:60",
@@ -71,7 +173,11 @@ class TestBoarderRecord:
         assert rec.total_minutes == 5
         assert rec.total_points == 7
 
-    def test_display_name_is_title_cased(self):
+    def test_exposes_canonical_display_name(self):
+        rec = record(name="ALICE", display_name="Alicia", bed="101")
+        assert rec.display_name == "Alicia"
+
+    def test_display_name_defaults_to_title_case(self):
         assert record("ALICE").display_name == "Alice"
         assert record("CAROL SMITH").display_name == "Carol Smith"
 
@@ -85,8 +191,13 @@ class TestBoardersToCsv:
         rows = list(csv.reader(io.StringIO(boarders_to_csv(boarders))))
 
         assert rows[0] == ["Bed", "Name", "Frequency", "Total Minutes Late", "Total Points"]
-        assert rows[1] == ["101", "ALICE", "2", "5", "7"]
-        assert rows[2] == ["102", "BOB", "1", "19", "20"]
+        assert rows[1] == ["101", "Alice", "2", "5", "7"]
+        assert rows[2] == ["102", "Bob", "1", "19", "20"]
+
+    def test_name_column_uses_canonical_display_name(self):
+        boarders = [record("ALICE", display_name="Alicia", bed="101")]
+        rows = list(csv.reader(io.StringIO(boarders_to_csv(boarders))))
+        assert rows[1] == ["101", "Alicia", "0", "0", "0"]
 
     def test_points_come_from_carried_value_not_recomputed(self):
         boarders = [record("X", bed="1", frequency=1, total_minutes=2, total_points=99)]
@@ -100,7 +211,18 @@ class TestBoardersToCsv:
         ]
         text = boarders_to_csv(boarders)
         names = [row[1] for row in csv.reader(io.StringIO(text))][1:]
-        assert names == ["ALICE", "BOB"]
+        assert names == ["Alice", "Bob"]
+
+    def test_orders_beds_by_number_then_suffix(self):
+        boarders = [
+            record("A", bed="10"),
+            record("B", bed="9A"),
+            record("C", bed="101A"),
+            record("D", bed="101"),
+        ]
+        text = boarders_to_csv(boarders)
+        names = [row[1] for row in csv.reader(io.StringIO(text))][1:]
+        assert names == ["B", "A", "D", "C"]
 
 
 class TestExportToCsv:
@@ -161,11 +283,32 @@ class TestCli:
         with open(output, encoding="utf-8", newline="") as file:
             written = file.read()
         assert written == boarders_to_csv(
-            [record("ALICE", bed="601A", frequency=1, total_minutes=1, total_points=2)]
+            [record("ALICE", bed="601A", frequency=1, total_minutes=1, total_points=2, display_name="alice")]
         )
         captured = capsys.readouterr()
         assert "Read 1 log rows, matched 1." in captured.out
-        assert "Unmatched names: []" in captured.out
+        assert "Monthly report saved for '" in captured.out
+        assert "with 1 boarder recorded as late" not in captured.out
+
+    def test_cli_prints_saved_message_without_diagnostics(self, tmp_path, capsys):
+        namelist = tmp_path / "namelist.csv"
+        namelist.write_text("Bed,Name\n601A,alice\n", encoding="utf-8")
+        log = tmp_path / "log.csv"
+        log.write_text(
+            "Name,Transaction Time\nALICE,07:42\nGHOST,07:43\nALICE,7:45\n", encoding="utf-8"
+        )
+        output = tmp_path / "report.csv"
+
+        code = cli_main(str(namelist), str(log), str(output))
+
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "Monthly report saved for '" in captured.out
+        assert "with 1 boarder recorded as late" not in captured.out
+        assert "Unmatched names: GHOST." not in captured.out
+        assert "Unparseable times: ALICE ('7:45')." not in captured.out
+        assert "Wrote report to" in captured.out
+        assert "Generated" not in captured.out
 
     def test_cli_main_rejects_missing_namelist(self, tmp_path, capsys):
         missing = tmp_path / "nope.csv"

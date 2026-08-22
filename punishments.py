@@ -1,13 +1,64 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-from records import BoarderRecord
+from records import BoarderRecord, Punishment
 
 import storage
 
 STATUSES = ("assigned", "overdue", "phone_held", "submitted", "voided")
 IN_FLIGHT_STATUSES = ("assigned", "overdue", "phone_held")
 NON_VOIDED_STATUSES = ("assigned", "overdue", "phone_held", "submitted")
+
+# One shared humanized-label map driving status wording everywhere staff
+# see it: filter options, group headings, and table cells.
+STATUS_LABELS = {
+    "assigned": "Assigned",
+    "overdue": "Overdue",
+    "phone_held": "Phone held",
+    "submitted": "Submitted",
+    "voided": "Voided",
+}
+
+_TRANSITION_STAMPS = (
+    "assigned_at",
+    "overdue_at",
+    "phone_held_at",
+    "submitted_at",
+    "voided_at",
+)
+
+
+def humanized_status(status: str) -> str:
+    """Returns the staff-facing label for a punishment status code."""
+    return STATUS_LABELS.get(status, status)
+
+
+def last_action_at(punishment) -> str | None:
+    """Returns the most recent transition timestamp, or None."""
+    stamps = [
+        getattr(punishment, field)
+        for field in _TRANSITION_STAMPS
+        if getattr(punishment, field)
+    ]
+    if not stamps:
+        return None
+    return max(stamps, key=_stamp_moment)
+
+
+def _stamp_moment(stamp: str) -> datetime:
+    try:
+        return datetime.fromisoformat(stamp)
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def format_timestamp(stamp: str) -> str:
+    """Renders a stored timestamp as 'YYYY-MM-DD HH:MM' for table display."""
+    try:
+        moment = datetime.fromisoformat(stamp)
+    except ValueError:
+        return stamp
+    return moment.strftime("%Y-%m-%d %H:%M")
 
 
 @dataclass
@@ -46,6 +97,60 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+@dataclass(frozen=True)
+class OfferedAction:
+    """One transition button the Consequences view offers on a row.
+
+    ``reason_input`` marks the void variant: its form gains the optional
+    reason field and the data attributes feeding the confirm dialog.
+    """
+
+    target: str
+    label: str
+    style: str = "primary"
+    reason_input: bool = False
+
+
+# Which actions each status offers on the Consequences view, defined once
+# beside the POST-time legality table so UI offers cannot drift from what
+# the server accepts. Targets in _DUE_GATED_TARGETS appear only when the
+# server flags the row due. VALID_TRANSITIONS remains the POST-time
+# authority for what a submission may do (ADR 0001: manual-only machine).
+_OFFERED_TRANSITIONS = {
+    "assigned": (
+        ("overdue", "Mark overdue"),
+        ("submitted", "Submitted"),
+    ),
+    "overdue": (
+        ("phone_held", "Phone held"),
+        ("submitted", "Submitted"),
+    ),
+    "phone_held": (("submitted", "Submitted (release phone)"),),
+    "submitted": (),
+}
+
+_DUE_GATED_TARGETS = frozenset({"overdue"})
+
+_VOID_ACTION = OfferedAction(
+    target="voided",
+    label="Void",
+    style="neutral",
+    reason_input=True,
+)
+
+
+def offered_actions(punishment: Punishment) -> list[OfferedAction]:
+    """Returns the ready-to-render action list for one Consequences row."""
+    actions = [
+        OfferedAction(target=target, label=label)
+        for target, label in _OFFERED_TRANSITIONS.get(punishment.status, ())
+        if target not in _DUE_GATED_TARGETS or punishment.is_due
+    ]
+    if punishment.status in NON_VOIDED_STATUSES:
+        actions.append(_VOID_ACTION)
+    return actions
+
+
 @dataclass
 class TransitionSaved:
     """A punishment moved to a new status."""
@@ -67,9 +172,12 @@ class TransitionRejected:
     current_status: str
     target: str
     normalized_name: str
+    reason_message: str | None = None
 
     @property
     def reason(self) -> str:
+        if self.reason_message is not None:
+            return self.reason_message
         return (
             f"Cannot move {self.normalized_name} from '{self.current_status}' "
             f"to '{self.target}'. That transition is not allowed."
@@ -99,6 +207,20 @@ def transition(
             target=target,
             normalized_name=punishment.display_name,
         )
+
+    if target == "overdue" and punishment.status == "assigned":
+        transition_date = _timestamp_date(timestamp)
+        deadline = date.fromisoformat(punishment.deadline)
+        if transition_date < deadline:
+            return TransitionRejected(
+                current_status=punishment.status,
+                target=target,
+                normalized_name=punishment.display_name,
+                reason_message=(
+                    f"Cannot mark {punishment.display_name} overdue before its "
+                    f"deadline of {punishment.deadline}."
+                ),
+            )
 
     storage.transition_punishment(
         conn,
@@ -155,7 +277,7 @@ def assign_batch(
     storage.assign_punishments(conn, month, eligible, deadline, assigned_at)
     return AssignmentSaved(
         count=len(eligible),
-        names=[boarder.name for boarder in eligible],
+        names=[boarder.display_name for boarder in eligible],
         month=month,
         deadline=deadline,
     )
@@ -169,9 +291,23 @@ def _is_due(punishment, now: datetime) -> bool:
 
 
 def _was_late(punishment) -> bool:
-    if punishment.status != "submitted" or not punishment.submitted_at:
+    if not punishment.submitted_at:
         return False
-    return punishment.submitted_at > punishment.deadline
+    submitted_at = _timestamp_date(punishment.submitted_at)
+    deadline = date.fromisoformat(punishment.deadline)
+    return submitted_at > deadline
+
+
+def _timestamp_date(timestamp: str) -> date:
+    """Returns the calendar date represented by an ISO timestamp or date.
+
+    A submission on the Deadline date is not late because comparison uses
+    calendar dates rather than the stored timestamp string.
+    """
+    try:
+        return datetime.fromisoformat(timestamp).date()
+    except ValueError:
+        return date.fromisoformat(timestamp)
 
 
 def _status_rank(status: str) -> int:
@@ -192,10 +328,10 @@ def list_consequences(
     and ``was_late`` flags for each punishment.
     """
     statuses: tuple[str, ...] | None
-    if show_all:
-        statuses = None
-    elif status:
+    if status:
         statuses = (status,)
+    elif show_all:
+        statuses = None
     else:
         statuses = IN_FLIGHT_STATUSES
     punishments = storage.list_punishments(conn, statuses=statuses, month=month)
@@ -204,6 +340,11 @@ def list_consequences(
     for punishment in punishments:
         punishment.is_due = _is_due(punishment, now)
         punishment.was_late = _was_late(punishment)
+        last_action = last_action_at(punishment)
+        punishment.last_action = (
+            format_timestamp(last_action) if last_action else None
+        )
+        punishment.actions = offered_actions(punishment)
     return sorted(
         punishments,
         key=lambda p: (_status_rank(p.status), p.deadline, p.normalized_name),

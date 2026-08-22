@@ -1,19 +1,72 @@
-from dataclasses import dataclass
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from punishments import OfferedAction
+
+
+_NAME_KEY_NOISE = re.compile(r"(?:[^\w]|_)+")
+
+
+def normalize_name(name: str) -> str:
+    """Normalizes a boarder name to its punctuation-insensitive match key.
+
+    Uppercases and collapses every run of punctuation and whitespace (commas,
+    periods, apostrophes, newlines...) to a single space, so master-list
+    entries like 'SURNAME, Given' match log rows like 'SURNAME Given'.
+    """
+    return _NAME_KEY_NOISE.sub(" ", name.strip().upper()).strip()
+
+
+def boarder_sort_key(boarder: "Boarder") -> tuple[tuple[int, int, str], str]:
+    """Orders boarders by the shared Bed ordering rule, then display name."""
+    return (bed_sort_key(boarder.bed), boarder.display_name)
+
+
+_BED_NUMERIC_PATTERN = re.compile(r"^(\d+)(.*)$")
+
+
+def bed_sort_key(bed: str) -> tuple[int, int, str]:
+    """Orders beds by leading number then suffix, with a lexical fallback.
+
+    The single server-side ordering rule for Bed values: '9A' sorts before
+    '10', and '601A' before '601B' before '602A'. Beds that do not start with
+    a number sort lexically after every numbered bed.
+    """
+    match = _BED_NUMERIC_PATTERN.match(bed)
+    if match:
+        return (0, int(match.group(1)), match.group(2))
+    return (1, 0, bed)
+
+
+def sort_boarder_records(records: "Iterable[BoarderRecord]") -> "list[BoarderRecord]":
+    """Orders Monthly Report rows by the shared Bed rule, then normalized name."""
+    return sorted(records, key=lambda r: (bed_sort_key(r.bed), r.name))
+
+
+@dataclass
+class Boarder:
+    """One row of the master list: id, normalized name, display name, and bed."""
+
+    normalized_name: str
+    display_name: str
+    bed: str
+    id: int = 0
 
 
 @dataclass
 class BoarderRecord:
-    """One boarder's month summary, keyed by normalized name."""
+    """One boarder's month summary: normalized identity, canonical display
+    name, bed, and the computed lateness values."""
 
     name: str
+    display_name: str
     bed: str
     frequency: int
     total_minutes: int
     total_points: int
-
-    @property
-    def display_name(self) -> str:
-        return self.name.title()
 
 
 @dataclass
@@ -65,3 +118,5 @@ class Punishment:
     void_reason: str | None = None
     is_due: bool = False
     was_late: bool = False
+    last_action: str | None = None
+    actions: list["OfferedAction"] = field(default_factory=list)

@@ -1,11 +1,33 @@
 import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from uuid import uuid4
 
-from records import BoarderRecord, HistoryEntry, MonthSummary, Punishment
+from records import (
+    Boarder,
+    BoarderRecord,
+    HistoryEntry,
+    MonthSummary,
+    Punishment,
+    normalize_name,
+    sort_boarder_records,
+)
+
+_BOARDERS_COLUMNS = """
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    normalized_name TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    bed TEXT NOT NULL UNIQUE
+"""
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS boarders ({_BOARDERS_COLUMNS}
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS boarder_history (
@@ -44,11 +66,348 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_punishments_active
         ON punishments(normalized_name, month)
         WHERE status != 'voided'
         """
     )
+    _migrate_boarders_bed_unique(conn)
+    _migrate_normalized_name_keys(conn)
+    conn.commit()
+
+
+def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
+    """Re-keys stored rows onto the punctuation-insensitive match key.
+
+    Older builds stored match keys under uppercase-and-trim only, so
+    master-list entries like 'SURNAME, Given' never matched log rows like
+    'SURNAME Given'. Re-normalizes every stored key in place so joins between
+    boarders, history, and punishments stay intact. When two rows collapse
+    onto the same key, the first row (lowest id) claims it and later rows
+    keep their previous key rather than failing startup.
+    """
+    for table in ("boarders", "boarder_history", "punishments"):
+        rows = conn.execute(
+            f"SELECT id, normalized_name FROM {table} ORDER BY id"
+        ).fetchall()
+        for row_id, old_key in rows:
+            new_key = normalize_name(old_key)
+            if new_key == old_key:
+                continue
+            try:
+                conn.execute(
+                    f"UPDATE {table} SET normalized_name = ? WHERE id = ?",
+                    (new_key, row_id),
+                )
+            except sqlite3.IntegrityError:
+                continue
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Stores one key/value row in the meta table, overwriting an existing key."""
+    conn.execute(
+        """
+        INSERT INTO meta (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+    conn.commit()
+
+
+def _boarders_table_sql(conn: sqlite3.Connection) -> str | None:
+    """Returns the boarders table's CREATE statement, or None if absent."""
+    cursor = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'boarders'"
+    )
+    row = cursor.fetchone()
+    return row[0] if row is not None else None
+
+
+def _bed_unique_in_schema(table_sql: str) -> bool:
+    """True when the boarders CREATE statement declares a UNIQUE bed."""
+    return "bed TEXT NOT NULL UNIQUE" in table_sql
+
+
+def _migrate_boarders_bed_unique(conn: sqlite3.Connection) -> None:
+    """Upgrades a pre-UNIQUE boarders table to the bed-UNIQUE schema.
+
+    Uses create-copy-swap: rename the old table, create the new table with
+    the UNIQUE constraint, copy rows across preserving ids, and drop the old
+    table. Safe because the current database contains no duplicate beds.
+    """
+    table_sql = _boarders_table_sql(conn)
+    if table_sql is None or _bed_unique_in_schema(table_sql):
+        return
+
+    conn.execute("ALTER TABLE boarders RENAME TO boarders_old")
+    conn.execute(
+        f"""
+        CREATE TABLE boarders ({_BOARDERS_COLUMNS}
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO boarders (id, normalized_name, display_name, bed)
+        SELECT id, normalized_name, display_name, bed
+        FROM boarders_old
+        """
+    )
+    conn.execute("DROP TABLE boarders_old")
+    conn.commit()
+
+
+def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    """Returns the stored value for a meta key, or None if the key is absent."""
+    cursor = conn.execute("SELECT value FROM meta WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    return row[0] if row is not None else None
+
+
+def list_boarders(conn: sqlite3.Connection) -> list[Boarder]:
+    """Returns the current master list, ordered by bed then display name."""
+    cursor = conn.execute(
+        """
+        SELECT id, normalized_name, display_name, bed
+        FROM boarders
+        ORDER BY bed ASC, display_name ASC
+        """
+    )
+    return [
+        Boarder(id=row[0], normalized_name=row[1], display_name=row[2], bed=row[3])
+        for row in cursor.fetchall()
+    ]
+
+
+def boarder_master_list(conn: sqlite3.Connection) -> dict[str, Boarder]:
+    """Returns {normalized_name: Boarder} for log ingestion matching.
+
+    Each Boarder carries the canonical display name alongside the bed, so
+    ingestion can preserve normalized identity without losing the display
+    name staff see in the Boarders tab.
+    """
+    cursor = conn.execute(
+        """
+        SELECT normalized_name, display_name, bed
+        FROM boarders
+        """
+    )
+    return {
+        row[0]: Boarder(normalized_name=row[0], display_name=row[1], bed=row[2])
+        for row in cursor.fetchall()
+    }
+
+
+def add_boarder(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    display_name: str,
+    bed: str,
+) -> int:
+    """Adds one boarder to the master list, returning the new row id."""
+    cursor = conn.execute(
+        """
+        INSERT INTO boarders (normalized_name, display_name, bed)
+        VALUES (?, ?, ?)
+        """,
+        (normalized_name, display_name, bed),
+    )
+    conn.commit()
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("Insert succeeded but no row id was returned.")
+    return lastrowid
+
+
+def boarder_exists(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    exclude_id: int | None = None,
+) -> bool:
+    """True if a boarder with this normalized name is on the list.
+
+    Pass exclude_id to ignore one row (used when renaming that row to its
+    own current name).
+    """
+    if exclude_id is None:
+        cursor = conn.execute(
+            "SELECT 1 FROM boarders WHERE normalized_name = ?",
+            (normalized_name,),
+        )
+    else:
+        cursor = conn.execute(
+            "SELECT 1 FROM boarders WHERE normalized_name = ? AND id != ?",
+            (normalized_name, exclude_id),
+        )
+    return cursor.fetchone() is not None
+
+
+def bed_exists(
+    conn: sqlite3.Connection,
+    bed: str,
+    exclude_id: int | None = None,
+) -> bool:
+    """True if another boarder is already assigned this bed.
+
+    Pass exclude_id to ignore one row (used when editing that row and
+    keeping its own bed).
+    """
+    if exclude_id is None:
+        cursor = conn.execute(
+            "SELECT 1 FROM boarders WHERE bed = ?",
+            (bed,),
+        )
+    else:
+        cursor = conn.execute(
+            "SELECT 1 FROM boarders WHERE bed = ? AND id != ?",
+            (bed, exclude_id),
+        )
+    return cursor.fetchone() is not None
+
+
+def update_boarder(
+    conn: sqlite3.Connection,
+    boarder_id: int,
+    normalized_name: str,
+    display_name: str,
+    bed: str,
+) -> None:
+    """Updates one boarder's name and bed; no-op if the id is unknown."""
+    conn.execute(
+        """
+        UPDATE boarders
+        SET normalized_name = ?, display_name = ?, bed = ?
+        WHERE id = ?
+        """,
+        (normalized_name, display_name, bed, boarder_id),
+    )
+    conn.commit()
+
+
+def update_boarders(
+    conn: sqlite3.Connection,
+    updates: Iterable[tuple[int, str, str, str]],
+) -> None:
+    """Atomically updates several master-list rows after validating the final roster."""
+    updates = list(updates)
+    if len({boarder_id for boarder_id, _, _, _ in updates}) != len(updates):
+        raise ValueError("A boarder was included more than once.")
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = {boarder.id: boarder for boarder in list_boarders(conn)}
+        proposed = dict(current)
+
+        for boarder_id, normalized_name, display_name, bed in updates:
+            if boarder_id not in current:
+                raise ValueError("A boarder could not be found.")
+            if not display_name:
+                raise ValueError("A boarder name is required.")
+            if not bed:
+                raise ValueError("A bed is required.")
+            proposed[boarder_id] = Boarder(
+                id=boarder_id,
+                normalized_name=normalized_name,
+                display_name=display_name,
+                bed=bed,
+            )
+
+        names: dict[str, Boarder] = {}
+        beds: dict[str, Boarder] = {}
+        for boarder in proposed.values():
+            other = names.get(boarder.normalized_name)
+            if other is not None and other.id != boarder.id:
+                raise ValueError(
+                    f"A boarder named '{boarder.display_name}' is already on the list."
+                )
+            names[boarder.normalized_name] = boarder
+
+            other = beds.get(boarder.bed)
+            if other is not None and other.id != boarder.id:
+                raise ValueError(
+                    f"Bed '{boarder.bed}' is already assigned to another boarder."
+                )
+            beds[boarder.bed] = boarder
+
+        token = uuid4().hex
+        for boarder_id, _, _, _ in updates:
+            conn.execute(
+                """
+                UPDATE boarders
+                SET normalized_name = ?, bed = ?
+                WHERE id = ?
+                """,
+                (
+                    f"__pending_name_{token}_{boarder_id}",
+                    f"__pending_bed_{token}_{boarder_id}",
+                    boarder_id,
+                ),
+            )
+        for boarder_id, normalized_name, display_name, bed in updates:
+            conn.execute(
+                """
+                UPDATE boarders
+                SET normalized_name = ?, display_name = ?, bed = ?
+                WHERE id = ?
+                """,
+                (normalized_name, display_name, bed, boarder_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def delete_boarder(conn: sqlite3.Connection, boarder_id: int) -> None:
+    """Removes one boarder from the master list; no-op if the id is unknown."""
+    conn.execute(
+        "DELETE FROM boarders WHERE id = ?",
+        (boarder_id,),
+    )
+    conn.commit()
+
+
+def replace_boarders(
+    conn: sqlite3.Connection,
+    rows: Iterable[Boarder],
+) -> None:
+    """Replaces the entire master list with the given boarders.
+
+    Duplicate normalized names resolve last-row-wins before any validation.
+    When two different boarders claim the same Bed, a ValueError is raised and
+    the existing roster is left untouched, so a bad CSV can never partially
+    replace the master list.
+    """
+    deduped = {boarder.normalized_name: boarder for boarder in rows}
+    by_bed: dict[str, Boarder] = {}
+    for boarder in deduped.values():
+        other = by_bed.get(boarder.bed)
+        if other is not None and other.normalized_name != boarder.normalized_name:
+            raise ValueError(
+                f"Bed '{boarder.bed}' is assigned to both '{other.display_name}' "
+                f"and '{boarder.display_name}'. Assign each Bed to one Boarder "
+                "and Import again."
+            )
+        by_bed[boarder.bed] = boarder
+
+    conn.execute("DELETE FROM boarders")
+    for boarder in deduped.values():
+        conn.execute(
+            """
+            INSERT INTO boarders (normalized_name, display_name, bed)
+            VALUES (?, ?, ?)
+            """,
+            (boarder.normalized_name, boarder.display_name, boarder.bed),
+        )
     conn.commit()
 
 
@@ -76,6 +435,7 @@ def save_month(
                 imported_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(normalized_name, month) DO UPDATE SET
+                display_name = excluded.display_name,
                 bed = excluded.bed,
                 frequency = excluded.frequency,
                 total_minutes = excluded.total_minutes,
@@ -111,36 +471,49 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     ]
 
 
+def list_punishment_months(conn: sqlite3.Connection) -> list[str]:
+    """Returns Months represented by Punishments, newest first."""
+    cursor = conn.execute(
+        """
+        SELECT DISTINCT month
+        FROM punishments
+        ORDER BY month DESC
+        """
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
 def get_month_report(conn: sqlite3.Connection, month_label: str) -> list[BoarderRecord]:
     if not month_label:
         return []
 
     cursor = conn.execute(
         """
-        SELECT normalized_name, bed, frequency, total_minutes, total_points
+        SELECT normalized_name, display_name, bed, frequency, total_minutes, total_points
         FROM boarder_history
         WHERE month = ?
-        ORDER BY bed ASC, display_name ASC
         """,
         (month_label,),
     )
-    return [
+    records = [
         BoarderRecord(
             name=row[0],
-            bed=row[1],
-            frequency=row[2],
-            total_minutes=row[3],
-            total_points=row[4],
+            display_name=row[1],
+            bed=row[2],
+            frequency=row[3],
+            total_minutes=row[4],
+            total_points=row[5],
         )
         for row in cursor.fetchall()
     ]
+    return sort_boarder_records(records)
 
 
 def search_history(conn: sqlite3.Connection, name_query: str) -> list[HistoryEntry]:
     if not name_query:
         return []
 
-    normalized_query = f"%{name_query.strip().upper()}%"
+    normalized_query = f"%{normalize_name(name_query)}%"
     cursor = conn.execute(
         """
         SELECT display_name, bed, month, frequency, total_minutes, total_points

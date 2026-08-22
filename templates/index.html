@@ -21,6 +21,11 @@
             --success-text: #0f5132;
             --error-bg: #f8d7da;
             --error-text: #842029;
+            /* Badge and disabled-control tokens meet WCAG AA at rendered sizes. */
+            --due-badge-bg: #c81030;
+            --late-badge-bg: #495057;
+            --disabled-bg: #e9ecef;
+            --disabled-text: #495057;
             /* TODO: dark mode — map these tokens to a dark palette on a later theme hook. */
         }
 
@@ -85,6 +90,7 @@
 
         .tabs {
             display: flex;
+            flex-wrap: wrap;
             gap: 8px;
             margin-bottom: 20px;
             border-bottom: 2px solid var(--border);
@@ -95,8 +101,12 @@
             border: none;
             background: transparent;
             color: var(--text-muted);
+            /* Buttons do not inherit document fonts by default; forcing
+               inheritance keeps link tabs and button tabs identically sized. */
+            font: inherit;
             font-weight: 600;
             cursor: pointer;
+            text-decoration: none;
             border-bottom: 3px solid transparent;
             transition: all 0.2s;
         }
@@ -132,12 +142,22 @@
         }
 
         input[type="text"],
-        input[type="file"] {
+        input[type="file"],
+        input[type="month"],
+        input[type="date"] {
             padding: 10px 12px;
             border-radius: 6px;
             border: 1px solid var(--border);
             width: 100%;
             background: var(--surface);
+        }
+
+        input:focus-visible,
+        select:focus-visible,
+        button:focus-visible,
+        a:focus-visible {
+            outline: 2px solid var(--navy);
+            outline-offset: 2px;
         }
 
         .upload-panel,
@@ -200,6 +220,12 @@
             filter: brightness(1.1);
         }
 
+        .btn:disabled {
+            background-color: var(--disabled-bg);
+            color: var(--disabled-text);
+            cursor: not-allowed;
+        }
+
         .btn-sm {
             padding: 6px 12px;
             font-size: 0.85em;
@@ -258,9 +284,35 @@
             background-color: var(--page-bg);
         }
 
-        .month-report-table th {
-            cursor: pointer;
-            user-select: none;
+        .boarder-edit-actions {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 20px;
+        }
+
+        .boarder-edit-actions[hidden] {
+            display: none;
+        }
+
+        .boarders-table th.boarder-actions,
+        .boarders-table td.boarder-actions {
+            width: 1%;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .boarder-remove {
+            padding: 6px;
+        }
+
+        .boarder-inline-error {
+            color: var(--error-text);
+            font-size: 0.85em;
+            margin-top: 6px;
+        }
+
+        .boarder-edit-error {
+            flex-basis: 100%;
         }
 
         .month-report-scroll thead th {
@@ -269,9 +321,32 @@
             z-index: 1;
         }
 
+        .month-report-table th {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .month-report-table th .sort-btn {
+            background: none;
+            border: none;
+            padding: 0;
+            font: inherit;
+            color: inherit;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .month-report-table th .sort-btn:focus-visible {
+            outline: 2px solid var(--navy);
+            outline-offset: 2px;
+        }
+
         .sort-indicator {
+            display: inline-flex;
+            flex-direction: column;
             margin-left: 4px;
             vertical-align: -2px;
+            line-height: 0.65;
         }
 
         .month-report-table th .sort-up,
@@ -279,10 +354,7 @@
             opacity: 0.35;
         }
 
-        .month-report-table th.sort-asc .sort-up {
-            opacity: 1;
-        }
-
+        .month-report-table th.sort-asc .sort-up,
         .month-report-table th.sort-desc .sort-down {
             opacity: 1;
         }
@@ -403,9 +475,15 @@
             gap: 6px;
         }
 
+        .assign-counter {
+            color: var(--text-muted);
+            font-weight: 600;
+            margin: 4px 0 12px;
+        }
+
         .due-badge {
             display: inline-block;
-            background: var(--brand-red);
+            background: var(--due-badge-bg);
             color: var(--surface);
             font-size: 0.75em;
             font-weight: 600;
@@ -416,13 +494,32 @@
 
         .late-badge {
             display: inline-block;
-            background: var(--neutral);
+            background: var(--late-badge-bg);
             color: var(--surface);
             font-size: 0.75em;
             font-weight: 600;
             padding: 2px 8px;
             border-radius: 999px;
             margin-left: 6px;
+        }
+
+        .row-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .row-actions form {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .row-actions input[name="void_reason"] {
+            width: 150px;
+            padding: 6px 12px;
         }
 
         .consequences-filters {
@@ -446,7 +543,6 @@
         .consequences-group-title {
             margin: 0 0 6px;
             color: var(--navy);
-            text-transform: capitalize;
         }
 
         .consequences-panel select {
@@ -536,15 +632,30 @@
         }
 
         @media print {
+            /* Print outputs exactly the active view's report region: chrome,
+               tooling, inactive panels, transient banners, and the empty
+               month-detail skeleton are all excluded. Printing an open month
+               report is an intentional feature (body.report-open). */
             .site-header,
             .tabs,
             .upload-panel,
-            .history-panel,
+            #history form,
             .reports-panel > :not(#month-detail),
             .month-actions,
             .month-detail-toolbar,
-            .banner {
+            .banner,
+            #month-detail-loading,
+            #month-detail-error {
                 display: none !important;
+            }
+
+            #month-detail {
+                display: none !important;
+            }
+
+            body.report-open #month-detail {
+                display: block !important;
+                margin-top: 0 !important;
             }
 
             .print-brand {
@@ -562,11 +673,6 @@
                 font-size: 1.1rem;
                 font-weight: 700;
                 color: var(--navy);
-            }
-
-            #month-detail {
-                display: block !important;
-                margin-top: 0 !important;
             }
 
             #month-detail table {
@@ -616,12 +722,6 @@
         <polyline points="3 6 5 6 21 6"/>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
     </symbol>
-    <symbol id="icon-sort-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6 15l6-6 6 6"/>
-    </symbol>
-    <symbol id="icon-sort-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6 9l6 6 6-6"/>
-    </symbol>
 </svg>
 <header class="site-header">
     <a class="brand" href="/">
@@ -643,21 +743,22 @@
     <div class="tabs">
         <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">View Reports in Database</button>
         <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
-        <button class="tab-link {% if selected_tab == 'consequences' %}active{% endif %}" data-tab="consequences">Consequences</button>
+        <a class="tab-link {% if selected_tab == 'consequences' %}active{% endif %}" data-tab="consequences" href="/consequences">Consequences</a>
+        <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">Boarders</button>
     </div>
 
     <!-- History Search Panel -->
     <section id="history" class="panel {% if selected_tab == 'history' %}active{% endif %} history-panel">
         <h2>Search Boarder History</h2>
-        <div class="form-row">
+        <form action="/" method="get" class="form-row">
             <div class="form-field">
                 <label for="search_name"><strong>Boarder Name</strong></label>
-                <input type="text" id="search_name" placeholder="Enter name or partial name">
+                <input type="text" id="search_name" name="search_name" placeholder="Enter name or partial name" required>
             </div>
             <div>
-                <button type="button" class="btn btn-primary" onclick="performSearch()">Search History</button>
+                <button type="submit" class="btn btn-primary">Search Boarder History</button>
             </div>
-        </div>
+        </form>
 
         {% if history_results is not none %}
             <div class="results-section">
@@ -667,12 +768,12 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Boarder Name</th>
-                                    <th>Bed</th>
-                                    <th>Month</th>
-                                    <th>Frequency</th>
-                                    <th>Minutes Late</th>
-                                    <th>Total Points</th>
+                                    <th scope="col">Boarder Name</th>
+                                    <th scope="col">Bed</th>
+                                    <th scope="col">Month</th>
+                                    <th scope="col">Frequency</th>
+                                    <th scope="col">Minutes Late</th>
+                                    <th scope="col">Total Points</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -690,7 +791,7 @@
                         </table>
                     </div>
                 {% else %}
-                    <div class="empty-state">No history records matched your search.</div>
+                    <div class="empty-state">No Boarder History entries matched your search.</div>
                 {% endif %}
             </div>
         {% endif %}
@@ -698,90 +799,91 @@
 
     <!-- Consequences Panel -->
     <section id="consequences" class="panel {% if selected_tab == 'consequences' %}active{% endif %} consequences-panel">
+        {% macro consequence_filters() %}
+            {% if consequences_month %}<input type="hidden" name="month" value="{{ consequences_month }}">{% endif %}
+            {% if consequences_status %}<input type="hidden" name="status" value="{{ consequences_status }}">{% endif %}
+            {% if consequences_show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
+        {% endmacro %}
+        {% macro transition_form(p, action) -%}
+            <form action="/punishment/{{ p.id }}/transition" method="post"{% if action.reason_input %} class="void-form" data-boarder="{{ p.display_name }}" data-month="{{ p.month }}"{% endif %}>
+                <input type="hidden" name="to" value="{{ action.target }}">
+                {{ consequence_filters() }}
+                {% if action.reason_input %}<input type="text" name="void_reason" placeholder="Reason (optional)" aria-label="Void reason (optional)">{% endif %}
+                <button type="submit" class="btn btn-{{ action.style }} btn-sm">{{ action.label }}</button>
+            </form>
+        {%- endmacro %}
         <h2>Consequences</h2>
         <div class="month-detail-toolbar">
             <h3>Punishments</h3>
             <form action="/consequences" method="get" class="consequences-filters">
+                {% if consequences_show_all %}
+                    <input type="hidden" name="show_all" value="1">
+                {% endif %}
                 <label for="consequences-month"><strong>Month</strong></label>
                 <select id="consequences-month" name="month">
                     <option value="">All months</option>
-                    {% for m in all_months %}
-                        <option value="{{ m.month }}" {% if consequences_month == m.month %}selected{% endif %}>{{ m.month }}</option>
+                    {% for month in punishment_months %}
+                        <option value="{{ month }}" {% if consequences_month == month %}selected{% endif %}>{{ month }}</option>
                     {% endfor %}
                 </select>
                 <label for="consequences-status"><strong>Status</strong></label>
                 <select id="consequences-status" name="status">
-                    <option value="">In-flight only</option>
+                    <option value="">{% if consequences_show_all %}All statuses{% else %}In-flight only{% endif %}</option>
                     {% for s in ['assigned', 'overdue', 'phone_held', 'submitted', 'voided'] %}
-                        <option value="{{ s }}" {% if consequences_status == s %}selected{% endif %}>{{ s }}</option>
+                        <option value="{{ s }}" {% if consequences_status == s %}selected{% endif %}>{{ humanized_status(s) }}</option>
                     {% endfor %}
                 </select>
                 <button type="submit" class="btn btn-primary btn-sm">Filter</button>
             </form>
-            <a class="btn btn-neutral btn-sm" href="/consequences{% if not consequences_show_all %}?show_all=1{% endif %}">
-                {% if consequences_show_all %}Show in-flight only{% else %}Show all{% endif %}
-            </a>
+            <form action="/consequences" method="get">
+                {% if consequences_month %}
+                    <input type="hidden" name="month" value="{{ consequences_month }}">
+                {% endif %}
+                {% if consequences_status %}
+                    <input type="hidden" name="status" value="{{ consequences_status }}">
+                {% endif %}
+                {% if not consequences_show_all %}
+                    <input type="hidden" name="show_all" value="1">
+                {% endif %}
+                <button type="submit" class="btn btn-neutral btn-sm">
+                    {% if consequences_show_all %}Show in-flight only{% else %}Show all{% endif %}
+                </button>
+            </form>
         </div>
         {% if punishments %}
             {% for group in punishments|groupby('status') %}
             <div class="consequences-group">
-                <h4 class="consequences-group-title">{{ group.grouper }}</h4>
+                <h4 class="consequences-group-title">{{ humanized_status(group.grouper) }}</h4>
                 <div class="table-scroll">
                     <table>
                         <thead>
                             <tr>
-                                <th>Boarder</th>
-                                <th>Bed</th>
-                                <th>Month</th>
-                                <th>Points Owed</th>
-                                <th>Deadline</th>
-                                <th>Status</th>
-                                <th>Actions</th>
+                                <th scope="col">Boarder</th>
+                                <th scope="col">Bed</th>
+                                <th scope="col">Month</th>
+                                <th scope="col">Points Owed</th>
+                                <th scope="col">Deadline</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Last action</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for p in group.list %}
-                            <tr>
+                            <tr data-punishment-id="{{ p.id }}">
                                 <td>{{ p.display_name }}{% if p.is_due %} <span class="due-badge">due</span>{% endif %}</td>
                                 <td>{{ p.bed }}</td>
                                 <td>{{ p.month }}</td>
                                 <td>{{ p.points_owed }}</td>
                                 <td>{{ p.deadline }}{% if p.was_late %} <span class="late-badge">late</span>{% endif %}</td>
-                                <td>{{ p.status }}</td>
+                                <td>{{ humanized_status(p.status) }}</td>
+                                <td>{{ p.last_action or '&mdash;' }}</td>
                                 <td>
-                                    {% if p.status == 'assigned' %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="overdue">
-                                            <button type="submit" class="btn btn-primary btn-sm">Mark overdue</button>
-                                        </form>
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="submitted">
-                                            <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
-                                        </form>
-                                    {% endif %}
-                                    {% if p.status == 'overdue' %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="phone_held">
-                                            <button type="submit" class="btn btn-primary btn-sm">Phone held</button>
-                                        </form>
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="submitted">
-                                            <button type="submit" class="btn btn-primary btn-sm">Submitted</button>
-                                        </form>
-                                    {% endif %}
-                                    {% if p.status == 'phone_held' %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="submitted">
-                                            <button type="submit" class="btn btn-primary btn-sm">Submitted (release phone)</button>
-                                        </form>
-                                    {% endif %}
-                                    {% if p.status in ['assigned', 'overdue', 'phone_held'] %}
-                                        <form action="/punishment/{{ p.id }}/transition" method="post" style="display:inline">
-                                            <input type="hidden" name="to" value="voided">
-                                            <input type="text" name="void_reason" placeholder="Reason (optional)">
-                                            <button type="submit" class="btn btn-neutral btn-sm">Void</button>
-                                        </form>
-                                    {% endif %}
+                                    <div class="row-actions">
+                                        {% for action in p.actions %}
+                                            {{ transition_form(p, action) }}
+                                        {% endfor %}
+                                    </div>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -795,8 +897,74 @@
         {% endif %}
     </section>
 
+    <!-- Boarders Panel -->
+    <section id="boarders" class="panel {% if selected_tab == 'boarders' %}active{% endif %} boarders-panel">
+        <h2>Boarders</h2>
+        <div class="upload-panel">
+            <h3 class="upload-title">Add Boarder</h3>
+            <form action="/boarders/add" method="POST">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="boarder_name"><strong>Boarder Name</strong></label>
+                        <input type="text" id="boarder_name" name="name" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="boarder_bed"><strong>Bed</strong></label>
+                        <input type="text" id="boarder_bed" name="bed" required>
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-primary">Add Boarder</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="month-detail-toolbar">
+            <form action="/boarders/import" method="POST" enctype="multipart/form-data" class="consequences-filters">
+                <label for="boarder_csv"><strong>Replace roster from CSV</strong></label>
+                <input type="file" id="boarder_csv" name="boarder_csv" accept=".csv" required>
+                <button type="submit" class="btn btn-primary btn-sm">Import</button>
+            </form>
+            <button id="boarder-edit" type="button" class="btn btn-neutral btn-sm" {% if not boarders %}disabled{% endif %}>Edit</button>
+            <a class="btn btn-neutral btn-sm" href="/boarders/export">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
+                Download roster (CSV)
+            </a>
+        </div>
+        <div id="boarder-edit-actions" class="boarder-edit-actions" hidden>
+            <button id="boarder-save" type="button" class="btn btn-primary btn-sm" disabled>Save</button>
+            <button id="boarder-cancel" type="button" class="btn btn-neutral btn-sm">Cancel</button>
+            <div id="boarder-edit-error" class="boarder-inline-error boarder-edit-error" hidden role="alert"></div>
+        </div>
+        {% if boarders %}
+            <div class="table-scroll">
+                <table class="boarders-table" id="boarders-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Bed</th>
+                            <th scope="col">Boarder Name</th>
+                            <th scope="col" class="boarder-actions"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for boarder in boarders %}
+                        <tr data-boarder-id="{{ boarder.id }}">
+                            <td class="boarder-cell boarder-bed">{{ boarder.bed }}</td>
+                            <td class="boarder-cell boarder-name">{{ boarder.display_name }}</td>
+                            <td class="boarder-actions"></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="empty-state">No boarders on the master list. Add a boarder here, or import a CSV to replace the roster.</div>
+        {% endif %}
+    </section>
+
     <!-- Reports Database Panel -->
-    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">        <div class="upload-panel">
+    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
+        <h2>View Reports in Database</h2>
+        <div class="upload-panel">
             <h3 class="upload-title">Import Monthly Log</h3>
             <form action="/" method="POST" enctype="multipart/form-data">
                 <div class="form-row">
@@ -809,7 +977,7 @@
                         <input type="month" id="report_month" name="report_month" required>
                     </div>
                     <div>
-                        <button type="submit" class="btn btn-primary">Generate and Save</button>
+                        <button type="submit" class="btn btn-primary">Import and Save</button>
                     </div>
                 </div>
             </form>
@@ -833,6 +1001,8 @@
                     </div>
                 {% endfor %}
             </div>
+            <div id="month-detail-loading" class="empty-state hidden">Loading report&hellip;</div>
+            <div id="month-detail-error" class="banner banner-error hidden" role="alert"></div>
             <div id="month-detail" class="month-detail hidden">
                 <div class="print-brand">
                     <img src="{{ url_for('static', filename='dbslogoF-B.png') }}" alt="DBS Boarding School logo">
@@ -849,20 +1019,24 @@
                         Download
                     </button>
                     <button id="month-detail-assign-btn" type="button" class="btn btn-primary">Assign Punishments</button>
+                    <button id="month-detail-close" type="button" class="btn btn-neutral" onclick="closeMonthDetail()">Close</button>
                     <button id="month-detail-delete" type="button" class="btn btn-danger">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
                         Delete
                     </button>
-                    <button id="month-detail-close" type="button" class="btn btn-neutral" onclick="closeMonthDetail()">Close</button>
                 </div>
                 <div id="month-detail-assign" class="assign-panel hidden">
                     <h4>Assign Punishments</h4>
                     <form id="assign-form" action="" method="post">
+                        {% if consequences_month %}<input type="hidden" name="month" value="{{ consequences_month }}">{% endif %}
+                        {% if consequences_status %}<input type="hidden" name="status" value="{{ consequences_status }}">{% endif %}
+                        {% if consequences_show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
                         <div class="form-field">
                             <label for="assign-deadline"><strong>Deadline</strong></label>
                             <input type="date" id="assign-deadline" name="deadline" required>
                         </div>
                         <div id="assign-boarders" class="assign-boarders"></div>
+                        <p id="assign-counter" class="assign-counter" aria-live="polite"></p>
                         <button type="submit" class="btn btn-primary">Assign</button>
                     </form>
                 </div>
@@ -870,11 +1044,11 @@
                     <table id="month-detail-table" class="month-report-table">
                         <thead>
                             <tr>
-                                <th onclick="sortMonthDetail('bed')">Bed<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
-                                <th onclick="sortMonthDetail('name')">Boarder Name<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
-                                <th onclick="sortMonthDetail('frequency')">Frequency<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
-                                <th onclick="sortMonthDetail('minutes')">Minutes Late<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
-                                <th onclick="sortMonthDetail('points')">Total Points<svg class="sort-indicator" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><use class="sort-up" href="#icon-sort-up"/><use class="sort-down" href="#icon-sort-down"/></svg></th>
+                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('bed')">Bed<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('name')">Boarder Name<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('frequency')">Frequency<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('minutes')">Minutes Late<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('points')">Total Points<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
                             </tr>
                         </thead>
                         <tbody id="month-detail-body">
@@ -884,105 +1058,109 @@
             </div>
         {% else %}
             <div class="empty-state">
-                <p>No reports have been saved yet. Upload a monthly log to get started!</p>
+                <p>No reports have been saved yet. Import a Monthly Log to get started!</p>
             </div>
         {% endif %}
     </section>
 </div>
 
-<!-- Delete Confirmation Modal -->
-<div id="deleteModal" class="modal">
+<!-- Confirm Modal -->
+<div id="confirmModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
     <div class="modal-content">
-        <h2 class="modal-title">Delete Report?</h2>
-        <p class="modal-message">Are you sure you want to delete this report? This action cannot be undone.</p>
+        <h2 class="modal-title" id="confirm-modal-title">Confirm</h2>
+        <p class="modal-message" id="confirm-modal-message"></p>
         <div class="modal-buttons">
-            <button class="btn btn-danger" onclick="confirmDelete()">Yes, Delete</button>
-            <button class="btn btn-neutral" onclick="cancelDelete()">No, Cancel</button>
+            <button type="button" class="btn btn-danger" onclick="runConfirmModal()">Yes</button>
+            <button type="button" class="btn btn-neutral" onclick="closeConfirmModal()">No, Cancel</button>
         </div>
     </div>
 </div>
 
 <script>
-    // Helper function to convert string to title case
-    function toTitleCase(str) {
-        return str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-    }
-
-    // Natural sort for bed numbers (e.g., 601A < 601B < 602A)
-    function bedComparator(a, b) {
-        const regex = /(\d+)([A-E])/;
-        const matchA = a.match(regex);
-        const matchB = b.match(regex);
-
-        if (!matchA || !matchB) return a.localeCompare(b);
-
-        const numA = parseInt(matchA[1]);
-        const numB = parseInt(matchB[1]);
-
-        if (numA !== numB) return numA - numB;
-        return matchA[2].localeCompare(matchB[2]);
-    }
-
-    // Data storage for tables
-    let monthDetailData = {};
+    // Data storage for the month detail table
+    let monthDetailRows = [];
     let monthDetailSort = { field: 'bed', direction: 'asc' };
     let activeMonthReport = null;
 
-    // Sort and render month detail table
+    function lexicalCompare(a, b) {
+        return a < b ? -1 : a > b ? 1 : 0;
+    }
+
+    function numericStringCompare(a, b) {
+        const normalizedA = a.replace(/^0+/, '') || '0';
+        const normalizedB = b.replace(/^0+/, '') || '0';
+        return normalizedA.length - normalizedB.length || lexicalCompare(normalizedA, normalizedB);
+    }
+
+    function bedComparator(a, b) {
+        const matchA = String(a).match(/^(\d+)(.*)$/);
+        const matchB = String(b).match(/^(\d+)(.*)$/);
+
+        if (!matchA || !matchB) {
+            if (matchA) return -1;
+            if (matchB) return 1;
+            return lexicalCompare(String(a), String(b));
+        }
+
+        return numericStringCompare(matchA[1], matchB[1]) || lexicalCompare(matchA[2], matchB[2]);
+    }
+
+    function compareMonthRows(a, b) {
+        let result;
+        if (monthDetailSort.field === 'bed') {
+            result = bedComparator(a.bed, b.bed);
+        } else if (monthDetailSort.field === 'name') {
+            result = a.display_name.localeCompare(b.display_name);
+        } else if (monthDetailSort.field === 'frequency') {
+            result = a.frequency - b.frequency;
+        } else if (monthDetailSort.field === 'minutes') {
+            result = a.total_minutes - b.total_minutes;
+        } else {
+            result = a.total_points - b.total_points;
+        }
+
+        if (result === 0) {
+            result = a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+        }
+        return monthDetailSort.direction === 'asc' ? result : -result;
+    }
+
     function sortMonthDetail(field) {
         if (monthDetailSort.field === field) {
             monthDetailSort.direction = monthDetailSort.direction === 'asc' ? 'desc' : 'asc';
         } else {
-            monthDetailSort.field = field;
-            monthDetailSort.direction = 'asc';
+            monthDetailSort = { field: field, direction: 'asc' };
         }
-        renderMonthDetail(monthDetailSort.direction);
+        renderMonthDetail();
     }
 
-    function renderMonthDetail(direction) {
+    // Render month detail rows with the server-owned values in the selected order.
+    function renderMonthDetail() {
         const tbody = document.getElementById('month-detail-body');
-        const rows = Object.entries(monthDetailData).map(([name, data]) => ({
-            name: name,
-            bed: data.bed,
-            frequency: data.frequency,
-            total_minutes: data.total_minutes,
-            points: data.total_points
-        }));
-
-        // Sort rows
-        rows.sort((a, b) => {
-            let compareResult = 0;
-            if (monthDetailSort.field === 'bed') {
-                compareResult = bedComparator(a.bed, b.bed);
-            } else if (monthDetailSort.field === 'name') {
-                compareResult = a.name.localeCompare(b.name);
-            } else if (monthDetailSort.field === 'frequency' || monthDetailSort.field === 'minutes' || monthDetailSort.field === 'points') {
-                const aVal = monthDetailSort.field === 'frequency' ? a.frequency : monthDetailSort.field === 'minutes' ? a.total_minutes : a.points;
-                const bVal = monthDetailSort.field === 'frequency' ? b.frequency : monthDetailSort.field === 'minutes' ? b.total_minutes : b.points;
-                compareResult = aVal - bVal;
-            }
-            return direction === 'asc' ? compareResult : -compareResult;
+        const rows = [...monthDetailRows].sort(compareMonthRows);
+        const headers = document.querySelectorAll('#month-detail-table thead th');
+        headers.forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+            th.setAttribute('aria-sort', 'none');
         });
+        const sortIndex = ['bed', 'name', 'frequency', 'minutes', 'points'].indexOf(monthDetailSort.field);
+        if (sortIndex >= 0) {
+            headers[sortIndex].classList.add(`sort-${monthDetailSort.direction}`);
+            headers[sortIndex].setAttribute(
+                'aria-sort',
+                monthDetailSort.direction === 'asc' ? 'ascending' : 'descending'
+            );
+        }
 
-        // Update header indicators
-        const headers = tbody.parentElement.parentElement.querySelectorAll('th');
-        headers.forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
-        if (monthDetailSort.field === 'bed') headers[0].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (monthDetailSort.field === 'name') headers[1].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (monthDetailSort.field === 'frequency') headers[2].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (monthDetailSort.field === 'minutes') headers[3].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-        else if (monthDetailSort.field === 'points') headers[4].classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
-
-        // Render rows
         tbody.innerHTML = '';
         rows.forEach(row => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td><strong>${row.bed}</strong></td>
-                <td>${toTitleCase(row.name)}</td>
+                <td><strong>${escapeHtml(row.bed)}</strong></td>
+                <td>${escapeHtml(row.display_name)}</td>
                 <td>${row.frequency}</td>
-                <td>${row.total_minutes} mins</td>
-                <td>${row.points}</td>
+                <td>${row.total_minutes}</td>
+                <td>${row.total_points}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -992,88 +1170,191 @@
     const tabButtons = document.querySelectorAll('.tab-link');
     const panels = document.querySelectorAll('.panel');
 
+    function activateTab(tabName) {
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        panels.forEach(panel => panel.classList.remove('active'));
+
+        const button = document.querySelector(`.tab-link[data-tab="${tabName}"]`);
+        if (button) button.classList.add('active');
+        document.getElementById(tabName).classList.add('active');
+    }
+
     tabButtons.forEach(button => {
-        button.addEventListener('click', function() {
+        button.addEventListener('click', function(event) {
             const tabName = this.getAttribute('data-tab');
-
-            // Remove active class from all buttons and panels
-            tabButtons.forEach(btn => btn.classList.remove('active'));
-            panels.forEach(panel => panel.classList.remove('active'));
-
-            // Add active class to clicked button and corresponding panel
-            this.classList.add('active');
-            document.getElementById(tabName).classList.add('active');
+            if (tabName === 'consequences') {
+                if (hasDirtyBoarderRow()) {
+                    event.preventDefault();
+                    showConfirmModal({
+                        title: 'Discard changes?',
+                        message: 'You have unsaved edits to a boarder. Discard them and open Consequences?',
+                        confirmLabel: 'Discard',
+                        onConfirm: () => {
+                            discardBoarderEdits();
+                            window.location.href = '/consequences';
+                        }
+                    });
+                }
+                return;
+            }
+            if (tabName === 'boarders') {
+                activateTab('boarders');
+                return;
+            }
+            if (hasDirtyBoarderRow()) {
+                showConfirmModal({
+                    title: 'Discard changes?',
+                    message: 'You have unsaved edits to a boarder. Discard them and switch tabs?',
+                    confirmLabel: 'Discard',
+                    onConfirm: () => {
+                        discardBoarderEdits();
+                        activateTab(tabName);
+                    }
+                });
+                return;
+            }
+            activateTab(tabName);
         });
     });
 
-    // Search history function - stays on history tab
-    function performSearch() {
-        const searchName = document.getElementById('search_name').value.trim();
-        if (!searchName) {
-            alert('Please enter a boarder name to search.');
-            return;
-        }
+    // Reusable confirm modal
+    let confirmAction = null;
+    let confirmLastFocused = null;
 
-        // Create a hidden form and submit it
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = '/';
-
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'search_name';
-        input.value = searchName;
-
-        form.appendChild(input);
-        document.body.appendChild(form);
-        form.submit();
-        document.body.removeChild(form);
+    function showConfirmModal({ title, message, confirmLabel = 'Yes', onConfirm }) {
+        confirmLastFocused = document.activeElement;
+        document.getElementById('confirm-modal-title').textContent = title;
+        document.getElementById('confirm-modal-message').textContent = message;
+        const confirmButton = document.querySelector('#confirmModal .btn-danger');
+        confirmButton.textContent = confirmLabel;
+        confirmAction = onConfirm;
+        document.getElementById('confirmModal').classList.add('show');
+        confirmButton.focus();
     }
 
-    // Allow Enter key to trigger search
-    document.getElementById('search_name').addEventListener('keypress', function(event) {
-        if (event.key === 'Enter') {
+    function closeConfirmModal() {
+        confirmAction = null;
+        document.getElementById('confirmModal').classList.remove('show');
+        if (confirmLastFocused && typeof confirmLastFocused.focus === 'function') {
+            confirmLastFocused.focus();
+        }
+        confirmLastFocused = null;
+    }
+
+    function runConfirmModal() {
+        const action = confirmAction;
+        closeConfirmModal();
+        if (action) action();
+    }
+
+    // Dialog behavior: Esc cancels; Tab cycles within the modal only.
+    document.getElementById('confirmModal').addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
             event.preventDefault();
-            performSearch();
+            closeConfirmModal();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+
+        const focusables = this.querySelectorAll(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (!focusables.length) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
         }
     });
 
-    // Global variable to store month for delete confirmation
-    let monthToDelete = null;
+    // Voiding a punishment is destructive and irreversible: route it through
+    // the shared confirm dialog naming the Boarder and month. The optional
+    // reason input stays in the form and submits with it.
+    document.querySelectorAll('form.void-form').forEach(form => {
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            showConfirmModal({
+                title: 'Void punishment?',
+                message: `Void the ${form.dataset.month} punishment for ${form.dataset.boarder}? The voided record is kept for audit.`,
+                confirmLabel: 'Void',
+                onConfirm: () => form.submit()
+            });
+        });
+    });
 
     // Month detail view
+    let monthRequestToken = 0;
+
+    function showMonthDetailError(messageText) {
+        const errorEl = document.getElementById('month-detail-error');
+        errorEl.textContent = messageText;
+        errorEl.classList.remove('hidden');
+    }
+
+    function clearMonthDetailError() {
+        document.getElementById('month-detail-error').classList.add('hidden');
+    }
+
+    // Print styles print the month-detail region only while a report is open.
+    function setReportOpen(open) {
+        document.body.classList.toggle('report-open', open);
+    }
+
     function viewMonth(month) {
+        const requestToken = ++monthRequestToken;
+        activeMonthReport = null;
+        monthDetailRows = [];
+        monthDetailSort = { field: 'bed', direction: 'asc' };
+        setReportOpen(false);
+        document.getElementById('month-detail').classList.add('hidden');
+        document.getElementById('month-detail-assign').classList.add('hidden');
+        clearMonthDetailError();
+        document.getElementById('month-detail-loading').classList.remove('hidden');
+        renderMonthDetail();
+
         fetch(`/api/month/${encodeURIComponent(month)}`)
             .then(response => response.json())
             .then(data => {
+                if (requestToken !== monthRequestToken) return;
+                document.getElementById('month-detail-loading').classList.add('hidden');
                 if (data.error) {
-                    alert('Error: ' + data.error);
+                    showMonthDetailError('Error: ' + data.error);
                     return;
                 }
 
-                // Store data and reset sort
+                // Store data and render in the selected order without mutating the API rows.
                 activeMonthReport = month;
-                monthDetailData = data.boarders;
-                monthDetailSort = { field: 'bed', direction: 'asc' };
+                monthDetailRows = data.boarders;
+                setReportOpen(true);
 
                 document.getElementById('month-detail-title').textContent = `Report for ${month}`;
                 document.getElementById('month-detail-download').onclick = function() {
                     window.location.href = `/download_month/${encodeURIComponent(month)}`;
                 };
                 document.getElementById('month-detail-delete').onclick = function() {
-                    showDeleteModal(month);
+                    showConfirmModal({
+                        title: 'Delete report?',
+                        message: `This deletes the ${month} Monthly Report. Punishments already issued for ${month} are kept.`,
+                        confirmLabel: 'Yes, Delete',
+                        onConfirm: () => deleteMonthReport(month)
+                    });
                 };
                 document.getElementById('month-detail').classList.remove('hidden');
                 document.getElementById('month-detail-assign').classList.add('hidden');
                 const assignBtn = document.getElementById('month-detail-assign-btn');
                 assignBtn.onclick = function() { showAssignPanel(month, data.boarders); };
 
-                // Render with default bed sort
-                renderMonthDetail('asc');
+                renderMonthDetail();
             })
             .catch(error => {
+                if (requestToken !== monthRequestToken) return;
+                document.getElementById('month-detail-loading').classList.add('hidden');
                 console.error('Error:', error);
-                alert('Failed to load month details.');
+                showMonthDetailError('Failed to load month details.');
             });
     }
 
@@ -1087,6 +1368,7 @@
 
     function closeMonthDetail() {
         activeMonthReport = null;
+        setReportOpen(false);
         document.getElementById('month-detail').classList.add('hidden');
         document.getElementById('month-detail-assign').classList.add('hidden');
     }
@@ -1094,22 +1376,31 @@
     function showAssignPanel(month, boarders) {
         const panel = document.getElementById('month-detail-assign');
         const container = document.getElementById('assign-boarders');
+        const counter = document.getElementById('assign-counter');
         const form = document.getElementById('assign-form');
         form.action = `/assign/${encodeURIComponent(month)}`;
 
-        const lateBoarders = Object.entries(boarders).filter(([, data]) => data.total_points > 0);
+        // Positive consent: every eligible boarder starts checked; unchecking
+        // exempts them. Checked boxes submit as the `assign` selection.
+        const lateBoarders = boarders.filter(row => row.total_points > 0);
         container.innerHTML = '';
         const checkboxes = [];
-        lateBoarders.forEach(([name, data]) => {
+        function updateAssignCounter() {
+            const count = checkboxes.filter(cb => cb.checked).length;
+            counter.textContent = `${count} punishment${count === 1 ? '' : 's'} will be assigned.`;
+        }
+
+        lateBoarders.forEach(row => {
             const label = document.createElement('label');
             label.className = 'assign-boarder';
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
-            checkbox.name = 'exempt';
-            checkbox.value = name;
+            checkbox.name = 'assign';
+            checkbox.value = row.name;
             checkbox.checked = true;
+            checkbox.addEventListener('change', updateAssignCounter);
             label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(` ${name} (${data.total_points} pts)`));
+            label.appendChild(document.createTextNode(` Assign punishment to ${row.display_name} (${row.total_points} pts)`));
             container.appendChild(label);
             checkboxes.push(checkbox);
         });
@@ -1117,21 +1408,7 @@
         if (lateBoarders.length === 0) {
             container.innerHTML = '<p>No boarders with points in this month.</p>';
         }
-
-        form.onsubmit = function(event) {
-            const exempted = checkboxes.filter(function(cb) { return !cb.checked; })
-                                        .map(function(cb) { return cb.value; });
-            const exemptInputs = form.querySelectorAll('input[name="exempt"]');
-            exemptInputs.forEach(function(input) { input.remove(); });
-            exempted.forEach(function(name) {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'exempt';
-                input.value = name;
-                form.appendChild(input);
-            });
-            return true;
-        };
+        updateAssignCounter();
 
         panel.classList.remove('hidden');
         panel.scrollIntoView({ behavior: 'smooth' });
@@ -1146,39 +1423,250 @@
         window.print();
     }
 
-    // Delete confirmation modal functions
-    function showDeleteModal(month) {
-        monthToDelete = month;
-        document.getElementById('deleteModal').classList.add('show');
-    }
-
-    function cancelDelete() {
-        monthToDelete = null;
-        document.getElementById('deleteModal').classList.remove('show');
-    }
-
-    function confirmDelete() {
-        if (!monthToDelete) return;
-
-        fetch(`/delete_month/${monthToDelete}`, {
+    // Delete a month report via AJAX (invoked from the confirm modal)
+    function deleteMonthReport(month) {
+        fetch(`/delete_month/${month}`, {
             method: 'DELETE'
         })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                cancelDelete();
                 closeMonthDetail();
-                // Reload the page to reflect the deletion
                 location.reload();
             } else {
-                alert('Error: ' + (data.error || 'Failed to delete report'));
+                showMonthDetailError('Error: ' + (data.error || 'Failed to delete report'));
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Failed to delete report.');
+            showMonthDetailError('Failed to delete report.');
         });
     }
+
+    // Boarders tab: explicit table editing, dirty-state, AJAX save/remove
+    let boardersEditing = false;
+    let boarderOriginals = new Map();
+    const boarderEditButton = document.getElementById('boarder-edit');
+    const boarderEditActions = document.getElementById('boarder-edit-actions');
+    const boarderSaveButton = document.getElementById('boarder-save');
+    const boarderCancelButton = document.getElementById('boarder-cancel');
+    const boarderEditError = document.getElementById('boarder-edit-error');
+
+    function boarderIsDirty(row) {
+        const name = row.querySelector('.boarder-edit-name').value.trim();
+        const bed = row.querySelector('.boarder-edit-bed').value.trim();
+        const original = boarderOriginals.get(row.dataset.boarderId);
+        return original && (name !== original.name || bed !== original.bed);
+    }
+
+    function hasDirtyBoarderRow() {
+        if (!boardersEditing) return false;
+        return Array.from(document.querySelectorAll('#boarders-table tbody tr')).some(boarderIsDirty);
+    }
+
+    function exitBoarderEditMode() {
+        boardersEditing = false;
+        boarderOriginals = new Map();
+        boarderEditActions.hidden = true;
+        boarderEditButton.disabled = false;
+        boarderEditError.hidden = true;
+        boarderEditError.textContent = '';
+    }
+
+    function renderBoarderStatic(row, staticValues = null) {
+        const name = staticValues ? staticValues.name : row.querySelector('.boarder-edit-name').value.trim();
+        const bed = staticValues ? staticValues.bed : row.querySelector('.boarder-edit-bed').value.trim();
+        row.innerHTML = `
+            <td class="boarder-cell boarder-bed">${escapeHtml(bed)}</td>
+            <td class="boarder-cell boarder-name">${escapeHtml(name)}</td>
+            <td class="boarder-actions"></td>
+        `;
+    }
+
+    function discardBoarderEdits() {
+        document.querySelectorAll('#boarders-table tbody tr').forEach(row => {
+            const original = boarderOriginals.get(row.dataset.boarderId);
+            if (original) renderBoarderStatic(row, original);
+        });
+        exitBoarderEditMode();
+    }
+
+    function enterBoarderEditMode() {
+        if (boardersEditing) return;
+        const rows = Array.from(document.querySelectorAll('#boarders-table tbody tr'));
+        if (!rows.length) return;
+
+        boardersEditing = true;
+        boarderOriginals = new Map();
+        boarderEditButton.disabled = true;
+        boarderEditActions.hidden = false;
+        rows.forEach(row => {
+            const bed = row.querySelector('.boarder-bed').textContent.trim();
+            const name = row.querySelector('.boarder-name').textContent.trim();
+            boarderOriginals.set(row.dataset.boarderId, { name, bed });
+            row.innerHTML = `
+                <td class="boarder-bed">
+                    <input class="boarder-edit-bed" type="text" value="${escapeAttr(bed)}" aria-label="Edit bed for ${escapeAttr(name)}">
+                </td>
+                <td class="boarder-name">
+                    <input class="boarder-edit-name" type="text" value="${escapeAttr(name)}" aria-label="Edit name for ${escapeAttr(name)}">
+                    <div class="boarder-inline-error" hidden></div>
+                </td>
+                <td class="boarder-actions">
+                    <button type="button" class="btn btn-danger btn-sm boarder-remove" aria-label="Remove boarder" title="Remove boarder">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
+                    </button>
+                </td>
+            `;
+            row.querySelector('.boarder-edit-name').addEventListener('input', updateBoarderSave);
+            row.querySelector('.boarder-edit-bed').addEventListener('input', updateBoarderSave);
+            row.querySelector('.boarder-remove').addEventListener('click', () => promptBoarderRemove(row));
+            row.querySelectorAll('.boarder-edit-name, .boarder-edit-bed').forEach(input => {
+                input.addEventListener('keydown', event => {
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        discardBoarderEdits();
+                    } else if (event.key === 'Enter') {
+                        event.preventDefault();
+                        if (!boarderSaveButton.disabled) saveBoarderEdits();
+                    }
+                });
+            });
+        });
+        updateBoarderSave();
+    }
+
+    function updateBoarderSave() {
+        if (!boardersEditing) return;
+        const hasBlankValue = Array.from(document.querySelectorAll('#boarders-table tbody tr')).some(row => {
+            return !row.querySelector('.boarder-edit-name').value.trim() || !row.querySelector('.boarder-edit-bed').value.trim();
+        });
+        boarderSaveButton.disabled = hasBlankValue;
+        boarderEditError.hidden = true;
+    }
+
+    function saveBoarderEdits() {
+        if (boarderSaveButton.disabled) return;
+        const rows = Array.from(document.querySelectorAll('#boarders-table tbody tr'));
+        if (!hasDirtyBoarderRow()) {
+            rows.forEach(row => renderBoarderStatic(row));
+            exitBoarderEditMode();
+            return;
+        }
+
+        const updates = rows.map(row => ({
+            id: Number(row.dataset.boarderId),
+            name: row.querySelector('.boarder-edit-name').value.trim(),
+            bed: row.querySelector('.boarder-edit-bed').value.trim()
+        }));
+
+        // Disabled while in flight so double-clicks cannot duplicate writes.
+        boarderSaveButton.disabled = true;
+        boarderSaveButton.textContent = 'Saving…';
+        fetch('/api/boarders', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ boarders: updates })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.ok) {
+                rows.forEach(row => renderBoarderStatic(row));
+                exitBoarderEditMode();
+            } else {
+                boarderEditError.textContent = data.error || 'Failed to save boarders.';
+                boarderEditError.hidden = false;
+            }
+        })
+        .catch(() => {
+            boarderEditError.textContent = 'Failed to save boarders.';
+            boarderEditError.hidden = false;
+        })
+        .finally(() => {
+            boarderSaveButton.textContent = 'Save';
+            if (boardersEditing) updateBoarderSave();
+        });
+    }
+
+    function promptBoarderRemove(row) {
+        const name = row.querySelector('.boarder-edit-name').value.trim();
+        showConfirmModal({
+            title: 'Remove boarder?',
+            message: `${name} will be dropped from the master list. Their history and punishments are kept, and future imports will no longer match them.`,
+            confirmLabel: 'Remove',
+            onConfirm: () => removeBoarder(row)
+        });
+    }
+
+    function removeBoarder(row) {
+        const id = row.dataset.boarderId;
+        const errorEl = row.querySelector('.boarder-inline-error');
+        const removeButton = row.querySelector('.boarder-remove');
+
+        // Disabled while in flight so double-clicks cannot duplicate writes.
+        removeButton.disabled = true;
+        fetch(`/api/boarders/${id}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.ok) {
+                boarderOriginals.delete(id);
+                row.remove();
+                maybeShowBoarderEmptyState();
+            } else {
+                removeButton.disabled = false;
+                errorEl.textContent = data.error || 'Failed to remove boarder.';
+                errorEl.hidden = false;
+            }
+        })
+        .catch(() => {
+            removeButton.disabled = false;
+            errorEl.textContent = 'Failed to remove boarder.';
+            errorEl.hidden = false;
+        });
+    }
+
+    function maybeShowBoarderEmptyState() {
+        const tbody = document.querySelector('#boarders-table tbody');
+        if (tbody && tbody.children.length === 0) {
+            const table = document.getElementById('boarders-table');
+            const container = table.closest('.table-scroll');
+            container.innerHTML = '<div class="empty-state">No boarders on the master list. Add a boarder here, or import a CSV to replace the roster.</div>';
+            exitBoarderEditMode();
+            boarderEditButton.disabled = true;
+        }
+    }
+
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function escapeAttr(str) {
+        return escapeHtml(str).replace(/'/g, '&#39;');
+    }
+
+    boarderEditButton.addEventListener('click', enterBoarderEditMode);
+
+    boarderSaveButton.addEventListener('click', () => {
+        if (boardersEditing && !boarderSaveButton.disabled) saveBoarderEdits();
+    });
+
+    boarderCancelButton.addEventListener('click', discardBoarderEdits);
+
+    // Unsaved-edit guard for full page navigation (brand link, Back, refresh).
+    // Tab clicks keep their own in-page confirm guard above.
+    window.addEventListener('beforeunload', function(event) {
+        if (hasDirtyBoarderRow()) {
+            event.preventDefault();
+            event.returnValue = '';
+            return '';
+        }
+    });
 
     document.addEventListener('DOMContentLoaded', function() {
         const initialMonthToOpen = {{ current_month|tojson }};
