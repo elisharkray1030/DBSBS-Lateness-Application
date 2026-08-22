@@ -138,8 +138,18 @@ class TestNormalizedNameKeyMigration:
         ]
         connection.close()
 
-    def test_migration_leaves_clean_keys_untouched(self, conn):
-        assert [b.normalized_name for b in storage.list_boarders(conn)] == []
+    def test_migration_leaves_clean_keys_untouched(self):
+        connection = sqlite3.connect(":memory:")
+        storage.create_schema(connection)
+        storage.add_boarder(connection, "ALICE", "Alice", "601A")
+        storage.create_schema(connection)
+
+        boarders = storage.list_boarders(connection)
+        assert [(b.normalized_name, b.display_name, b.bed) for b in boarders] == [
+            ("ALICE", "Alice", "601A")
+        ]
+        assert storage.get_meta(connection, storage.MIGRATION_SKIPS_KEY) == "0"
+        connection.close()
 
     def test_migration_keeps_first_row_when_keys_collapse(self):
         connection = sqlite3.connect(":memory:")
@@ -158,6 +168,148 @@ class TestNormalizedNameKeyMigration:
         assert keys == ["CHEN WEI", "CHEN, WEI"]
         beds = sorted(b.bed for b in storage.list_boarders(connection))
         assert beds == ["701A", "701B"]
+        connection.close()
+
+    def _seed_colliding_boarders(self, connection):
+        storage.create_schema(connection)
+        connection.executemany(
+            "INSERT INTO boarders (normalized_name, display_name, bed) VALUES (?, ?, ?)",
+            [
+                ("CHEN, WEI", "Chen Wei A", "701A"),
+                ("CHEN  WEI", "Chen Wei B", "701B"),
+            ],
+        )
+        connection.commit()
+
+    def test_boarder_collision_persists_skip_count_in_meta(self):
+        connection = sqlite3.connect(":memory:")
+        self._seed_colliding_boarders(connection)
+        storage.create_schema(connection)
+
+        assert storage.get_meta(connection, storage.MIGRATION_SKIPS_KEY) == "1"
+        keys = sorted(b.normalized_name for b in storage.list_boarders(connection))
+        assert keys == ["CHEN  WEI", "CHEN WEI"]
+        connection.close()
+
+    def test_history_collision_persists_skip_count_in_meta(self):
+        connection = sqlite3.connect(":memory:")
+        storage.create_schema(connection)
+        for legacy_key in ("CHEN, WEI", "CHEN  WEI"):
+            connection.execute(
+                """
+                INSERT INTO boarder_history
+                    (normalized_name, display_name, bed, month, frequency,
+                     total_minutes, total_points, imported_at)
+                VALUES (?, 'Chen Wei', '701A', '2026-04', 1, 2, 3,
+                        '2026-05-01T00:00:00')
+                """,
+                (legacy_key,),
+            )
+        connection.commit()
+        storage.create_schema(connection)
+
+        assert storage.get_meta(connection, storage.MIGRATION_SKIPS_KEY) == "1"
+        rows = connection.execute(
+            "SELECT normalized_name FROM boarder_history ORDER BY id"
+        ).fetchall()
+        assert [row[0] for row in rows] == ["CHEN WEI", "CHEN  WEI"]
+        connection.close()
+
+    def test_punishment_collision_persists_skip_count_in_meta(self):
+        connection = sqlite3.connect(":memory:")
+        storage.create_schema(connection)
+        for legacy_key in ("CHEN, WEI", "CHEN  WEI"):
+            connection.execute(
+                """
+                INSERT INTO punishments
+                    (normalized_name, display_name, bed, month, points_owed,
+                     deadline, status, assigned_at)
+                VALUES (?, 'Chen Wei', '701A', '2026-04', 3, '2026-05-10',
+                        'assigned', '2026-05-02T00:00:00')
+                """,
+                (legacy_key,),
+            )
+        connection.commit()
+        storage.create_schema(connection)
+
+        assert storage.get_meta(connection, storage.MIGRATION_SKIPS_KEY) == "1"
+        rows = connection.execute(
+            "SELECT normalized_name FROM punishments ORDER BY id"
+        ).fetchall()
+        assert [row[0] for row in rows] == ["CHEN WEI", "CHEN  WEI"]
+        connection.close()
+
+    def test_skip_count_sums_collisions_across_all_three_tables(self):
+        connection = sqlite3.connect(":memory:")
+        storage.create_schema(connection)
+        connection.execute(
+            """
+            INSERT INTO boarders (normalized_name, display_name, bed)
+            VALUES ('CHEN, WEI', 'Chen Wei A', '701A'), ('CHEN  WEI', 'Chen Wei B', '701B')
+            """
+        )
+        for legacy_key in ("DAI, MEI", "DAI  MEI"):
+            connection.execute(
+                """
+                INSERT INTO boarder_history
+                    (normalized_name, display_name, bed, month, frequency,
+                     total_minutes, total_points, imported_at)
+                VALUES (?, 'Dai Mei', '702A', '2026-04', 1, 2, 3,
+                        '2026-05-01T00:00:00')
+                """,
+                (legacy_key,),
+            )
+        for legacy_key in ("FOX, REN", "FOX  REN"):
+            connection.execute(
+                """
+                INSERT INTO punishments
+                    (normalized_name, display_name, bed, month, points_owed,
+                     deadline, status, assigned_at)
+                VALUES (?, 'Fox Ren', '703A', '2026-04', 3, '2026-05-10',
+                        'assigned', '2026-05-02T00:00:00')
+                """,
+                (legacy_key,),
+            )
+        connection.commit()
+        storage.create_schema(connection)
+
+        assert storage.get_meta(connection, storage.MIGRATION_SKIPS_KEY) == "3"
+        connection.close()
+
+    def test_history_same_person_different_month_rekeys_both_without_skips(self):
+        connection = sqlite3.connect(":memory:")
+        storage.create_schema(connection)
+        for month in ("2026-01", "2026-02"):
+            connection.execute(
+                """
+                INSERT INTO boarder_history
+                    (normalized_name, display_name, bed, month, frequency,
+                     total_minutes, total_points, imported_at)
+                VALUES ('CHEN, WEI', 'Chen Wei', '701A', ?, 1, 2, 3,
+                        '2026-05-01T00:00:00')
+                """,
+                (month,),
+            )
+        connection.commit()
+        storage.create_schema(connection)
+
+        rows = connection.execute(
+            "SELECT normalized_name FROM boarder_history ORDER BY month"
+        ).fetchall()
+        assert [row[0] for row in rows] == ["CHEN WEI", "CHEN WEI"]
+        assert storage.get_meta(connection, storage.MIGRATION_SKIPS_KEY) == "0"
+        connection.close()
+
+    def test_clean_database_reports_zero_skips(self, conn):
+        assert storage.get_meta(conn, storage.MIGRATION_SKIPS_KEY) == "0"
+
+    def test_repeated_migrations_report_stable_skip_count(self):
+        connection = sqlite3.connect(":memory:")
+        self._seed_colliding_boarders(connection)
+        storage.create_schema(connection)
+        storage.create_schema(connection)
+
+        assert storage.get_meta(connection, storage.MIGRATION_SKIPS_KEY) == "1"
         connection.close()
 
 

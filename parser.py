@@ -30,7 +30,7 @@ _HOUSEPARENT_FAMILY_PATTERN = re.compile(r"^RT\d+ HOUSEPARENT")
 _SYSTEM_CARD_NAMES = {"BA1 DY", "BA2 SL", "BA3 ED", "HOUSEPARENT", "STEPS GATE GUARD"}
 
 
-def _is_expected_non_boarder(normalized_name: str) -> bool:
+def is_expected_non_boarder(normalized_name: str) -> bool:
     """True for log names known never to match a Boarder on the master list."""
     return bool(
         _STAFF_NAME_PATTERN.match(normalized_name)
@@ -50,17 +50,22 @@ def _format_unparseable_rows(unparseable_rows):
 class ParseDiagnostics:
     """Diagnostics collected while parsing a monthly log.
 
-    unmatched_names lists each distinct unmatched name in first-seen order;
-    unmatched_row_counts maps the same names to their row counts so the
-    saved message can report rows while filtering known non-boarders.
+    unmatched_row_counts maps each distinct unmatched name to its row count,
+    preserving first-seen order; unmatched_names derives from it so the name
+    list can never disagree with the counts. The saved message counts rows
+    while filtering known non-boarders.
     """
 
     rows_read: int
     matched_rows: int
-    unmatched_names: list[str] = field(default_factory=list)
     unmatched_row_counts: dict[str, int] = field(default_factory=dict)
     unparseable_rows: list[UnparsedTimeRow] = field(default_factory=list)
     has_parseable_data: bool = False
+
+    @property
+    def unmatched_names(self) -> list[str]:
+        """Each distinct unmatched name in first-seen order."""
+        return list(self.unmatched_row_counts)
 
 
 @dataclass
@@ -86,7 +91,7 @@ class SavedOutcome:
         unmatched = sum(
             count
             for name, count in self.diagnostics.unmatched_row_counts.items()
-            if not _is_expected_non_boarder(name)
+            if not is_expected_non_boarder(name)
         )
         if unmatched > 0:
             parts.append(f"{unmatched} log {self._row_word(unmatched)} matched no Boarder.")
@@ -200,7 +205,6 @@ def parse_log_stream(log_stream, master_list):
 
     rows_read = 0
     matched_rows = 0
-    unmatched_names = []
     unmatched_row_counts: dict[str, int] = {}
     unparseable_rows = []
     has_parseable_data = False
@@ -215,8 +219,6 @@ def parse_log_stream(log_stream, master_list):
             continue
 
         if name not in boarders:
-            if name not in unmatched_names:
-                unmatched_names.append(name)
             unmatched_row_counts[name] = unmatched_row_counts.get(name, 0) + 1
             continue
 
@@ -243,7 +245,6 @@ def parse_log_stream(log_stream, master_list):
     diagnostics = ParseDiagnostics(
         rows_read=rows_read,
         matched_rows=matched_rows,
-        unmatched_names=unmatched_names,
         unmatched_row_counts=unmatched_row_counts,
         unparseable_rows=unparseable_rows,
         has_parseable_data=has_parseable_data,

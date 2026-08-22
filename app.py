@@ -14,6 +14,7 @@ try:
         render_template,
         request,
         send_file,
+        session,
     )
 except ModuleNotFoundError as exc:
     if exc.name != 'flask':
@@ -96,6 +97,32 @@ def _consume_flashes():
     return message, error
 
 
+def _migration_banner(skip_count: int) -> str:
+    """Words the legacy-Match-Key banner in glossary vocabulary."""
+    noun = "record" if skip_count == 1 else "records"
+    pronoun = "its" if skip_count == 1 else "their"
+    key_word = "Match Key" if skip_count == 1 else "Match Keys"
+    return (
+        f"{skip_count} stored {noun} kept {pronoun} legacy {key_word} because "
+        "another record claims the same identity. "
+        "Review duplicates in the Boarders tab."
+    )
+
+
+def _flash_migration_skips(conn):
+    """Flashes the legacy-Match-Key banner once per session when nonzero.
+
+    The stored-key migration persists its skip count on every startup; the
+    session flag keeps that standing fact from re-nagging on every visit,
+    while a count of zero stays completely silent.
+    """
+    skip_count = storage.get_migration_skips(conn)
+    if skip_count <= 0 or session.get("match_key_skips_reported"):
+        return
+    session["match_key_skips_reported"] = True
+    flash(_migration_banner(skip_count), "error")
+
+
 def build_csv_response(boarders, download_name):
     csv_bytes = io.BytesIO(boarders_to_csv(boarders).encode('utf-8'))
     csv_bytes.seek(0)
@@ -123,6 +150,7 @@ def home():
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
         punishment_months = _punishment_months(conn, all_months)
+        _flash_migration_skips(conn)
 
     if request.method == 'POST':
         if 'log_file' in request.files:

@@ -65,6 +65,24 @@ class TestIngestLog:
         assert by_name["ALICE"].total_minutes == 10
         assert by_name["BOB"].total_minutes == 4
 
+    def test_unmatched_names_view_derives_from_row_counts(self, conn):
+        """The ordered name list and the counts are one structure: names
+        appear in first-seen order and mirror the counts mapping exactly."""
+        outcome = ingest(
+            LOG_HEADER
+            + "ALICE,07:42\n"
+            + "SPECTRE,07:43\n"
+            + "GHOST,07:44\n"
+            + "SPECTRE,07:45\n",
+            conn=conn,
+        )
+
+        assert isinstance(outcome, SavedOutcome)
+        diagnostics = outcome.diagnostics
+        assert diagnostics.unmatched_names == ["SPECTRE", "GHOST"]
+        assert diagnostics.unmatched_row_counts == {"SPECTRE": 2, "GHOST": 1}
+        assert diagnostics.unmatched_names == list(diagnostics.unmatched_row_counts)
+
     def test_unmatched_only_rejected_with_names(self, conn):
         outcome = ingest(
             LOG_HEADER + "GHOST,07:43\n" + "GHOST,07:44\n" + "GHOST,07:45\n",

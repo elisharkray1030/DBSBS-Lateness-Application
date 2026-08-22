@@ -231,6 +231,50 @@ class TestBoarderSeeding:
             assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
 
+class TestMigrationCollisionBanner:
+    """The stored-key migration counts rows that keep their legacy Match Key;
+    the home tab surfaces that count as a one-shot banner per session, and
+    databases with nothing to report never see it."""
+
+    def _client_over_seeded_db(self, tmp_path, monkeypatch, collide):
+        db_path = tmp_path / "banner.db"
+        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
+        with app_module.connect() as conn:
+            storage.create_schema(conn)
+            if collide:
+                colliding_boarder_rows = [
+                    ("CHEN, WEI", "Chen Wei A", "701A"),
+                    ("CHEN  WEI", "Chen Wei B", "701B"),
+                ]
+                conn.executemany(
+                    "INSERT INTO boarders (normalized_name, display_name, bed) VALUES (?, ?, ?)",
+                    colliding_boarder_rows,
+                )
+            else:
+                storage.add_boarder(conn, "ALICE", "Alice", "601A")
+            conn.commit()
+        app_module.init_db()
+        return app_module.app.test_client()
+
+    def test_nonzero_skips_flash_banner_once_per_session(self, tmp_path, monkeypatch):
+        client = self._client_over_seeded_db(tmp_path, monkeypatch, collide=True)
+
+        first = unescape(client.get("/").get_data(as_text=True))
+        assert "legacy Match Key" in first
+        assert "1 stored record kept" in first
+
+        again = client.get("/").get_data(as_text=True)
+        assert "legacy Match Key" not in again
+
+    def test_zero_skips_never_flash_banner(self, tmp_path, monkeypatch):
+        client = self._client_over_seeded_db(tmp_path, monkeypatch, collide=False)
+
+        for _ in range(2):
+            html = client.get("/").get_data(as_text=True)
+            assert "legacy Match Key" not in html
+
+
 class TestImportUsesDbBoarders:
     def test_import_matches_boarder_known_only_to_db(self, fresh_client):
         with app_module.connect() as conn:
