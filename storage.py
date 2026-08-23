@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from records import (
+    AllTimeEntry,
     Boarder,
     BoarderRecord,
     HistoryEntry,
     MonthSummary,
     Punishment,
+    boarder_sort_key,
     normalize_name,
     sort_boarder_records,
 )
@@ -496,6 +498,77 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
         MonthSummary(month=row[0], boarder_count=row[1], total_minutes=row[2])
         for row in cursor.fetchall()
     ]
+
+
+def list_all_time_boarders(conn: sqlite3.Connection) -> list[AllTimeEntry]:
+    """Derives the All-Time List: every boarder ever recorded, read-only.
+
+    Unions the Master List with the distinct Match Keys found in Boarder
+    History and Punishments (voided included, so audit-only survivors stay
+    traceable). An entry is Current when its key sits on the Master List;
+    otherwise Former. Identity fields resolve freshest-first: the current
+    Master List entry wins; otherwise the freshest snapshot (latest month,
+    tie-broken by latest snapshot timestamp). Seen months and lifetime
+    totals come from history rows only, since Punishments freeze their own
+    points rather than reporting lateness. Current rows sort before Former
+    rows, each group by the shared Bed ordering rule then display name.
+    """
+    master = {boarder.normalized_name: boarder for boarder in list_boarders(conn)}
+
+    seen_months: dict[str, set[str]] = {}
+    lifetime: dict[str, list[int]] = {}
+    freshest: dict[str, tuple[str, str, str, str]] = {}
+
+    def absorb_snapshot(key: str, display: str, bed: str, month: str, stamp: str) -> None:
+        candidate = (month, stamp)
+        if key not in freshest or candidate > freshest[key][:2]:
+            freshest[key] = (month, stamp, display, bed)
+
+    cursor = conn.execute(
+        """
+        SELECT normalized_name, display_name, bed, month,
+               frequency, total_minutes, total_points, imported_at
+        FROM boarder_history
+        """
+    )
+    for key, display, bed, month, freq, minutes, points, imported_at in cursor.fetchall():
+        seen_months.setdefault(key, set()).add(month)
+        running = lifetime.setdefault(key, [0, 0, 0])
+        running[0] += freq
+        running[1] += minutes
+        running[2] += points
+        absorb_snapshot(key, display, bed, month, imported_at)
+
+    cursor = conn.execute(
+        "SELECT normalized_name, display_name, bed, month, assigned_at FROM punishments"
+    )
+    for key, display, bed, month, assigned_at in cursor.fetchall():
+        absorb_snapshot(key, display, bed, month, assigned_at)
+
+    entries: list[AllTimeEntry] = []
+    for key in set(master) | set(freshest):
+        current = master.get(key)
+        if current is not None:
+            display, bed = current.display_name, current.bed
+        else:
+            _, _, display, bed = freshest[key]
+        months = sorted(seen_months.get(key, ()))
+        freq, minutes, points = lifetime.get(key, [0, 0, 0])
+        entries.append(
+            AllTimeEntry(
+                normalized_name=key,
+                display_name=display,
+                bed=bed,
+                is_current=current is not None,
+                first_month=months[0] if months else None,
+                last_month=months[-1] if months else None,
+                total_frequency=freq,
+                total_minutes=minutes,
+                total_points=points,
+            )
+        )
+    entries.sort(key=lambda entry: (not entry.is_current, boarder_sort_key(entry)))
+    return entries
 
 
 def list_punishment_months(conn: sqlite3.Connection) -> list[str]:

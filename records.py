@@ -20,8 +20,8 @@ def normalize_name(name: str) -> str:
     return _NAME_KEY_NOISE.sub(" ", name.strip().upper()).strip()
 
 
-def boarder_sort_key(boarder: "Boarder") -> tuple[tuple[int, int, str], str]:
-    """Orders boarders by the shared Bed ordering rule, then display name."""
+def boarder_sort_key(boarder: "Boarder | AllTimeEntry") -> tuple[tuple[int, int, str], str]:
+    """Orders boarder-like rows by the shared Bed ordering rule, then display name."""
     return (bed_sort_key(boarder.bed), boarder.display_name)
 
 
@@ -96,6 +96,27 @@ class MonthSummary:
     month: str
     boarder_count: int
     total_minutes: int
+
+
+@dataclass
+class AllTimeEntry:
+    """One derived All-Time List row: every boarder ever recorded.
+
+    Derived live from the Master List unioned with the Match Keys found in
+    Boarder History and Punishments — never stored. ``is_current`` is
+    likewise derived (True when the key sits on the Master List), and the
+    seen-month/lifetime figures sum this key's history rows only.
+    """
+
+    normalized_name: str
+    display_name: str
+    bed: str
+    is_current: bool
+    first_month: str | None
+    last_month: str | None
+    total_frequency: int
+    total_minutes: int
+    total_points: int
 
 
 @dataclass

@@ -195,6 +195,12 @@ def home():
     message = message or flash_message
     error = error or flash_error
 
+    # Deep-linkable in-page tabs (?tab=history etc.); a month parameter
+    # still wins below so report links keep opening their month.
+    tab_param = request.args.get('tab')
+    if tab_param in ('reports', 'history', 'boarders'):
+        selected_tab = tab_param
+
     if request.args.get('month'):
         month_param = request.args['month']
         with connect() as conn:
@@ -204,6 +210,7 @@ def home():
 
     return render_template(
         'index.html',
+        panels_in_page=True,
         history_results=history_results,
         selected_tab=selected_tab,
         message=message,
@@ -216,6 +223,9 @@ def home():
         consequences_show_all=False,
         consequences_month=None,
         consequences_status=None,
+        boarders_view='current',
+        all_time_boarders=None,
+        all_time_query='',
         current_year=datetime.now().astimezone().year,
     )
 
@@ -347,12 +357,23 @@ def _boarder_bed_taken(bed, exclude_id=None):
 
 
 def _render_boarders(error=None, message=None):
+    boarders_view = 'all-time' if request.args.get('view') == 'all-time' else 'current'
+    all_time_query = request.args.get('q', '').strip()
     with connect() as conn:
         boarders_list = storage.list_boarders(conn)
         all_months = storage.list_months(conn)
         punishment_months = _punishment_months(conn, all_months)
+        all_time_entries = (
+            storage.list_all_time_boarders(conn) if boarders_view == 'all-time' else None
+        )
+    if all_time_entries is not None and all_time_query:
+        needle = all_time_query.lower()
+        all_time_entries = [
+            entry for entry in all_time_entries if needle in entry.display_name.lower()
+        ]
     return render_template(
         'index.html',
+        panels_in_page=True,
         history_results=None,
         selected_tab='boarders',
         message=message,
@@ -365,6 +386,9 @@ def _render_boarders(error=None, message=None):
         consequences_show_all=False,
         consequences_month=None,
         consequences_status=None,
+        boarders_view=boarders_view,
+        all_time_boarders=all_time_entries,
+        all_time_query=all_time_query,
         current_year=datetime.now().astimezone().year,
     )
 
@@ -467,6 +491,7 @@ def consequences():
 
     return render_template(
         'index.html',
+        panels_in_page=True,
         history_results=None,
         selected_tab='consequences',
         message=message,
@@ -480,6 +505,9 @@ def consequences():
         consequences_show_all=show_all,
         consequences_month=month,
         consequences_status=status,
+        boarders_view='current',
+        all_time_boarders=None,
+        all_time_query='',
         current_year=datetime.now().astimezone().year,
     )
 

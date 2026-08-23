@@ -167,6 +167,58 @@
     <!-- Boarders Panel -->
     <section id="boarders" class="panel {% if selected_tab == 'boarders' %}active{% endif %} boarders-panel">
         <h2>Boarders</h2>
+        <div class="month-detail-toolbar">
+            <div class="view-toggle" role="group" aria-label="Boarders view">
+                <a class="btn btn-sm {% if boarders_view == 'all-time' %}btn-neutral{% else %}btn-primary{% endif %}" href="/boarders">Current</a>
+                <a class="btn btn-sm {% if boarders_view == 'all-time' %}btn-primary{% else %}btn-neutral{% endif %}" href="/boarders?view=all-time">All-time</a>
+            </div>
+            {% if boarders_view == 'all-time' %}
+            <form action="/boarders" method="get" class="consequences-filters">
+                <input type="hidden" name="view" value="all-time">
+                <label for="alltime-filter"><strong>Name</strong></label>
+                <input type="text" id="alltime-filter" name="q" value="{{ all_time_query }}" placeholder="Filter by name">
+                <button type="submit" class="btn btn-neutral btn-sm">Filter</button>
+            </form>
+            {% endif %}
+        </div>
+        {% if boarders_view == 'all-time' %}
+        {% if all_time_boarders %}
+            <div class="table-scroll">
+                <table class="boarders-table alltime-table" id="alltime-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Bed</th>
+                            <th scope="col">Boarder Name</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">First Seen</th>
+                            <th scope="col">Last Seen</th>
+                            <th scope="col">Incidents</th>
+                            <th scope="col">Minutes Late</th>
+                            <th scope="col">Points</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in all_time_boarders %}
+                        <tr data-boarder-key="{{ entry.normalized_name }}">
+                            <td>{{ entry.bed }}</td>
+                            <td>{{ entry.display_name }}</td>
+                            <td>{% if entry.is_current %}<span class="status-badge badge-current">Current</span>{% else %}<span class="status-badge badge-former">Former</span>{% endif %}</td>
+                            <td>{{ entry.first_month or '&mdash;' }}</td>
+                            <td>{{ entry.last_month or '&mdash;' }}</td>
+                            <td>{{ entry.total_frequency }}</td>
+                            <td>{{ entry.total_minutes }}</td>
+                            <td>{{ entry.total_points }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% elif all_time_query %}
+            <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>No boarders matched your filter.</div>
+        {% else %}
+            <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>No boarders recorded yet. Everyone who appears in an imported Monthly Log or Punishment shows up here.</div>
+        {% endif %}
+        {% else %}
         <div class="upload-panel">
             <h3 class="upload-title">Add Boarder</h3>
             <form action="/boarders/add" method="POST">
@@ -225,6 +277,7 @@
             </div>
         {% else %}
             <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>No boarders on the master list. Add a boarder here, or import a CSV to replace it.</div>
+        {% endif %}
         {% endif %}
     </section>
 
@@ -885,13 +938,17 @@
     }
 
 
-    boarderEditButton.addEventListener('click', enterBoarderEditMode);
+    // The all-time view renders no editing affordances; the wiring
+    // below only attaches when the Current view's controls are present.
+    if (boarderEditButton && boarderSaveButton && boarderCancelButton) {
+        boarderEditButton.addEventListener('click', enterBoarderEditMode);
 
-    boarderSaveButton.addEventListener('click', () => {
-        if (boardersEditing && !boarderSaveButton.disabled) saveBoarderEdits();
-    });
+        boarderSaveButton.addEventListener('click', () => {
+            if (boardersEditing && !boarderSaveButton.disabled) saveBoarderEdits();
+        });
 
-    boarderCancelButton.addEventListener('click', discardBoarderEdits);
+        boarderCancelButton.addEventListener('click', discardBoarderEdits);
+    }
 
     // Unsaved-edit guard for full page navigation (brand link, Back, refresh).
     // Tab clicks keep their own in-page confirm guard above.

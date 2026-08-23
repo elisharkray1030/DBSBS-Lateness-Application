@@ -559,6 +559,30 @@
             flex-basis: 100%;
         }
 
+        /* Current/All-time view toggle and the derived status badges. */
+        .view-toggle {
+            display: inline-flex;
+            gap: 6px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            font-size: 0.75em;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+        }
+
+        .badge-current {
+            background: var(--success-bg);
+            color: var(--success-text);
+        }
+
+        .badge-former {
+            background: var(--disabled-bg);
+            color: var(--disabled-text);
+        }
+
         .month-report-scroll thead th {
             position: sticky;
             top: 0;

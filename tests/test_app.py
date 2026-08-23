@@ -357,20 +357,6 @@ class TestImportUsesDbBoarders:
         assert "Unmatched names in the log: BOB" in html
 
 
-@pytest.fixture()
-def fresh_client(tmp_path, monkeypatch):
-    db_path = tmp_path / "test.db"
-    monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-    namelist = tmp_path / "namelist.csv"
-    namelist.write_text(
-        "Bed,Name\n601A,ALICE\n601B,BOB\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-    app_module.init_db()
-    return app_module.app.test_client()
-
-
 class TestBoarderAdd:
     def test_add_boarder_appears_in_list(self, fresh_client):
         resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})

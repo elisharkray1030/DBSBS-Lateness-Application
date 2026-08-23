@@ -36,6 +36,10 @@ _Avoid_: historical report, record
 The collection of saved monthly reports. The UI tab deliberately reads "View Reports in Database" because staff use "the database" colloquially; the domain concept is the archive.
 _Avoid_: database, historical reports
 
+**All-Time List**:
+Every boarder ever recorded: the Master List unioned with the distinct Match Keys found in Boarder History and Punishments, derived live at request time and never stored. Each entry's Current/Former status is likewise derived — Current when the key sits on the Master List, Former when it survives only in frozen snapshots. Identity fields resolve freshest-first: the current Master List entry wins; otherwise the latest snapshot (latest month, tie-broken by latest import time).
+_Avoid_: historic roster, alumni list, everyone-ever
+
 **Boarder History**:
 The set of a boarder's lateness entries across all imported months, surfaced by search.
 _Avoid_: search history, records
