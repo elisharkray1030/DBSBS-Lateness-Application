@@ -44,7 +44,7 @@ def tab_button_class(html, tab_name):
 TAB_LABELS = {
     "reports": "View Reports in Database",
     "history": "Search Boarder History",
-    "consequences": "Consequences",
+    "consequences": "Punishments",
     "boarders": "Boarders",
 }
 
@@ -308,7 +308,7 @@ class TestMigrationCollisionBanner:
 
         first = unescape(client.get("/").get_data(as_text=True))
         assert "legacy Match Key" in first
-        assert "1 stored record kept" in first
+        assert "1 stored row kept" in first
 
         again = client.get("/").get_data(as_text=True)
         assert "legacy Match Key" not in again
@@ -355,20 +355,6 @@ class TestImportUsesDbBoarders:
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "Unmatched names in the log: BOB" in html
-
-
-@pytest.fixture()
-def fresh_client(tmp_path, monkeypatch):
-    db_path = tmp_path / "test.db"
-    monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-    namelist = tmp_path / "namelist.csv"
-    namelist.write_text(
-        "Bed,Name\n601A,ALICE\n601B,BOB\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-    app_module.init_db()
-    return app_module.app.test_client()
 
 
 class TestBoarderAdd:
@@ -2762,7 +2748,7 @@ class TestChromeConsistency:
             })"""
         )
 
-        assert len(typography) == 4
+        assert len(typography) == 5
         assert len(set(typography)) == 1, typography
 
 
@@ -3681,10 +3667,13 @@ class TestUiTidinessHoldsEverywhere:
         assert not overflow
 
     def test_no_rendered_copy_uses_the_master_list_avoid_term(self, fresh_client):
-        for route in ("/", "/boarders", "/consequences"):
+        for route in ("/", "/boarders", "/consequences", "/statistics", "/boarder/ALICE"):
             html = fresh_client.get(route).get_data(as_text=True)
             assert "roster" not in html.lower(), (
                 f"{route} renders the Master List avoid-term"
+            )
+            assert "record" not in html.lower(), (
+                f"{route} renders a Boarder History avoid-term"
             )
 
     def test_static_empty_states_carry_an_icon(self, fresh_client):

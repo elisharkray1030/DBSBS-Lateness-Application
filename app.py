@@ -3,7 +3,7 @@ import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 try:
     from flask import (
@@ -41,11 +41,12 @@ from punishments import (
     NON_VOIDED_STATUSES,
     TransitionRejected,
     assign_batch,
+    attach_display_flags,
     humanized_status,
     list_consequences,
     transition,
 )
-from records import normalize_name
+from records import build_profile_summary, normalize_name
 
 app = Flask(__name__)
 # Sessions carry only transient flash feedback (no auth, no secrets); the
@@ -55,6 +56,15 @@ app.jinja_env.globals["humanized_status"] = humanized_status
 
 DB_PATH = os.environ.get("DB_PATH", "lateness_history.db")
 NAMELIST_PATH = os.environ.get("NAMELIST_PATH", "namelist.csv")
+
+# Repeat-offender watchlist: a boarder reaching this many Points for this
+# many consecutive calendar months lands on the House Dashboard watchlist.
+# Deliberate application constants (#103) — not staff-configurable yet.
+WATCHLIST_POINTS_THRESHOLD = 12
+WATCHLIST_MIN_STREAK_MONTHS = 3
+
+# How many boarders the dashboard top-N widget ranks.
+TOP_BOARDERS_DEFAULT_LIMIT = 10
 
 
 def connect():
@@ -87,6 +97,51 @@ def _punishment_months(conn, report_months):
     )
 
 
+def _chart_payload(labels, **series):
+    """Builds a chart's plain-data payload from labels plus named series.
+
+    The one server contract for every embedded chart: JavaScript reads
+    ``labels`` and each series by name; an always-readable table backs the
+    same figures without JavaScript.
+    """
+    return {"labels": list(labels), **series}
+
+
+def _page_context(selected_tab: str = '', message: str | None = None,
+                  error: str | None = None, **extra):
+    """Shared template context for every full page.
+
+    Fills the layout chrome and the home-template panel defaults; routes
+    pass only their own values as keyword overrides. ``panels_in_page``
+    stays False unless a route rendering the four-panel home template
+    overrides it, which flips the tab bar between buttons and deep links.
+    """
+    context = {
+        'panels_in_page': False,
+        'selected_tab': selected_tab,
+        'message': message,
+        'error': error,
+        'history_results': None,
+        'all_months': [],
+        'current_month': None,
+        'boarders': [],
+        'punishment_months': [],
+        'punishments': [],
+        # 0 keeps the never-shown Punishments count line harmless on pages
+        # that don't track the archive total (previously rendered blank).
+        'consequences_total': 0,
+        'consequences_show_all': False,
+        'consequences_month': None,
+        'consequences_status': None,
+        'boarders_view': 'current',
+        'all_time_boarders': None,
+        'all_time_query': '',
+        'current_year': datetime.now().astimezone().year,
+    }
+    context.update(extra)
+    return context
+
+
 def _consume_flashes():
     """Returns (message, error) from one-shot session flash feedback."""
     message = None
@@ -101,12 +156,12 @@ def _consume_flashes():
 
 def _migration_banner(skip_count: int) -> str:
     """Words the legacy-Match-Key banner in glossary vocabulary."""
-    noun = "record" if skip_count == 1 else "records"
+    noun = "row" if skip_count == 1 else "rows"
     pronoun = "its" if skip_count == 1 else "their"
     key_word = "Match Key" if skip_count == 1 else "Match Keys"
     return (
         f"{skip_count} stored {noun} kept {pronoun} legacy {key_word} because "
-        "another record claims the same identity. "
+        "another row claims the same identity. "
         "Review duplicates in the Boarders tab."
     )
 
@@ -195,6 +250,12 @@ def home():
     message = message or flash_message
     error = error or flash_error
 
+    # Deep-linkable in-page tabs (?tab=history etc.); a month parameter
+    # still wins below so report links keep opening their month.
+    tab_param = request.args.get('tab')
+    if tab_param in ('reports', 'history', 'boarders'):
+        selected_tab = tab_param
+
     if request.args.get('month'):
         month_param = request.args['month']
         with connect() as conn:
@@ -202,22 +263,17 @@ def home():
                 current_month = month_param
                 selected_tab = 'reports'
 
-    return render_template(
-        'index.html',
-        history_results=history_results,
+    return render_template('index.html', **_page_context(
+        panels_in_page=True,
         selected_tab=selected_tab,
         message=message,
         error=error,
+        history_results=history_results,
         all_months=all_months,
         current_month=current_month,
         boarders=boarders,
         punishment_months=punishment_months,
-        punishments=[],
-        consequences_show_all=False,
-        consequences_month=None,
-        consequences_status=None,
-        current_year=datetime.now().astimezone().year,
-    )
+    ))
 
 
 @app.route('/boarders')
@@ -347,26 +403,32 @@ def _boarder_bed_taken(bed, exclude_id=None):
 
 
 def _render_boarders(error=None, message=None):
+    boarders_view = 'all-time' if request.args.get('view') == 'all-time' else 'current'
+    all_time_query = request.args.get('q', '').strip()
     with connect() as conn:
         boarders_list = storage.list_boarders(conn)
         all_months = storage.list_months(conn)
         punishment_months = _punishment_months(conn, all_months)
-    return render_template(
-        'index.html',
-        history_results=None,
+        all_time_entries = (
+            storage.list_all_time_boarders(conn) if boarders_view == 'all-time' else None
+        )
+    if all_time_entries is not None and all_time_query:
+        needle = all_time_query.lower()
+        all_time_entries = [
+            entry for entry in all_time_entries if needle in entry.display_name.lower()
+        ]
+    return render_template('index.html', **_page_context(
+        panels_in_page=True,
         selected_tab='boarders',
         message=message,
         error=error,
         all_months=all_months,
-        current_month=None,
         boarders=boarders_list,
         punishment_months=punishment_months,
-        punishments=[],
-        consequences_show_all=False,
-        consequences_month=None,
-        consequences_status=None,
-        current_year=datetime.now().astimezone().year,
-    )
+        boarders_view=boarders_view,
+        all_time_boarders=all_time_entries,
+        all_time_query=all_time_query,
+    ))
 
 
 @app.route('/api/month/<path:month>')
@@ -465,14 +527,12 @@ def consequences():
 
     message, error = _consume_flashes()
 
-    return render_template(
-        'index.html',
-        history_results=None,
+    return render_template('index.html', **_page_context(
+        panels_in_page=True,
         selected_tab='consequences',
         message=message,
         error=error,
         all_months=all_months,
-        current_month=None,
         boarders=boarders,
         punishment_months=punishment_months,
         punishments=punishments,
@@ -480,8 +540,106 @@ def consequences():
         consequences_show_all=show_all,
         consequences_month=month,
         consequences_status=status,
-        current_year=datetime.now().astimezone().year,
-    )
+    ))
+
+
+@app.route('/statistics')
+def statistics():
+    """Renders the House Dashboard: the Statistics tab's home.
+
+    Every figure derives live from stored data on each visit, so re-imports
+    and month deletions are reflected immediately.
+    """
+    with connect() as conn:
+        trend = storage.house_trend(conn)
+        stored_months = [summary.month for summary in storage.list_months(conn)]
+
+        top_month = request.args.get('top_month', '')
+        if top_month not in stored_months:
+            top_month = ''
+        top_entries = storage.top_boarders(
+            conn, month=top_month or None, limit=TOP_BOARDERS_DEFAULT_LIMIT
+        )
+
+        distribution_month = request.args.get('distribution_month', '')
+        if distribution_month not in stored_months:
+            distribution_month = stored_months[0] if stored_months else None
+        distribution = (
+            storage.points_distribution(conn, distribution_month)
+            if distribution_month
+            else []
+        )
+
+        watchlist = storage.repeat_offenders(
+            conn,
+            threshold=WATCHLIST_POINTS_THRESHOLD,
+            required_months=WATCHLIST_MIN_STREAK_MONTHS,
+        )
+
+    return render_template('dashboard.html', **_page_context(
+        selected_tab='statistics',
+        trend=trend,
+        trend_payload=_chart_payload(
+            [point.month for point in trend],
+            incidents=[point.incidents for point in trend],
+            minutes=[point.minutes_late for point in trend],
+        ),
+        stored_months=stored_months,
+        top_month=top_month,
+        top_entries=top_entries,
+        top_payload=_chart_payload(
+            [entry.display_name for entry in top_entries],
+            points=[entry.points for entry in top_entries],
+        ),
+        distribution_month=distribution_month,
+        distribution=distribution,
+        distribution_payload=_chart_payload(
+            [bucket.label for bucket in distribution],
+            counts=[bucket.count for bucket in distribution],
+        ),
+        watchlist=watchlist,
+        watchlist_threshold=WATCHLIST_POINTS_THRESHOLD,
+        watchlist_min_streak=WATCHLIST_MIN_STREAK_MONTHS,
+    ))
+
+
+@app.route('/boarder/<path:key>')
+def boarder_profile(key):
+    """Renders one boarder's profile, addressed by URL-encoded Match Key.
+
+    The key is normalized defensively so punctuation variants collapse to
+    the same profile; unknown or empty keys render a clear empty state.
+    """
+    normalized = normalize_name(key)
+    if normalized != key and normalized:
+        return redirect(f"/boarder/{quote(normalized)}")
+
+    identity = None
+    series = []
+    punishments = []
+    with connect() as conn:
+        if normalized:
+            identity = storage.resolve_boarder_identity(conn, normalized)
+            series = storage.get_boarder_series(conn, normalized)
+            punishments = attach_display_flags(
+                storage.list_boarder_punishments(conn, normalized)
+            )
+    live_punishments = [p for p in punishments if p.status != 'voided']
+    voided_punishments = [p for p in punishments if p.status == 'voided']
+
+    return render_template('boarder.html', **_page_context(
+        identity=identity,
+        series=series,
+        summary=build_profile_summary(series),
+        chart_payload=_chart_payload(
+            [row.month for row in series],
+            points=[row.total_points for row in series],
+            frequency=[row.frequency for row in series],
+            minutes=[row.total_minutes for row in series],
+        ),
+        live_punishments=live_punishments,
+        voided_punishments=voided_punishments,
+    ))
 
 
 def _consequences_redirect():

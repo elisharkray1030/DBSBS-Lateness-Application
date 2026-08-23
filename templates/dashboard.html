@@ -1,0 +1,232 @@
+{% extends "layout.html" %}
+
+{% block title %}House Dashboard — DBS Boarding School{% endblock %}
+
+{% block heading %}
+    <h1>House Dashboard</h1>
+{% endblock %}
+
+{% block content %}
+    <div class="print-brand">
+        <img src="{{ url_for('static', filename='dbslogoF-B.png') }}" alt="DBS Boarding School logo">
+        <span>DBS Boarding School</span>
+    </div>
+
+    {% if not trend %}
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+            <p>No reports have been imported yet. Import a Monthly Log to see house-wide statistics.</p>
+        </div>
+    {% else %}
+        <section class="history-panel dashboard-trend">
+            <h2>House-wide Trend</h2>
+            <p class="dashboard-note">Lateness incidents and total minutes late across every month in the Report Archive.</p>
+            <div class="chart-block">
+                <canvas id="house-trend-chart" role="img"
+                        aria-label="Line chart of lateness incidents and total minutes late per month"></canvas>
+                <script type="application/json" id="house-trend-data">{{ trend_payload|tojson }}</script>
+            </div>
+            <div class="table-scroll">
+                <table class="trend-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Month</th>
+                            <th scope="col">Incidents</th>
+                            <th scope="col">Minutes Late</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for point in trend %}
+                        <tr>
+                            <td>{{ point.month }}</td>
+                            <td>{{ point.incidents }}</td>
+                            <td>{{ point.minutes_late }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="history-panel dashboard-widget">
+            <h2>Top Boarders</h2>
+            <form action="/statistics" method="get" class="consequences-filters">
+                <label for="top-month"><strong>Range</strong></label>
+                <select id="top-month" name="top_month" onchange="this.form.submit()">
+                    <option value="">All time</option>
+                    {% for month in stored_months %}
+                        <option value="{{ month }}" {% if top_month == month %}selected{% endif %}>{{ month }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% if top_entries %}
+                <div class="chart-block">
+                    <canvas id="top-boarders-chart" role="img"
+                            aria-label="Horizontal bar chart of the highest-Points boarders"></canvas>
+                    <script type="application/json" id="top-boarders-data">{{ top_payload|tojson }}</script>
+                </div>
+                <div class="table-scroll">
+                    <table class="top-boarders-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Rank</th>
+                                <th scope="col">Boarder</th>
+                                <th scope="col">Frequency</th>
+                                <th scope="col">Minutes Late</th>
+                                <th scope="col">Points</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in top_entries %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>{{ entry.display_name }}</td>
+                                <td>{{ entry.frequency }}</td>
+                                <td>{{ entry.minutes }}</td>
+                                <td>{{ entry.points }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    No boarders with Points in this range.
+                </div>
+            {% endif %}
+        </section>
+
+        <section class="history-panel dashboard-widget">
+            <h2>Points Distribution</h2>
+            {% if distribution_month %}
+            <form action="/statistics" method="get" class="consequences-filters">
+                <label for="distribution-month"><strong>Month</strong></label>
+                <select id="distribution-month" name="distribution_month" onchange="this.form.submit()">
+                    {% for month in stored_months %}
+                        <option value="{{ month }}" {% if distribution_month == month %}selected{% endif %}>{{ month }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            <div class="chart-block">
+                <canvas id="points-distribution-chart" role="img"
+                        aria-label="Histogram of monthly Points spread across boarders for {{ distribution_month }}"></canvas>
+                <script type="application/json" id="points-distribution-data">{{ distribution_payload|tojson }}</script>
+            </div>
+            <div class="table-scroll">
+                <table class="distribution-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Points</th>
+                            <th scope="col">Boarders</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bucket in distribution %}
+                        <tr>
+                            <td>{{ bucket.label }}</td>
+                            <td>{{ bucket.count }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+                <div class="empty-state">No months are stored yet.</div>
+            {% endif %}
+        </section>
+
+        <section class="history-panel dashboard-widget">
+            <h2>Repeat-offender Watchlist</h2>
+            <p class="dashboard-note">Boarders reaching {{ watchlist_threshold }} Points or more for {{ watchlist_min_streak }} or more consecutive months.</p>
+            {% if watchlist %}
+                <div class="table-scroll">
+                    <table class="watchlist-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Boarder</th>
+                                <th scope="col">Bed</th>
+                                <th scope="col">Streak</th>
+                                <th scope="col">Months</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in watchlist %}
+                            <tr>
+                                <td>{{ entry.display_name }}</td>
+                                <td>{{ entry.bed }}</td>
+                                <td>{{ entry.months|length }} months</td>
+                                <td>{{ entry.months|join(', ') }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="empty-state">No boarders currently meet the repeat-offender criteria.</div>
+            {% endif %}
+        </section>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+    {% if trend %}
+    <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+    <script>
+        // Draws the dashboard charts from the server-rendered payloads alone;
+        // without JavaScript the per-widget tables stand in fully.
+        (function () {
+            var colors = dbsChartColors();
+
+            function payloadOf(id) {
+                var el = document.getElementById(id);
+                return el ? JSON.parse(el.textContent) : null;
+            }
+
+            var trendPayload = payloadOf('house-trend-data');
+            if (trendPayload && document.getElementById('house-trend-chart') && typeof Chart !== 'undefined') {
+                new Chart(document.getElementById('house-trend-chart'), {
+                    type: 'line',
+                    data: {
+                        labels: trendPayload.labels,
+                        datasets: [
+                            { label: 'Incidents', data: trendPayload.incidents, borderColor: colors.navy,
+                              backgroundColor: colors.navy, tension: 0.25 },
+                            { label: 'Minutes late', data: trendPayload.minutes, borderColor: colors.red,
+                              backgroundColor: colors.red, tension: 0.25 }
+                        ]
+                    },
+                    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+                });
+            }
+
+            var topPayload = payloadOf('top-boarders-data');
+            if (topPayload && document.getElementById('top-boarders-chart') && typeof Chart !== 'undefined') {
+                new Chart(document.getElementById('top-boarders-chart'), {
+                    type: 'bar',
+                    data: {
+                        labels: topPayload.labels,
+                        datasets: [{ label: 'Points', data: topPayload.points, backgroundColor: colors.navy }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        scales: { x: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            var distributionPayload = payloadOf('points-distribution-data');
+            if (distributionPayload && document.getElementById('points-distribution-chart') && typeof Chart !== 'undefined') {
+                new Chart(document.getElementById('points-distribution-chart'), {
+                    type: 'bar',
+                    data: {
+                        labels: distributionPayload.labels,
+                        datasets: [{ label: 'Boarders', data: distributionPayload.counts, backgroundColor: colors.neutral }]
+                    },
+                    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+                });
+            }
+        })();
+    </script>
+    {% endif %}
+{% endblock %}

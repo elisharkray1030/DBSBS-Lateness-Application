@@ -36,9 +36,21 @@ _Avoid_: historical report, record
 The collection of saved monthly reports. The UI tab deliberately reads "View Reports in Database" because staff use "the database" colloquially; the domain concept is the archive.
 _Avoid_: database, historical reports
 
+**All-Time List**:
+Every boarder ever recorded: the Master List unioned with the distinct Match Keys found in Boarder History and Punishments, derived live at request time and never stored. Each entry's Current/Former status is likewise derived — Current when the key sits on the Master List, Former when it survives only in frozen snapshots. Identity fields resolve freshest-first: the current Master List entry wins; otherwise the latest snapshot (latest month, tie-broken by latest import time).
+_Avoid_: historic roster, alumni list, everyone-ever
+
 **Boarder History**:
 The set of a boarder's lateness entries across all imported months, surfaced by search.
 _Avoid_: search history, records
+
+**Boarder Profile**:
+The per-boarder page addressed by URL-encoded Match Key: identity resolved freshest-first (with a Former badge off the Master List), lifetime summary figures with best and worst month, the month-by-month Boarder History, and — as it exists — the Punishment timeline. Reached uniformly for current and Removed boarders, so name variants collapse to one page.
+_Avoid_: student page, person record, individual view
+
+**House Dashboard**:
+The Statistics tab's home: house-wide lateness trend across the Report Archive, plus top-N boarders, monthly Points distribution, and the repeat-offender watchlist. Every figure derives live from stored data on each visit — nothing cached or stale.
+_Avoid_: analytics page, stats screen
 
 **Import**:
 Loading a monthly log to create or refresh that month's report.

@@ -1,0 +1,198 @@
+{% extends "layout.html" %}
+
+{% macro timeline_table(rows) -%}
+    <thead>
+        <tr>
+            <th scope="col">Month</th>
+            <th scope="col">Points Owed</th>
+            <th scope="col">Deadline</th>
+            <th scope="col">Status</th>
+            <th scope="col">Last action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in rows %}
+        <tr>
+            <td>{{ p.month }}</td>
+            <td>{{ p.points_owed }}</td>
+            <td>{{ p.deadline }}{% if p.was_late %} <span class="late-badge">late</span>{% endif %}</td>
+            <td>{{ humanized_status(p.status) }}{% if p.is_due %} <span class="due-badge">due</span>{% endif %}</td>
+            <td>{{ p.last_action or '&mdash;' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{%- endmacro %}
+
+{% block title %}Boarder Profile — DBS Boarding School{% endblock %}
+
+{% block heading %}
+    <h1>Boarder Profile</h1>
+{% endblock %}
+
+{% block content %}
+    <div class="print-brand">
+        <img src="{{ url_for('static', filename='dbslogoF-B.png') }}" alt="DBS Boarding School logo">
+        <span>DBS Boarding School</span>
+    </div>
+
+    {% if not identity %}
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+            <p>Nothing is stored for this boarder.</p>
+        </div>
+    {% else %}
+        <div class="profile-header">
+            <div class="profile-name-row">
+                <h3 class="profile-name">{{ identity.display_name }}</h3>
+                {% if identity.is_current %}
+                    <span class="status-badge badge-current">Current</span>
+                {% else %}
+                    <span class="status-badge badge-former">Former</span>
+                {% endif %}
+            </div>
+            <p class="profile-subline">Bed {{ identity.bed }}</p>
+            {% if identity.first_month %}
+                <p class="profile-subline">Seen from {{ identity.first_month }} to {{ identity.last_month }}</p>
+            {% endif %}
+            <div class="profile-summary">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-incidents">{{ summary.total_incidents }}</div>
+                    <div class="stat-label">Total incidents</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-minutes">{{ summary.total_minutes }}</div>
+                    <div class="stat-label">Minutes late</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-points">{{ summary.total_points }}</div>
+                    <div class="stat-label">Points</div>
+                </div>
+                {% if summary.best_month and summary.months_coincide %}
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-best-worst-month">{{ summary.best_month.month }}</div>
+                    <div class="stat-label">Best &amp; worst month</div>
+                </div>
+                {% else %}
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-best-month">{% if summary.best_month %}{{ summary.best_month.month }}{% else %}&mdash;{% endif %}</div>
+                    <div class="stat-label">Best month</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-worst-month">{% if summary.worst_month %}{{ summary.worst_month.month }}{% else %}&mdash;{% endif %}</div>
+                    <div class="stat-label">Worst month</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if series %}
+        <section class="history-panel profile-chart">
+            <h2>Points by Month</h2>
+            <div class="chart-block">
+                <canvas id="profile-trend-chart" role="img"
+                        aria-label="Grouped bar chart of {{ identity.display_name }}'s points, frequency, and minutes late per month"></canvas>
+                <script type="application/json" id="profile-trend-data">{{ chart_payload|tojson }}</script>
+            </div>
+        </section>
+        {% endif %}
+
+        <section class="history-panel profile-history">
+            <h2>Boarder History</h2>
+            {% if series %}
+                <div class="table-scroll">
+                    <table class="boarder-history-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Month</th>
+                                <th scope="col">Frequency</th>
+                                <th scope="col">Minutes Late</th>
+                                <th scope="col">Points</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in series %}
+                            <tr>
+                                <td>{{ row.month }}</td>
+                                <td>{{ row.frequency }}</td>
+                                <td>{{ row.total_minutes }}</td>
+                                <td>{{ row.total_points }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td>Total</td>
+                                <td>{{ summary.total_incidents }}</td>
+                                <td>{{ summary.total_minutes }}</td>
+                                <td>{{ summary.total_points }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                    No Monthly Report history exists for this boarder.
+                </div>
+            {% endif %}
+        </section>
+
+        <section class="history-panel profile-timeline">
+            <h2>Punishment Timeline</h2>
+            {% if live_punishments %}
+                <div class="table-scroll">
+                    <table class="punishment-timeline" id="punishment-timeline-live">
+                        {{ timeline_table(live_punishments) }}
+                    </table>
+                </div>
+            {% elif voided_punishments %}
+                <div class="empty-state">
+                    No live punishments exist for this boarder.
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                    No punishments have been assigned to this boarder.
+                </div>
+            {% endif %}
+            {% if voided_punishments %}
+                <h3 class="timeline-voided-heading">Voided</h3>
+                <div class="table-scroll timeline-voided">
+                    <table class="punishment-timeline" id="punishment-timeline-voided">
+                        {{ timeline_table(voided_punishments) }}
+                    </table>
+                </div>
+            {% endif %}
+        </section>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+    <script>
+        // Draws the profile chart from the server-rendered payload alone;
+        // without JavaScript the Boarder History table stands in fully.
+        (function () {
+            var payloadEl = document.getElementById('profile-trend-data');
+            var canvas = document.getElementById('profile-trend-chart');
+            if (!payloadEl || !canvas || typeof Chart === 'undefined') return;
+            var payload = JSON.parse(payloadEl.textContent);
+            var colors = dbsChartColors();
+            new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels: payload.labels,
+                    datasets: [
+                        { label: 'Points', data: payload.points, backgroundColor: colors.navy },
+                        { label: 'Frequency', data: payload.frequency, backgroundColor: colors.red },
+                        { label: 'Minutes late', data: payload.minutes, backgroundColor: colors.neutral }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        })();
+    </script>
+{% endblock %}
