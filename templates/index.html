@@ -201,7 +201,7 @@
                         {% for entry in all_time_boarders %}
                         <tr data-boarder-key="{{ entry.normalized_name }}">
                             <td>{{ entry.bed }}</td>
-                            <td>{{ entry.display_name }}</td>
+                            <td><a class="boarder-link" href="/boarder/{{ entry.normalized_name|urlencode }}">{{ entry.display_name }}</a></td>
                             <td>{% if entry.is_current %}<span class="status-badge badge-current">Current</span>{% else %}<span class="status-badge badge-former">Former</span>{% endif %}</td>
                             <td>{{ entry.first_month or '&mdash;' }}</td>
                             <td>{{ entry.last_month or '&mdash;' }}</td>
@@ -266,9 +266,9 @@
                     </thead>
                     <tbody>
                         {% for boarder in boarders %}
-                        <tr data-boarder-id="{{ boarder.id }}">
+                        <tr data-boarder-id="{{ boarder.id }}" data-boarder-key="{{ boarder.normalized_name }}">
                             <td class="boarder-cell boarder-bed">{{ boarder.bed }}</td>
-                            <td class="boarder-cell boarder-name">{{ boarder.display_name }}</td>
+                            <td class="boarder-cell boarder-name"><a class="boarder-link" href="/boarder/{{ boarder.normalized_name|urlencode }}">{{ boarder.display_name }}</a></td>
                             <td class="boarder-actions"></td>
                         </tr>
                         {% endfor %}
@@ -510,7 +510,7 @@
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><strong>${escapeHtml(row.bed)}</strong></td>
-                <td>${escapeHtml(row.display_name)}</td>
+                <td><a class="boarder-link" href="/boarder/${encodeURIComponent(row.name)}">${escapeHtml(row.display_name)}</a></td>
                 <td>${row.frequency}</td>
                 <td>${row.total_minutes}</td>
                 <td>${row.total_points}</td>
@@ -775,9 +775,10 @@
     function renderBoarderStatic(row, staticValues = null) {
         const name = staticValues ? staticValues.name : row.querySelector('.boarder-edit-name').value.trim();
         const bed = staticValues ? staticValues.bed : row.querySelector('.boarder-edit-bed').value.trim();
+        const key = row.dataset.boarderKey || '';
         row.innerHTML = `
             <td class="boarder-cell boarder-bed">${escapeHtml(bed)}</td>
-            <td class="boarder-cell boarder-name">${escapeHtml(name)}</td>
+            <td class="boarder-cell boarder-name"><a class="boarder-link" href="/boarder/${encodeURIComponent(key)}">${escapeHtml(name)}</a></td>
             <td class="boarder-actions"></td>
         `;
     }
