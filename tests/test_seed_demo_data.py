@@ -145,14 +145,15 @@ class TestSpreadMatrix:
 
         buckets = {b.label: b.count for b in storage.points_distribution(conn, "2026-01")}
 
-        # Every reachable bucket fills. "1" is unreachable through real
-        # ingestion: one incident always adds at least one minute, so the
-        # smallest possible Points figure is 2.
-        assert buckets["0"] > 0
-        assert buckets["2–3"] > 0
-        assert buckets["4–5"] > 0
-        assert buckets["6–9"] > 0
-        assert buckets["10+"] > 0
+        # Only the first two decade bins fill. One incident always adds at
+        # least one minute, so the smallest possible Points figure is 2,
+        # while the largest seeded persona tops out at 18 Points.
+        assert buckets["≤10"] > 0
+        assert buckets["11–20"] > 0
+        assert buckets["21–30"] == 0
+        assert buckets["31–40"] == 0
+        assert buckets["41–50"] == 0
+        assert buckets["51+"] == 0
 
     def test_figures_derive_from_real_ingestion_path(self, seeded):
         """Points equal frequency plus minutes because logs went through the parser."""

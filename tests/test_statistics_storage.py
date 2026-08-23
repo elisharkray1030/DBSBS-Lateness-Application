@@ -414,18 +414,18 @@ class TestPointsDistribution:
         assert sum(b.count for b in buckets) == 6
 
     def test_bucket_edges_match_expected_labels(self, conn):
-        for i, points in enumerate([0, 1, 2, 4, 7]):
+        for i, points in enumerate([0, 10, 11, 20, 21, 30, 31, 40, 41, 50, 51]):
             save_history(conn, f"BORD{i}", total_points=points, month="2026-03")
 
         buckets = storage.points_distribution(conn, month="2026-03")
 
         counts = {b.label: b.count for b in buckets}
-        assert counts["0"] == 1
-        assert counts["1"] == 1
-        assert counts["2\u20133"] == 1
-        assert counts["4\u20135"] == 1
-        assert counts["6\u20139"] == 1
-        assert counts["10+"] == 0
+        assert counts["\u226410"] == 2
+        assert counts["11\u201320"] == 2
+        assert counts["21\u201330"] == 2
+        assert counts["31\u201340"] == 2
+        assert counts["41\u201350"] == 2
+        assert counts["51+"] == 1
 
     def test_unknown_month_yields_all_zero_buckets(self, conn):
         buckets = storage.points_distribution(conn, month="1999-01")
