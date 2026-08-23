@@ -2887,6 +2887,84 @@ class TestVisualConsistencyPass:
         assert abs(edges["leftDrift"]) < 2, edges
         assert abs(edges["baselineDelta"]) <= 2, edges
 
+    def test_count_sits_clear_of_the_group_heading_it_follows(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            seed_punishments(conn)
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        gap = page.evaluate(
+            """() => {
+                const rect = el => el.getBoundingClientRect();
+                const title = rect(document.querySelector('.consequences-group-title'));
+                const count = rect(document.querySelector('.consequences-group .consequences-count'));
+                return count.top - title.bottom;
+            }"""
+        )
+        assert gap >= 0, gap
+
+    def test_empty_view_count_keeps_its_toolbar_coupling(self, fresh_client, browser_page):
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        gap = page.evaluate(
+            """() => {
+                const rect = el => el.getBoundingClientRect();
+                const toolbar = rect(document.querySelector('.consequences-toolbar'));
+                const count = rect(document.querySelector('.consequences-toolbar + .consequences-count'));
+                return count.top - toolbar.bottom;
+            }"""
+        )
+        assert abs(gap - 8) <= 1, gap
+
+    def test_consequences_toolbar_controls_share_one_height(self, fresh_client, browser_page):
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        heights = page.evaluate(
+            """() => [
+                document.querySelector('#consequences-month'),
+                document.querySelector('#consequences-status'),
+                document.querySelector('.consequences-toolbar .btn-neutral'),
+            ].map(el => el.getBoundingClientRect().height)"""
+        )
+        assert max(heights) - min(heights) < 1, heights
+
+    def test_consequences_toolbar_stacks_on_mobile_with_shared_heights(self, fresh_client, browser_page):
+        html = fresh_client.get("/consequences").get_data(as_text=True)
+
+        page = browser_page
+        page.set_viewport_size({"width": 375, "height": 800})
+        try:
+            page.set_content(html)
+
+            layout = page.evaluate(
+                """() => {
+                    const toolbar = document.querySelector('.consequences-toolbar');
+                    const els = [
+                        document.querySelector('#consequences-month'),
+                        document.querySelector('#consequences-status'),
+                        toolbar.querySelector('.btn-neutral'),
+                    ];
+                    const rects = els.map(el => el.getBoundingClientRect());
+                    return {
+                        direction: getComputedStyle(toolbar).flexDirection,
+                        heightSpread: Math.max(...rects.map(r => r.height))
+                            - Math.min(...rects.map(r => r.height)),
+                    };
+                }"""
+            )
+            assert layout["direction"] == "column", layout
+            assert layout["heightSpread"] < 1, layout
+        finally:
+            page.set_viewport_size({"width": 1280, "height": 720})
+
     def test_checkboxes_render_as_navy_tiles_with_scale_in_checks(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
