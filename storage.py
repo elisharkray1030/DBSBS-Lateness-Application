@@ -35,12 +35,12 @@ MIGRATION_SKIPS_KEY = "match_key_migration_skips"
 # Named bucket edges for the House Dashboard Points-distribution histogram;
 # an upper bound of None means unbounded. Labels use en dashes.
 POINTS_DISTRIBUTION_BUCKETS = (
-    ("0", 0, 0),
-    ("1", 1, 1),
-    ("2–3", 2, 3),
-    ("4–5", 4, 5),
-    ("6–9", 6, 9),
-    ("10+", 10, None),
+    ("≤10", 0, 10),
+    ("11–20", 11, 20),
+    ("21–30", 21, 30),
+    ("31–40", 31, 40),
+    ("41–50", 41, 50),
+    ("51+", 51, None),
 )
 
 

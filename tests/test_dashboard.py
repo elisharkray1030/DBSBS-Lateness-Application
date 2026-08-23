@@ -173,7 +173,7 @@ class TestDistributionWidget:
         ).group(1))
         counts_by_label = dict(zip(payload["labels"], payload["counts"]))
         assert sum(counts_by_label.values()) == 1  # only 2026-02's single row
-        assert counts_by_label["6–9"] == 1
+        assert counts_by_label["≤10"] == 1
 
     def test_bucket_counts_reconcile_against_rows(self, fresh_client):
         save_points("2026-03", [
