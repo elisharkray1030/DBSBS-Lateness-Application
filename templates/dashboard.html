@@ -175,10 +175,7 @@
         // Draws the dashboard charts from the server-rendered payloads alone;
         // without JavaScript the per-widget tables stand in fully.
         (function () {
-            var styles = getComputedStyle(document.documentElement);
-            var navy = styles.getPropertyValue('--navy').trim() || '#1d2b53';
-            var red = styles.getPropertyValue('--brand-red').trim() || '#E51A3C';
-            var neutral = styles.getPropertyValue('--neutral').trim() || '#6c757d';
+            var colors = dbsChartColors();
 
             function payloadOf(id) {
                 var el = document.getElementById(id);
@@ -190,12 +187,12 @@
                 new Chart(document.getElementById('house-trend-chart'), {
                     type: 'line',
                     data: {
-                        labels: trendPayload.months,
+                        labels: trendPayload.labels,
                         datasets: [
-                            { label: 'Incidents', data: trendPayload.incidents, borderColor: navy,
-                              backgroundColor: navy, tension: 0.25 },
-                            { label: 'Minutes late', data: trendPayload.minutes, borderColor: red,
-                              backgroundColor: red, tension: 0.25 }
+                            { label: 'Incidents', data: trendPayload.incidents, borderColor: colors.navy,
+                              backgroundColor: colors.navy, tension: 0.25 },
+                            { label: 'Minutes late', data: trendPayload.minutes, borderColor: colors.red,
+                              backgroundColor: colors.red, tension: 0.25 }
                         ]
                     },
                     options: { responsive: true, scales: { y: { beginAtZero: true } } }
@@ -207,8 +204,8 @@
                 new Chart(document.getElementById('top-boarders-chart'), {
                     type: 'bar',
                     data: {
-                        labels: topPayload.names,
-                        datasets: [{ label: 'Points', data: topPayload.points, backgroundColor: navy }]
+                        labels: topPayload.labels,
+                        datasets: [{ label: 'Points', data: topPayload.points, backgroundColor: colors.navy }]
                     },
                     options: {
                         indexAxis: 'y',
@@ -224,7 +221,7 @@
                     type: 'bar',
                     data: {
                         labels: distributionPayload.labels,
-                        datasets: [{ label: 'Boarders', data: distributionPayload.counts, backgroundColor: neutral }]
+                        datasets: [{ label: 'Boarders', data: distributionPayload.counts, backgroundColor: colors.neutral }]
                     },
                     options: { responsive: true, scales: { y: { beginAtZero: true } } }
                 });

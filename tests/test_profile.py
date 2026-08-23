@@ -253,7 +253,7 @@ class TestProfileTrendChart:
         )
         assert match is not None, "no embedded chart payload found"
         assert json.loads(match.group(1)) == {
-            "months": ["2026-01", "2026-02"],
+            "labels": ["2026-01", "2026-02"],
             "points": [4, 9],
             "frequency": [1, 2],
             "minutes": [3, 5],

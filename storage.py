@@ -6,6 +6,7 @@ from uuid import uuid4
 from records import (
     AllTimeEntry,
     Boarder,
+    BoarderIdentity,
     BoarderMonth,
     BoarderRecord,
     DistributionBucket,
@@ -554,10 +555,14 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     ]
 
 
-def _freshest_identity_map(conn: sqlite3.Connection) -> dict[str, tuple[str, str]]:
-    """Maps every known Match Key to its freshest-first (display, bed)."""
+def _freshest_identity_map(conn: sqlite3.Connection) -> dict[str, BoarderIdentity]:
+    """Maps every known Match Key to its freshest-first identity."""
     return {
-        entry.normalized_name: (entry.display_name, entry.bed)
+        entry.normalized_name: BoarderIdentity(
+            normalized_name=entry.normalized_name,
+            display_name=entry.display_name,
+            bed=entry.bed,
+        )
         for entry in list_all_time_boarders(conn)
     }
 
@@ -565,14 +570,16 @@ def _freshest_identity_map(conn: sqlite3.Connection) -> dict[str, tuple[str, str
 def top_boarders(
     conn: sqlite3.Connection,
     month: str | None = None,
-    limit: int = 10,
+    *,
+    limit: int,
 ) -> list[TopBoarderEntry]:
     """Returns the highest-Points boarders within a range, ready for the
     House Dashboard top-N widget.
 
     ``month`` narrows to one stored month; None means all-time, summing each
     boarder's months. Zero-point boarders never rank. Ties break on total
-    frequency then Match Key so the ordering is deterministic. Identity
+    frequency then Match Key so the ordering is deterministic. ``limit`` is
+    supplied by the caller so the widget's N lives in one place. Identity
     fields resolve freshest-first like everywhere else in the app.
     """
     identity = _freshest_identity_map(conn)
@@ -606,8 +613,8 @@ def top_boarders(
     return [
         TopBoarderEntry(
             normalized_name=row[0],
-            display_name=identity.get(row[0], (row[0], ""))[0],
-            bed=identity.get(row[0], ("", ""))[1],
+            display_name=identity[row[0]].display_name if row[0] in identity else row[0],
+            bed=identity[row[0]].bed if row[0] in identity else "",
             points=row[1],
             frequency=row[2],
             minutes=row[3],
@@ -641,13 +648,15 @@ def points_distribution(conn: sqlite3.Connection, month: str) -> list[Distributi
 def repeat_offenders(
     conn: sqlite3.Connection,
     threshold: int,
-    required_months: int = 3,
+    required_months: int,
 ) -> list[WatchlistEntry]:
     """Finds boarders at or above a Points threshold across consecutive months.
 
     A streak is consecutive calendar months (crossing year boundaries); a
     month re-imported below the threshold breaks it. The longest qualifying
-    run is reported. Identity fields resolve freshest-first.
+    run is reported. ``threshold`` and ``required_months`` come from the
+    application layer's named constants. Identity fields resolve
+    freshest-first.
     """
     identity = _freshest_identity_map(conn)
     months_above: dict[str, list[str]] = {}
@@ -677,12 +686,12 @@ def repeat_offenders(
                 best_run = list(run)
             previous_ordinal = ordinal
         if len(best_run) >= required_months:
-            display, bed = identity.get(key, (key, ""))
+            who = identity.get(key)
             offenders.append(
                 WatchlistEntry(
                     normalized_name=key,
-                    display_name=display,
-                    bed=bed,
+                    display_name=who.display_name if who else key,
+                    bed=who.bed if who else "",
                     months=best_run,
                 )
             )

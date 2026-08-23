@@ -54,7 +54,7 @@ class TestHouseTrendPayload:
         )
         assert match is not None
         assert json.loads(match.group(1)) == {
-            "months": ["2026-01", "2026-02"],
+            "labels": ["2026-01", "2026-02"],
             "incidents": [3, 1],
             "minutes": [9, 2],
         }
@@ -83,8 +83,8 @@ class TestHouseTrendPayload:
             r'id="house-trend-data">(.*?)</script>', dashboard(fresh_client), re.S
         ).group(1))
 
-        assert before["months"] == ["2026-01", "2026-02"]
-        assert after["months"] == ["2026-02"]
+        assert before["labels"] == ["2026-01", "2026-02"]
+        assert after["labels"] == ["2026-02"]
 
     def test_re_importing_a_month_updates_figures(self, fresh_client):
         save_month_totals("2026-01", [("ALICE", "101", 2, 5, 7)])
@@ -127,7 +127,7 @@ class TestTopBoardersWidget:
         ).group(1))
         # CAROL leads outright; ALICE/BOB tie on points AND frequency, so the
         # Match Key breaks their tie alphabetically.
-        assert payload == {"names": ["Carol", "ALICE", "BOB"], "points": [12, 9, 9]}
+        assert payload == {"labels": ["Carol", "ALICE", "BOB"], "points": [12, 9, 9]}
 
     def test_switching_to_a_single_month_range(self, fresh_client):
         save_points("2026-01", [("ALICE", "101", 9)])
@@ -138,7 +138,7 @@ class TestTopBoardersWidget:
         payload = json.loads(re.search(
             r'id="top-boarders-data">(.*?)</script>', html, re.S
         ).group(1))
-        assert payload == {"names": ["BOB"], "points": [5]}
+        assert payload == {"labels": ["BOB"], "points": [5]}
         assert 'value="2026-02" selected' in html
 
     def test_unknown_month_param_falls_back_to_all_time(self, fresh_client):
@@ -149,7 +149,7 @@ class TestTopBoardersWidget:
         payload = json.loads(re.search(
             r'id="top-boarders-data">(.*?)</script>', html, re.S
         ).group(1))
-        assert payload["names"] == ["ALICE"]
+        assert payload["labels"] == ["ALICE"]
 
     def test_ranks_at_most_ten_boarders(self, fresh_client):
         save_points("2026-01", [(f"BORD{i:02d}", "101", i + 1) for i in range(12)])

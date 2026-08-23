@@ -170,18 +170,15 @@
             var canvas = document.getElementById('profile-trend-chart');
             if (!payloadEl || !canvas || typeof Chart === 'undefined') return;
             var payload = JSON.parse(payloadEl.textContent);
-            var styles = getComputedStyle(document.documentElement);
-            var navy = styles.getPropertyValue('--navy').trim() || '#1d2b53';
-            var red = styles.getPropertyValue('--brand-red').trim() || '#E51A3C';
-            var neutral = styles.getPropertyValue('--neutral').trim() || '#6c757d';
+            var colors = dbsChartColors();
             new Chart(canvas, {
                 type: 'bar',
                 data: {
-                    labels: payload.months,
+                    labels: payload.labels,
                     datasets: [
-                        { label: 'Points', data: payload.points, backgroundColor: navy },
-                        { label: 'Frequency', data: payload.frequency, backgroundColor: red },
-                        { label: 'Minutes late', data: payload.minutes, backgroundColor: neutral }
+                        { label: 'Points', data: payload.points, backgroundColor: colors.navy },
+                        { label: 'Frequency', data: payload.frequency, backgroundColor: colors.red },
+                        { label: 'Minutes late', data: payload.minutes, backgroundColor: colors.neutral }
                     ]
                 },
                 options: {

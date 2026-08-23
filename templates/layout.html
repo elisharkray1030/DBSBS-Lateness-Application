@@ -1270,6 +1270,17 @@
         return escapeHtml(str).replace(/'/g, '&#39;');
     }
 
+    // Design-token colors for charts, read once per page so the palette
+    // keeps a single source of truth in the CSS tokens.
+    function dbsChartColors() {
+        var styles = getComputedStyle(document.documentElement);
+        return {
+            navy: styles.getPropertyValue('--navy').trim() || '#1d2b53',
+            red: styles.getPropertyValue('--brand-red').trim() || '#E51A3C',
+            neutral: styles.getPropertyValue('--neutral').trim() || '#6c757d'
+        };
+    }
+
     // Reusable confirm modal
     let confirmAction = null;
     let confirmLastFocused = null;

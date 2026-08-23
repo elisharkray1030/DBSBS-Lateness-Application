@@ -97,19 +97,47 @@ def _punishment_months(conn, report_months):
     )
 
 
-def _profile_chart_payload(series):
-    """Builds the profile chart's plain-data payload.
+def _chart_payload(labels, **series):
+    """Builds a chart's plain-data payload from labels plus named series.
 
-    The server contract is plain data rendered beside each canvas; the
-    client-side chart maps it onto Chart.js config, and the same figures
-    back the always-readable table below.
+    The one server contract for every embedded chart: JavaScript reads
+    ``labels`` and each series by name; an always-readable table backs the
+    same figures without JavaScript.
     """
-    return {
-        "months": [row.month for row in series],
-        "points": [row.total_points for row in series],
-        "frequency": [row.frequency for row in series],
-        "minutes": [row.total_minutes for row in series],
+    return {"labels": list(labels), **series}
+
+
+def _page_context(selected_tab: str = '', message: str | None = None,
+                  error: str | None = None, **extra):
+    """Shared template context for every full page.
+
+    Fills the layout chrome and the home-template panel defaults; routes
+    pass only their own values as keyword overrides. ``panels_in_page``
+    stays False unless a route rendering the four-panel home template
+    overrides it, which flips the tab bar between buttons and deep links.
+    """
+    context = {
+        'panels_in_page': False,
+        'selected_tab': selected_tab,
+        'message': message,
+        'error': error,
+        'history_results': None,
+        'all_months': [],
+        'current_month': None,
+        'boarders': [],
+        'punishment_months': [],
+        'punishments': [],
+        'consequences_total': 0,
+        'consequences_show_all': False,
+        'consequences_month': None,
+        'consequences_status': None,
+        'boarders_view': 'current',
+        'all_time_boarders': None,
+        'all_time_query': '',
+        'current_year': datetime.now().astimezone().year,
     }
+    context.update(extra)
+    return context
 
 
 def _consume_flashes():
@@ -131,7 +159,7 @@ def _migration_banner(skip_count: int) -> str:
     key_word = "Match Key" if skip_count == 1 else "Match Keys"
     return (
         f"{skip_count} stored {noun} kept {pronoun} legacy {key_word} because "
-        "another record claims the same identity. "
+        "another row claims the same identity. "
         "Review duplicates in the Boarders tab."
     )
 
@@ -233,26 +261,17 @@ def home():
                 current_month = month_param
                 selected_tab = 'reports'
 
-    return render_template(
-        'index.html',
+    return render_template('index.html', **_page_context(
         panels_in_page=True,
-        history_results=history_results,
         selected_tab=selected_tab,
         message=message,
         error=error,
+        history_results=history_results,
         all_months=all_months,
         current_month=current_month,
         boarders=boarders,
         punishment_months=punishment_months,
-        punishments=[],
-        consequences_show_all=False,
-        consequences_month=None,
-        consequences_status=None,
-        boarders_view='current',
-        all_time_boarders=None,
-        all_time_query='',
-        current_year=datetime.now().astimezone().year,
-    )
+    ))
 
 
 @app.route('/boarders')
@@ -396,26 +415,18 @@ def _render_boarders(error=None, message=None):
         all_time_entries = [
             entry for entry in all_time_entries if needle in entry.display_name.lower()
         ]
-    return render_template(
-        'index.html',
+    return render_template('index.html', **_page_context(
         panels_in_page=True,
-        history_results=None,
         selected_tab='boarders',
         message=message,
         error=error,
         all_months=all_months,
-        current_month=None,
         boarders=boarders_list,
         punishment_months=punishment_months,
-        punishments=[],
-        consequences_show_all=False,
-        consequences_month=None,
-        consequences_status=None,
         boarders_view=boarders_view,
         all_time_boarders=all_time_entries,
         all_time_query=all_time_query,
-        current_year=datetime.now().astimezone().year,
-    )
+    ))
 
 
 @app.route('/api/month/<path:month>')
@@ -514,15 +525,12 @@ def consequences():
 
     message, error = _consume_flashes()
 
-    return render_template(
-        'index.html',
+    return render_template('index.html', **_page_context(
         panels_in_page=True,
-        history_results=None,
         selected_tab='consequences',
         message=message,
         error=error,
         all_months=all_months,
-        current_month=None,
         boarders=boarders,
         punishment_months=punishment_months,
         punishments=punishments,
@@ -530,11 +538,7 @@ def consequences():
         consequences_show_all=show_all,
         consequences_month=month,
         consequences_status=status,
-        boarders_view='current',
-        all_time_boarders=None,
-        all_time_query='',
-        current_year=datetime.now().astimezone().year,
-    )
+    ))
 
 
 @app.route('/statistics')
@@ -570,51 +574,31 @@ def statistics():
             required_months=WATCHLIST_MIN_STREAK_MONTHS,
         )
 
-    return render_template(
-        'dashboard.html',
-        panels_in_page=False,
+    return render_template('dashboard.html', **_page_context(
         selected_tab='statistics',
-        message=None,
-        error=None,
         trend=trend,
-        trend_payload=_house_trend_payload(trend),
+        trend_payload=_chart_payload(
+            [point.month for point in trend],
+            incidents=[point.incidents for point in trend],
+            minutes=[point.minutes_late for point in trend],
+        ),
         stored_months=stored_months,
         top_month=top_month,
         top_entries=top_entries,
-        top_payload=_top_boarders_payload(top_entries),
+        top_payload=_chart_payload(
+            [entry.display_name for entry in top_entries],
+            points=[entry.points for entry in top_entries],
+        ),
         distribution_month=distribution_month,
         distribution=distribution,
-        distribution_payload=_distribution_payload(distribution),
+        distribution_payload=_chart_payload(
+            [bucket.label for bucket in distribution],
+            counts=[bucket.count for bucket in distribution],
+        ),
         watchlist=watchlist,
         watchlist_threshold=WATCHLIST_POINTS_THRESHOLD,
         watchlist_min_streak=WATCHLIST_MIN_STREAK_MONTHS,
-        current_year=datetime.now().astimezone().year,
-    )
-
-
-def _house_trend_payload(trend):
-    """Plain-data payload for the house-wide trend chart."""
-    return {
-        "months": [point.month for point in trend],
-        "incidents": [point.incidents for point in trend],
-        "minutes": [point.minutes_late for point in trend],
-    }
-
-
-def _top_boarders_payload(entries):
-    """Plain-data payload for the top-N horizontal bar chart."""
-    return {
-        "names": [entry.display_name for entry in entries],
-        "points": [entry.points for entry in entries],
-    }
-
-
-def _distribution_payload(buckets):
-    """Plain-data payload for the Points-distribution histogram."""
-    return {
-        "labels": [bucket.label for bucket in buckets],
-        "counts": [bucket.count for bucket in buckets],
-    }
+    ))
 
 
 @app.route('/boarder/<path:key>')
@@ -641,20 +625,19 @@ def boarder_profile(key):
     live_punishments = [p for p in punishments if p.status != 'voided']
     voided_punishments = [p for p in punishments if p.status == 'voided']
 
-    return render_template(
-        'boarder.html',
-        panels_in_page=False,
-        selected_tab='',
-        message=None,
-        error=None,
+    return render_template('boarder.html', **_page_context(
         identity=identity,
         series=series,
         summary=build_profile_summary(series),
-        chart_payload=_profile_chart_payload(series),
+        chart_payload=_chart_payload(
+            [row.month for row in series],
+            points=[row.total_points for row in series],
+            frequency=[row.frequency for row in series],
+            minutes=[row.total_minutes for row in series],
+        ),
         live_punishments=live_punishments,
         voided_punishments=voided_punishments,
-        current_year=datetime.now().astimezone().year,
-    )
+    ))
 
 
 def _consequences_redirect():

@@ -365,7 +365,7 @@ class TestTopBoarders:
         save_history(conn, "BOB", total_points=9, frequency=3, month="2026-03")
         save_history(conn, "CAROL", total_points=12, frequency=1, month="2026-03")
 
-        top = storage.top_boarders(conn, month="2026-03")
+        top = storage.top_boarders(conn, month="2026-03", limit=10)
 
         assert [e.normalized_name for e in top] == ["CAROL", "BOB", "ALICE"]
 
@@ -373,7 +373,7 @@ class TestTopBoarders:
         save_history(conn, "ALICE", total_points=4, month="2026-01")
         save_history(conn, "ALICE", total_points=5, month="2026-02")
 
-        top = storage.top_boarders(conn)
+        top = storage.top_boarders(conn, limit=10)
 
         assert [(e.normalized_name, e.points) for e in top] == [("ALICE", 9)]
 
@@ -381,7 +381,7 @@ class TestTopBoarders:
         save_history(conn, "ALICE", total_points=4, month="2026-01")
         save_history(conn, "BOB", total_points=9, month="2026-02")
 
-        top = storage.top_boarders(conn, month="2026-02")
+        top = storage.top_boarders(conn, month="2026-02", limit=10)
 
         assert [e.normalized_name for e in top] == ["BOB"]
 
@@ -398,10 +398,10 @@ class TestTopBoarders:
     def test_zero_point_boarders_excluded(self, conn):
         save_history(conn, "ALICE", total_points=0, month="2026-03")
 
-        assert storage.top_boarders(conn, month="2026-03") == []
+        assert storage.top_boarders(conn, month="2026-03", limit=10) == []
 
     def test_unknown_month_returns_empty(self, conn):
-        assert storage.top_boarders(conn, month="1999-01") == []
+        assert storage.top_boarders(conn, month="1999-01", limit=10) == []
 
 
 class TestPointsDistribution:

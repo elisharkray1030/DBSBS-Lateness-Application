@@ -146,6 +146,18 @@ class HouseTrendPoint:
     minutes_late: int
 
 
+@dataclass(frozen=True)
+class BoarderIdentity:
+    """Who a Match Key belongs to, resolved freshest-first.
+
+    The identity triple that travels together through every derived view.
+    """
+
+    normalized_name: str
+    display_name: str
+    bed: str
+
+
 @dataclass
 class TopBoarderEntry:
     """One boarder's aggregate inside a dashboard top-N range."""
