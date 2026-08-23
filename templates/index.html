@@ -800,17 +800,42 @@
         }
 
         .consequences-toolbar {
+            --control-height: 30px;
             display: flex;
             gap: 10px;
             margin-bottom: 20px;
-            align-items: flex-end;
+            align-items: center;
             flex-wrap: wrap;
         }
 
+        .consequences-toolbar .consequences-filters {
+            align-items: center;
+        }
+
+        .consequences-toolbar .consequences-filters label {
+            display: inline-flex;
+            align-items: center;
+            white-space: nowrap;
+        }
+
+        .consequences-toolbar select,
+        .consequences-toolbar .btn-sm {
+            height: var(--control-height);
+        }
+
+        .consequences-toolbar select {
+            padding-top: 4px;
+            padding-bottom: 4px;
+        }
+
         .consequences-count {
-            margin: -12px 0 16px;
+            margin: 0 0 16px;
             color: var(--text-muted);
             font-size: 0.9em;
+        }
+
+        .consequences-toolbar + .consequences-count {
+            margin-top: -12px;
         }
 
         .consequences-group {
@@ -1179,6 +1204,9 @@
                 <button type="submit" class="btn btn-{{ action.style }} btn-sm">{{ action.label }}</button>
             </form>
         {%- endmacro %}
+        {% macro consequences_count() -%}
+            <p class="consequences-count" aria-live="polite">Showing {{ punishments|length }} of {{ consequences_total }} {{ 'punishment' if consequences_total == 1 else 'punishments' }}</p>
+        {%- endmacro %}
         <h2>Consequences</h2>
         <div class="consequences-toolbar">
             <form action="/consequences" method="get" class="consequences-filters">
@@ -1215,11 +1243,11 @@
                 </button>
             </form>
         </div>
-        <p class="consequences-count" aria-live="polite">Showing {{ punishments|length }} of {{ consequences_total }} {{ 'punishment' if consequences_total == 1 else 'punishments' }}</p>
         {% if punishments %}
             {% for group in punishments|groupby('status') %}
             <div class="consequences-group">
                 <h4 class="consequences-group-title">{{ humanized_status(group.grouper) }}</h4>
+                {% if loop.first %}{{ consequences_count() }}{% endif %}
                 <div class="table-scroll">
                     <table>
                         <thead>
@@ -1259,6 +1287,7 @@
             </div>
             {% endfor %}
         {% else %}
+            {{ consequences_count() }}
             <div class="empty-state">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
                 No punishments to show.
