@@ -590,8 +590,6 @@ def top_boarders(
             (limit,),
         )
         rows = cursor.fetchall()
-        points_key = lambda row: row[1]  # noqa: E731
-        frequency_of = lambda row: row[2]  # noqa: E731
     else:
         cursor = conn.execute(
             """
@@ -604,8 +602,6 @@ def top_boarders(
             (month, limit),
         )
         rows = cursor.fetchall()
-        points_key = lambda row: row[1]  # noqa: E731
-        frequency_of = lambda row: row[2]  # noqa: E731
 
     return [
         TopBoarderEntry(

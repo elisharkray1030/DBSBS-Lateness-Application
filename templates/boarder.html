@@ -38,10 +38,10 @@
     {% if not identity %}
         <div class="empty-state">
             <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
-            <p>No records are stored for this boarder.</p>
+            <p>Nothing is stored for this boarder.</p>
         </div>
     {% else %}
-        <div class="upload-panel profile-header">
+        <div class="profile-header">
             <div class="profile-name-row">
                 <h3 class="profile-name">{{ identity.display_name }}</h3>
                 {% if identity.is_current %}
@@ -125,7 +125,7 @@
             {% else %}
                 <div class="empty-state">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
-                    No Monthly Report history is recorded for this boarder.
+                    No Monthly Report history exists for this boarder.
                 </div>
             {% endif %}
         </section>
@@ -140,7 +140,7 @@
                 </div>
             {% elif voided_punishments %}
                 <div class="empty-state">
-                    No live punishments are recorded for this boarder.
+                    No live punishments exist for this boarder.
                 </div>
             {% else %}
                 <div class="empty-state">

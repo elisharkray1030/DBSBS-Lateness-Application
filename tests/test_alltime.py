@@ -121,4 +121,4 @@ class TestAllTimeListRendering:
         panel = get_boarders(fresh_client, "?view=all-time")
 
         assert 'id="alltime-table"' not in panel
-        assert "No boarders recorded yet." in panel
+        assert "No boarders stored yet." in panel

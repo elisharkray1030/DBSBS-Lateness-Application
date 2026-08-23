@@ -3667,10 +3667,13 @@ class TestUiTidinessHoldsEverywhere:
         assert not overflow
 
     def test_no_rendered_copy_uses_the_master_list_avoid_term(self, fresh_client):
-        for route in ("/", "/boarders", "/consequences"):
+        for route in ("/", "/boarders", "/consequences", "/statistics", "/boarder/ALICE"):
             html = fresh_client.get(route).get_data(as_text=True)
             assert "roster" not in html.lower(), (
                 f"{route} renders the Master List avoid-term"
+            )
+            assert "record" not in html.lower(), (
+                f"{route} renders a Boarder History avoid-term"
             )
 
     def test_static_empty_states_carry_an_icon(self, fresh_client):

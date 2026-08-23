@@ -583,7 +583,16 @@
             color: var(--disabled-text);
         }
 
-        /* Boarder Profile identity header and headline figures. */
+        /* Boarder Profile identity header and headline figures. Deliberately
+           not .upload-panel, which print styles exclude — a printed profile
+           must keep its identity header and summary cards. */
+        .profile-header {
+            background: var(--page-bg);
+            padding: 24px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
         .profile-name-row {
             display: flex;
             align-items: center;

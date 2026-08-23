@@ -142,13 +142,13 @@ class TestProfileEmptyStates:
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
-        assert "No records are stored for this boarder." in html
+        assert "Nothing is stored for this boarder." in html
 
     def test_malformed_key_renders_clear_empty_state(self, fresh_client):
         response = profile_html(fresh_client, "%20%20%20")
 
         assert response.status_code == 200
-        assert "No records are stored for this boarder." in response.get_data(
+        assert "Nothing is stored for this boarder." in response.get_data(
             as_text=True
         )
 
@@ -164,7 +164,7 @@ class TestProfileEmptyStates:
 
         html = profile_html(fresh_client, "CAROL").get_data(as_text=True)
 
-        assert "No Monthly Report history is recorded for this boarder." in html
+        assert "No Monthly Report history exists for this boarder." in html
 
 
 class TestPunishmentTimeline:
@@ -312,3 +312,12 @@ class TestProfileChrome:
         assert 'class="site-header"' in html
         assert 'id="confirmModal"' in html
         assert "print-brand" in html
+
+    def test_identity_header_survives_print_styles(self, fresh_client):
+        # The shared print stylesheet excludes .upload-panel; the profile's
+        # identity header must not live inside that class, or printing drops
+        # the name, bed, badge, and every summary figure.
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert 'class="profile-header"' in html
+        assert 'class="upload-panel' not in html

@@ -216,7 +216,7 @@
         {% elif all_time_query %}
             <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>No boarders matched your filter.</div>
         {% else %}
-            <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>No boarders recorded yet. Everyone who appears in an imported Monthly Log or Punishment shows up here.</div>
+            <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>No boarders stored yet. Everyone who appears in an imported Monthly Log or Punishment shows up here.</div>
         {% endif %}
         {% else %}
         <div class="upload-panel">
@@ -578,7 +578,7 @@
             event.preventDefault();
             showConfirmModal({
                 title: 'Void punishment?',
-                message: `Void the ${form.dataset.month} punishment for ${form.dataset.boarder}? The voided record is kept for audit.`,
+                message: `Void the ${form.dataset.month} punishment for ${form.dataset.boarder}? The voided punishment is kept for audit.`,
                 confirmLabel: 'Void',
                 onConfirm: () => form.submit()
             });
