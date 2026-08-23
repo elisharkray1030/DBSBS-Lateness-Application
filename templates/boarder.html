@@ -78,6 +78,17 @@
             </div>
         </div>
 
+        {% if series %}
+        <section class="history-panel profile-chart">
+            <h2>Points by Month</h2>
+            <div class="chart-block">
+                <canvas id="profile-trend-chart" role="img"
+                        aria-label="Grouped bar chart of {{ identity.display_name }}'s points, frequency, and minutes late per month"></canvas>
+                <script type="application/json" id="profile-trend-data">{{ chart_payload|tojson }}</script>
+            </div>
+        </section>
+        {% endif %}
+
         <section class="history-panel profile-history">
             <h2>Boarder History</h2>
             {% if series %}
@@ -147,4 +158,37 @@
             {% endif %}
         </section>
     {% endif %}
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+    <script>
+        // Draws the profile chart from the server-rendered payload alone;
+        // without JavaScript the Boarder History table stands in fully.
+        (function () {
+            var payloadEl = document.getElementById('profile-trend-data');
+            var canvas = document.getElementById('profile-trend-chart');
+            if (!payloadEl || !canvas || typeof Chart === 'undefined') return;
+            var payload = JSON.parse(payloadEl.textContent);
+            var styles = getComputedStyle(document.documentElement);
+            var navy = styles.getPropertyValue('--navy').trim() || '#1d2b53';
+            var red = styles.getPropertyValue('--brand-red').trim() || '#E51A3C';
+            var neutral = styles.getPropertyValue('--neutral').trim() || '#6c757d';
+            new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels: payload.months,
+                    datasets: [
+                        { label: 'Points', data: payload.points, backgroundColor: navy },
+                        { label: 'Frequency', data: payload.frequency, backgroundColor: red },
+                        { label: 'Minutes late', data: payload.minutes, backgroundColor: neutral }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        })();
+    </script>
 {% endblock %}

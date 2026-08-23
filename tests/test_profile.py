@@ -1,6 +1,8 @@
 """Flask-client coverage for the Boarder Profile page (#106)."""
 
+import json
 import re
+from pathlib import Path
 
 import pytest
 from helpers import record
@@ -231,6 +233,76 @@ class TestPunishmentTimeline:
         html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
 
         assert "No punishments have been assigned to this boarder." in html
+
+
+class TestProfileTrendChart:
+    def test_chart_payload_matches_table_figures_exactly(self, fresh_client):
+        seed_history(
+            "ALICE",
+            "Alice",
+            "601A",
+            [("2026-01", 1, 3, 4), ("2026-02", 2, 5, 9)],
+        )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        match = re.search(
+            r'<script type="application/json" id="profile-trend-data">(.*?)</script>',
+            html,
+            re.S,
+        )
+        assert match is not None, "no embedded chart payload found"
+        assert json.loads(match.group(1)) == {
+            "months": ["2026-01", "2026-02"],
+            "points": [4, 9],
+            "frequency": [1, 2],
+            "minutes": [3, 5],
+        }
+        table = re.search(r'<table class="boarder-history-table">.*?</table>', html, re.S)
+        assert table is not None
+        for figure in ("2026-01", "2026-02", "4", "9", "3", "5"):
+            assert f"<td>{figure}</td>" in table.group(0)
+
+    def test_no_profile_chart_without_history(self, fresh_client):
+        html = profile_html(fresh_client, "NOBODY").get_data(as_text=True)
+
+        assert 'id="profile-trend-data"' not in html
+
+    def test_page_loads_chart_js_locally_only(self, fresh_client):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 3, 4)])
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert '/static/chart.umd.min.js' in html
+        assert not re.search(r'<script[^>]+src="https?://', html)
+
+    def test_canvas_actually_draws_from_embedded_payload(self, fresh_client, browser_page):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 3, 4)])
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+        static_dir = Path(__file__).resolve().parent.parent / "static"
+
+        def fulfill_static(route):
+            filename = route.request.url.rsplit("/", 1)[-1]
+            local = static_dir / filename
+            if local.is_file():
+                route.fulfill(
+                    body=local.read_bytes(),
+                    content_type="application/javascript",
+                )
+            else:
+                route.fulfill(status=404, body="not found")
+
+        page = browser_page
+        page.route("**/static/**", fulfill_static)
+        page.route(
+            "**/boarder/**",
+            lambda route: route.fulfill(body=html, content_type="text/html"),
+        )
+        page.goto("https://dbs.test/boarder/ALICE")
+
+        page.wait_for_function(
+            "() => typeof Chart !== 'undefined' && Chart.getChart(document.getElementById('profile-trend-chart')) !== null"
+        )
 
 
 class TestProfileChrome:

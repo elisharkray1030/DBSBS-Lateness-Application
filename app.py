@@ -88,6 +88,21 @@ def _punishment_months(conn, report_months):
     )
 
 
+def _profile_chart_payload(series):
+    """Builds the profile chart's plain-data payload.
+
+    The server contract is plain data rendered beside each canvas; the
+    client-side chart maps it onto Chart.js config, and the same figures
+    back the always-readable table below.
+    """
+    return {
+        "months": [row.month for row in series],
+        "points": [row.total_points for row in series],
+        "frequency": [row.frequency for row in series],
+        "minutes": [row.total_minutes for row in series],
+    }
+
+
 def _consume_flashes():
     """Returns (message, error) from one-shot session flash feedback."""
     message = None
@@ -546,6 +561,7 @@ def boarder_profile(key):
         identity=identity,
         series=series,
         summary=build_profile_summary(series),
+        chart_payload=_profile_chart_payload(series),
         live_punishments=live_punishments,
         voided_punishments=voided_punishments,
         current_year=datetime.now().astimezone().year,
