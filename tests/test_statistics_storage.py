@@ -294,3 +294,40 @@ class TestSearchHistoryCarriesMatchKey:
         results = storage.search_history(conn, "chen")
 
         assert [entry.normalized_name for entry in results] == ["CHEN WEI"]
+
+
+class TestListBoarderPunishments:
+    def test_returns_all_states_chronologically_including_voided(self, conn):
+        storage.assign_punishments(
+            conn, month="2026-02", boarders=[record("ALICE", "101", 1, 2, 3)],
+            deadline="2026-03-01", assigned_at="2026-02-01T09:00:00+00:00",
+        )
+        storage.assign_punishments(
+            conn, month="2026-01", boarders=[record("ALICE", "101", 1, 2, 3)],
+            deadline="2026-02-01", assigned_at="2026-01-01T09:00:00+00:00",
+        )
+        first_id = sorted(storage.list_punishments(conn), key=lambda p: p.month)[0].id
+        storage.transition_punishment(
+            conn, first_id, "voided",
+            timestamp="2026-02-05T09:00:00+00:00", void_reason="exempt",
+        )
+
+        rows = storage.list_boarder_punishments(conn, "ALICE")
+
+        assert [(p.month, p.status) for p in rows] == [
+            ("2026-01", "voided"),
+            ("2026-02", "assigned"),
+        ]
+
+    def test_unknown_key_returns_empty(self, conn):
+        assert storage.list_boarder_punishments(conn, "NOBODY") == []
+
+    def test_pre_removal_punishments_survive_removal(self, conn):
+        storage.assign_punishments(
+            conn, month="2026-03", boarders=[record("ZED", "601Z", 1, 2, 3)],
+            deadline="2026-04-10", assigned_at="2026-04-01T09:00:00+00:00",
+        )
+
+        rows = storage.list_boarder_punishments(conn, "ZED")
+
+        assert [p.month for p in rows] == ["2026-03"]

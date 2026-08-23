@@ -768,6 +768,26 @@ def list_punishments(
     return [_punishment_from_row(row) for row in cursor.fetchall()]
 
 
+def list_boarder_punishments(
+    conn: sqlite3.Connection, normalized_name: str
+) -> list[Punishment]:
+    """Returns every Punishment for one Match Key, chronological by month.
+
+    Reads frozen punishment snapshots by key, so discipline assigned before
+    a boarder's removal stays visible on their profile.
+    """
+    cursor = conn.execute(
+        f"""
+        SELECT {_PUNISHMENT_COLUMNS}
+        FROM punishments
+        WHERE normalized_name = ?
+        ORDER BY month ASC, assigned_at ASC
+        """,
+        (normalized_name,),
+    )
+    return [_punishment_from_row(row) for row in cursor.fetchall()]
+
+
 def get_punishment(conn: sqlite3.Connection, punishment_id: int) -> Punishment | None:
     cursor = conn.execute(
         f"""

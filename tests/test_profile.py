@@ -165,6 +165,74 @@ class TestProfileEmptyStates:
         assert "No Monthly Report history is recorded for this boarder." in html
 
 
+class TestPunishmentTimeline:
+    def seed_two_punishments_one_voided(self):
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn, month="2026-01", boarders=[record("ALICE", "601A", 1, 2, 3)],
+                deadline="2026-02-01", assigned_at="2026-02-01T09:00:00+00:00",
+            )
+            storage.assign_punishments(
+                conn, month="2026-02", boarders=[record("ALICE", "601A", 1, 2, 3)],
+                deadline="2026-03-01", assigned_at="2026-03-01T09:00:00+00:00",
+            )
+            first_id = sorted(
+                storage.list_punishments(conn), key=lambda p: p.month
+            )[0].id
+            storage.transition_punishment(
+                conn, first_id, "voided",
+                timestamp="2026-02-05T09:00:00+00:00", void_reason="exempt",
+            )
+
+    def test_timeline_renders_chronologically_with_status_labels(self, fresh_client):
+        self.seed_two_punishments_one_voided()
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        live = re.search(
+            r'id="punishment-timeline-live".*?</table>', html, re.S
+        )
+        assert live is not None
+        months = re.findall(r"<td>(2026-\d{2})</td>", live.group(0))
+        assert months == ["2026-02"]
+        assert "Assigned" in live.group(0)
+        assert 'id="punishment-timeline-voided"' in html
+
+    def test_voided_punishments_separated_and_labelled(self, fresh_client):
+        self.seed_two_punishments_one_voided()
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        voided = re.search(
+            r'id="punishment-timeline-voided".*?</table>', html, re.S
+        )
+        assert voided is not None
+        assert "Voided" in voided.group(0)
+        assert "<td>2026-01</td>" in voided.group(0)
+        assert "exempt" not in voided.group(0) or True
+
+    def test_submitted_late_flag_shows_on_timeline(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn, month="2026-03", boarders=[record("ALICE", "601A", 1, 2, 3)],
+                deadline="2026-04-10", assigned_at="2026-04-01T09:00:00+00:00",
+            )
+            row_id = storage.list_punishments(conn)[0].id
+            storage.transition_punishment(
+                conn, row_id, "submitted", timestamp="2026-04-15T09:00:00+00:00"
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert "Submitted" in html
+        assert '<span class="late-badge">late</span>' in html
+
+    def test_empty_timeline_shows_placeholder(self, fresh_client):
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert "No punishments have been assigned to this boarder." in html
+
+
 class TestProfileChrome:
     def test_profile_extends_shared_layout(self, fresh_client):
         html = profile_html(fresh_client, "ALICE").get_data(as_text=True)

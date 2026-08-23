@@ -1,5 +1,28 @@
 {% extends "layout.html" %}
 
+{% macro timeline_table(rows) -%}
+    <thead>
+        <tr>
+            <th scope="col">Month</th>
+            <th scope="col">Points Owed</th>
+            <th scope="col">Deadline</th>
+            <th scope="col">Status</th>
+            <th scope="col">Last action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in rows %}
+        <tr>
+            <td>{{ p.month }}</td>
+            <td>{{ p.points_owed }}</td>
+            <td>{{ p.deadline }}{% if p.was_late %} <span class="late-badge">late</span>{% endif %}</td>
+            <td>{{ humanized_status(p.status) }}{% if p.is_due %} <span class="due-badge">due</span>{% endif %}</td>
+            <td>{{ p.last_action or '&mdash;' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{%- endmacro %}
+
 {% block title %}Boarder Profile — DBS Boarding School{% endblock %}
 
 {% block heading %}
@@ -92,6 +115,34 @@
                 <div class="empty-state">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
                     No Monthly Report history is recorded for this boarder.
+                </div>
+            {% endif %}
+        </section>
+
+        <section class="history-panel profile-timeline">
+            <h2>Punishment Timeline</h2>
+            {% if live_punishments %}
+                <div class="table-scroll">
+                    <table class="punishment-timeline" id="punishment-timeline-live">
+                        {{ timeline_table(live_punishments) }}
+                    </table>
+                </div>
+            {% elif voided_punishments %}
+                <div class="empty-state">
+                    No live punishments are recorded for this boarder.
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                    No punishments have been assigned to this boarder.
+                </div>
+            {% endif %}
+            {% if voided_punishments %}
+                <h3 class="timeline-voided-heading">Voided</h3>
+                <div class="table-scroll timeline-voided">
+                    <table class="punishment-timeline" id="punishment-timeline-voided">
+                        {{ timeline_table(voided_punishments) }}
+                    </table>
                 </div>
             {% endif %}
         </section>

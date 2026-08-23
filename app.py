@@ -41,6 +41,7 @@ from punishments import (
     NON_VOIDED_STATUSES,
     TransitionRejected,
     assign_batch,
+    attach_display_flags,
     humanized_status,
     list_consequences,
     transition,
@@ -525,10 +526,16 @@ def boarder_profile(key):
 
     identity = None
     series = []
+    punishments = []
     with connect() as conn:
         if normalized:
             identity = storage.resolve_boarder_identity(conn, normalized)
             series = storage.get_boarder_series(conn, normalized)
+            punishments = attach_display_flags(
+                storage.list_boarder_punishments(conn, normalized)
+            )
+    live_punishments = [p for p in punishments if p.status != 'voided']
+    voided_punishments = [p for p in punishments if p.status == 'voided']
 
     return render_template(
         'boarder.html',
@@ -539,6 +546,8 @@ def boarder_profile(key):
         identity=identity,
         series=series,
         summary=build_profile_summary(series),
+        live_punishments=live_punishments,
+        voided_punishments=voided_punishments,
         current_year=datetime.now().astimezone().year,
     )
 

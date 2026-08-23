@@ -314,27 +314,9 @@ def _status_rank(status: str) -> int:
     return IN_FLIGHT_STATUSES.index(status) if status in IN_FLIGHT_STATUSES else 99
 
 
-def list_consequences(
-    conn,
-    show_all: bool = False,
-    month: str | None = None,
-    status: str | None = None,
-    now: datetime | None = None,
-):
-    """Returns punishments for the Consequences view.
-
-    Defaults to in-flight statuses; ``show_all`` lifts that. ``status`` further
-    narrows to one status, ``month`` to one month. Attaches computed ``is_due``
-    and ``was_late`` flags for each punishment.
-    """
-    statuses: tuple[str, ...] | None
-    if status:
-        statuses = (status,)
-    elif show_all:
-        statuses = None
-    else:
-        statuses = IN_FLIGHT_STATUSES
-    punishments = storage.list_punishments(conn, statuses=statuses, month=month)
+def attach_display_flags(punishments: list[Punishment], now: datetime | None = None) -> list[Punishment]:
+    """Attaches computed ``is_due``/``was_late`` flags, last action, and the
+    offered action list to each punishment, for any surface listing them."""
     if now is None:
         now = datetime.now(tz=timezone.utc)
     for punishment in punishments:
@@ -345,6 +327,30 @@ def list_consequences(
             format_timestamp(last_action) if last_action else None
         )
         punishment.actions = offered_actions(punishment)
+    return punishments
+
+
+def list_consequences(
+    conn,
+    show_all: bool = False,
+    month: str | None = None,
+    status: str | None = None,
+    now: datetime | None = None,
+):
+    """Returns punishments for the Consequences view.
+
+    Defaults to in-flight statuses; ``show_all`` lifts that. ``status`` further
+    narrows to one status, ``month`` to one month.
+    """
+    statuses: tuple[str, ...] | None
+    if status:
+        statuses = (status,)
+    elif show_all:
+        statuses = None
+    else:
+        statuses = IN_FLIGHT_STATUSES
+    punishments = storage.list_punishments(conn, statuses=statuses, month=month)
+    attach_display_flags(punishments, now=now)
     return sorted(
         punishments,
         key=lambda p: (_status_rank(p.status), p.deadline, p.normalized_name),
