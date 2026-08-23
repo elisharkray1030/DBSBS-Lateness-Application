@@ -147,6 +147,41 @@ class HouseTrendPoint:
 
 
 @dataclass
+class TopBoarderEntry:
+    """One boarder's aggregate inside a dashboard top-N range."""
+
+    normalized_name: str
+    display_name: str
+    bed: str
+    points: int
+    frequency: int
+    minutes: int
+
+
+@dataclass
+class DistributionBucket:
+    """One Points-range bucket counted across a month's boarders.
+
+    ``upper`` is None for the unbounded final bucket.
+    """
+
+    label: str
+    lower: int
+    upper: int | None
+    count: int
+
+
+@dataclass
+class WatchlistEntry:
+    """One boarder on the repeat-offender watchlist, with their streak."""
+
+    normalized_name: str
+    display_name: str
+    bed: str
+    months: list[str]
+
+
+@dataclass
 class AllTimeEntry:
     """One derived All-Time List row: every boarder ever recorded.
 

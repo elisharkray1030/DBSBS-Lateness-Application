@@ -104,3 +104,112 @@ class TestDashboardEmptyState:
 
         assert "No reports have been imported yet." in html
         assert 'id="house-trend-chart"' not in html
+
+
+def save_points(month, rows):
+    """rows: iterable of (name, bed, points)."""
+    with app_module.connect() as conn:
+        storage.save_month(
+            conn,
+            [record(name, bed, 1, 1, points) for name, bed, points in rows],
+            month,
+        )
+
+
+class TestTopBoardersWidget:
+    def test_all_time_ordering_is_deterministic_including_ties(self, fresh_client):
+        save_points("2026-01", [("ALICE", "101", 9), ("BOB", "102", 9), ("CAROL", "103", 12)])
+
+        html = dashboard(fresh_client)
+
+        payload = json.loads(re.search(
+            r'id="top-boarders-data">(.*?)</script>', html, re.S
+        ).group(1))
+        # CAROL leads outright; ALICE/BOB tie on points AND frequency, so the
+        # Match Key breaks their tie alphabetically.
+        assert payload == {"names": ["Carol", "ALICE", "BOB"], "points": [12, 9, 9]}
+
+    def test_switching_to_a_single_month_range(self, fresh_client):
+        save_points("2026-01", [("ALICE", "101", 9)])
+        save_points("2026-02", [("BOB", "102", 5)])
+
+        html = dashboard(fresh_client, "?top_month=2026-02")
+
+        payload = json.loads(re.search(
+            r'id="top-boarders-data">(.*?)</script>', html, re.S
+        ).group(1))
+        assert payload == {"names": ["BOB"], "points": [5]}
+        assert 'value="2026-02" selected' in html
+
+    def test_unknown_month_param_falls_back_to_all_time(self, fresh_client):
+        save_points("2026-01", [("ALICE", "101", 9)])
+
+        html = dashboard(fresh_client, "?top_month=1999-13")
+
+        payload = json.loads(re.search(
+            r'id="top-boarders-data">(.*?)</script>', html, re.S
+        ).group(1))
+        assert payload["names"] == ["ALICE"]
+
+    def test_ranks_at_most_ten_boarders(self, fresh_client):
+        save_points("2026-01", [(f"BORD{i:02d}", "101", i + 1) for i in range(12)])
+
+        html = dashboard(fresh_client)
+
+        table = re.search(r'<table class="top-boarders-table">.*?</table>', html, re.S)
+        body = re.search(r"<tbody>.*?</tbody>", table.group(0), re.S)
+        assert len(re.findall(r"<tr>", body.group(0))) == 10
+
+
+class TestDistributionWidget:
+    def test_defaults_to_the_newest_stored_month(self, fresh_client):
+        save_points("2026-01", [("ALICE", "101", 4)])
+        save_points("2026-02", [("BOB", "102", 7)])
+
+        html = dashboard(fresh_client)
+
+        payload = json.loads(re.search(
+            r'id="points-distribution-data">(.*?)</script>', html, re.S
+        ).group(1))
+        counts_by_label = dict(zip(payload["labels"], payload["counts"]))
+        assert sum(counts_by_label.values()) == 1  # only 2026-02's single row
+        assert counts_by_label["6–9"] == 1
+
+    def test_bucket_counts_reconcile_against_rows(self, fresh_client):
+        save_points("2026-03", [
+            ("A", "101", 0), ("B", "102", 2), ("C", "103", 8), ("D", "104", 25),
+        ])
+
+        html = dashboard(fresh_client)
+
+        payload = json.loads(re.search(
+            r'id="points-distribution-data">(.*?)</script>', html, re.S
+        ).group(1))
+        assert sum(payload["counts"]) == 4
+
+
+class TestWatchlistWidget:
+    def test_watchlist_threshold_is_a_named_constant_not_a_setting(self, fresh_client):
+        html = dashboard(fresh_client)
+
+        assert app_module.WATCHLIST_POINTS_THRESHOLD == 12
+        assert 'name="watchlist_threshold"' not in html
+
+    def test_three_consecutive_months_renders_an_entry(self, fresh_client):
+        for month in ("2026-01", "2026-02", "2026-03"):
+            save_points(month, [("ALICE", "101", 15)])
+
+        html = dashboard(fresh_client)
+
+        table = re.search(r'<table class="watchlist-table">.*?</table>', html, re.S)
+        assert table is not None, "watchlist table missing"
+        body = re.search(r"<tbody>.*?</tbody>", table.group(0), re.S).group(0)
+        assert "3 months" in body
+        assert "2026-01, 2026-02, 2026-03" in body
+
+    def test_below_threshold_shows_placeholder(self, fresh_client):
+        save_points("2026-01", [("ALICE", "101", 15)])
+
+        html = dashboard(fresh_client)
+
+        assert "No boarders currently meet the repeat-offender criteria." in html

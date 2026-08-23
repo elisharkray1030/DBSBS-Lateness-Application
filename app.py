@@ -57,6 +57,15 @@ app.jinja_env.globals["humanized_status"] = humanized_status
 DB_PATH = os.environ.get("DB_PATH", "lateness_history.db")
 NAMELIST_PATH = os.environ.get("NAMELIST_PATH", "namelist.csv")
 
+# Repeat-offender watchlist: a boarder reaching this many Points for this
+# many consecutive calendar months lands on the House Dashboard watchlist.
+# Deliberate application constants (#103) — not staff-configurable yet.
+WATCHLIST_POINTS_THRESHOLD = 12
+WATCHLIST_MIN_STREAK_MONTHS = 3
+
+# How many boarders the dashboard top-N widget ranks.
+TOP_BOARDERS_DEFAULT_LIMIT = 10
+
 
 def connect():
     """Opens a file-backed history store connection for the current call site."""
@@ -537,6 +546,29 @@ def statistics():
     """
     with connect() as conn:
         trend = storage.house_trend(conn)
+        stored_months = [summary.month for summary in storage.list_months(conn)]
+
+        top_month = request.args.get('top_month', '')
+        if top_month not in stored_months:
+            top_month = ''
+        top_entries = storage.top_boarders(
+            conn, month=top_month or None, limit=TOP_BOARDERS_DEFAULT_LIMIT
+        )
+
+        distribution_month = request.args.get('distribution_month', '')
+        if distribution_month not in stored_months:
+            distribution_month = stored_months[0] if stored_months else None
+        distribution = (
+            storage.points_distribution(conn, distribution_month)
+            if distribution_month
+            else []
+        )
+
+        watchlist = storage.repeat_offenders(
+            conn,
+            threshold=WATCHLIST_POINTS_THRESHOLD,
+            required_months=WATCHLIST_MIN_STREAK_MONTHS,
+        )
 
     return render_template(
         'dashboard.html',
@@ -546,6 +578,16 @@ def statistics():
         error=None,
         trend=trend,
         trend_payload=_house_trend_payload(trend),
+        stored_months=stored_months,
+        top_month=top_month,
+        top_entries=top_entries,
+        top_payload=_top_boarders_payload(top_entries),
+        distribution_month=distribution_month,
+        distribution=distribution,
+        distribution_payload=_distribution_payload(distribution),
+        watchlist=watchlist,
+        watchlist_threshold=WATCHLIST_POINTS_THRESHOLD,
+        watchlist_min_streak=WATCHLIST_MIN_STREAK_MONTHS,
         current_year=datetime.now().astimezone().year,
     )
 
@@ -556,6 +598,22 @@ def _house_trend_payload(trend):
         "months": [point.month for point in trend],
         "incidents": [point.incidents for point in trend],
         "minutes": [point.minutes_late for point in trend],
+    }
+
+
+def _top_boarders_payload(entries):
+    """Plain-data payload for the top-N horizontal bar chart."""
+    return {
+        "names": [entry.display_name for entry in entries],
+        "points": [entry.points for entry in entries],
+    }
+
+
+def _distribution_payload(buckets):
+    """Plain-data payload for the Points-distribution histogram."""
+    return {
+        "labels": [bucket.label for bucket in buckets],
+        "counts": [bucket.count for bucket in buckets],
     }
 
 

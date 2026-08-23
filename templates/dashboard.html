@@ -47,6 +47,124 @@
                 </table>
             </div>
         </section>
+
+        <section class="history-panel dashboard-widget">
+            <h2>Top Boarders</h2>
+            <form action="/statistics" method="get" class="consequences-filters">
+                <label for="top-month"><strong>Range</strong></label>
+                <select id="top-month" name="top_month" onchange="this.form.submit()">
+                    <option value="">All time</option>
+                    {% for month in stored_months %}
+                        <option value="{{ month }}" {% if top_month == month %}selected{% endif %}>{{ month }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% if top_entries %}
+                <div class="chart-block">
+                    <canvas id="top-boarders-chart" role="img"
+                            aria-label="Horizontal bar chart of the highest-Points boarders"></canvas>
+                    <script type="application/json" id="top-boarders-data">{{ top_payload|tojson }}</script>
+                </div>
+                <div class="table-scroll">
+                    <table class="top-boarders-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Rank</th>
+                                <th scope="col">Boarder</th>
+                                <th scope="col">Frequency</th>
+                                <th scope="col">Minutes Late</th>
+                                <th scope="col">Points</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in top_entries %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>{{ entry.display_name }}</td>
+                                <td>{{ entry.frequency }}</td>
+                                <td>{{ entry.minutes }}</td>
+                                <td>{{ entry.points }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    No boarders with Points in this range.
+                </div>
+            {% endif %}
+        </section>
+
+        <section class="history-panel dashboard-widget">
+            <h2>Points Distribution</h2>
+            {% if distribution_month %}
+            <form action="/statistics" method="get" class="consequences-filters">
+                <label for="distribution-month"><strong>Month</strong></label>
+                <select id="distribution-month" name="distribution_month" onchange="this.form.submit()">
+                    {% for month in stored_months %}
+                        <option value="{{ month }}" {% if distribution_month == month %}selected{% endif %}>{{ month }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            <div class="chart-block">
+                <canvas id="points-distribution-chart" role="img"
+                        aria-label="Histogram of monthly Points spread across boarders for {{ distribution_month }}"></canvas>
+                <script type="application/json" id="points-distribution-data">{{ distribution_payload|tojson }}</script>
+            </div>
+            <div class="table-scroll">
+                <table class="distribution-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Points</th>
+                            <th scope="col">Boarders</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bucket in distribution %}
+                        <tr>
+                            <td>{{ bucket.label }}</td>
+                            <td>{{ bucket.count }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+                <div class="empty-state">No months recorded yet.</div>
+            {% endif %}
+        </section>
+
+        <section class="history-panel dashboard-widget">
+            <h2>Repeat-offender Watchlist</h2>
+            <p class="dashboard-note">Boarders reaching {{ watchlist_threshold }} Points or more for {{ watchlist_min_streak }} or more consecutive months.</p>
+            {% if watchlist %}
+                <div class="table-scroll">
+                    <table class="watchlist-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Boarder</th>
+                                <th scope="col">Bed</th>
+                                <th scope="col">Streak</th>
+                                <th scope="col">Months</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in watchlist %}
+                            <tr>
+                                <td>{{ entry.display_name }}</td>
+                                <td>{{ entry.bed }}</td>
+                                <td>{{ entry.months|length }} months</td>
+                                <td>{{ entry.months|join(', ') }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="empty-state">No boarders currently meet the repeat-offender criteria.</div>
+            {% endif %}
+        </section>
     {% endif %}
 {% endblock %}
 
@@ -54,32 +172,63 @@
     {% if trend %}
     <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
     <script>
-        // Draws the house-wide trend from the server-rendered payload alone;
-        // without JavaScript the per-month totals table stands in fully.
+        // Draws the dashboard charts from the server-rendered payloads alone;
+        // without JavaScript the per-widget tables stand in fully.
         (function () {
-            var payloadEl = document.getElementById('house-trend-data');
-            var canvas = document.getElementById('house-trend-chart');
-            if (!payloadEl || !canvas || typeof Chart === 'undefined') return;
-            var payload = JSON.parse(payloadEl.textContent);
             var styles = getComputedStyle(document.documentElement);
             var navy = styles.getPropertyValue('--navy').trim() || '#1d2b53';
             var red = styles.getPropertyValue('--brand-red').trim() || '#E51A3C';
-            new Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels: payload.months,
-                    datasets: [
-                        { label: 'Incidents', data: payload.incidents, borderColor: navy,
-                          backgroundColor: navy, tension: 0.25 },
-                        { label: 'Minutes late', data: payload.minutes, borderColor: red,
-                          backgroundColor: red, tension: 0.25 }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    scales: { y: { beginAtZero: true } }
-                }
-            });
+            var neutral = styles.getPropertyValue('--neutral').trim() || '#6c757d';
+
+            function payloadOf(id) {
+                var el = document.getElementById(id);
+                return el ? JSON.parse(el.textContent) : null;
+            }
+
+            var trendPayload = payloadOf('house-trend-data');
+            if (trendPayload && document.getElementById('house-trend-chart') && typeof Chart !== 'undefined') {
+                new Chart(document.getElementById('house-trend-chart'), {
+                    type: 'line',
+                    data: {
+                        labels: trendPayload.months,
+                        datasets: [
+                            { label: 'Incidents', data: trendPayload.incidents, borderColor: navy,
+                              backgroundColor: navy, tension: 0.25 },
+                            { label: 'Minutes late', data: trendPayload.minutes, borderColor: red,
+                              backgroundColor: red, tension: 0.25 }
+                        ]
+                    },
+                    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+                });
+            }
+
+            var topPayload = payloadOf('top-boarders-data');
+            if (topPayload && document.getElementById('top-boarders-chart') && typeof Chart !== 'undefined') {
+                new Chart(document.getElementById('top-boarders-chart'), {
+                    type: 'bar',
+                    data: {
+                        labels: topPayload.names,
+                        datasets: [{ label: 'Points', data: topPayload.points, backgroundColor: navy }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        scales: { x: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            var distributionPayload = payloadOf('points-distribution-data');
+            if (distributionPayload && document.getElementById('points-distribution-chart') && typeof Chart !== 'undefined') {
+                new Chart(document.getElementById('points-distribution-chart'), {
+                    type: 'bar',
+                    data: {
+                        labels: distributionPayload.labels,
+                        datasets: [{ label: 'Boarders', data: distributionPayload.counts, backgroundColor: neutral }]
+                    },
+                    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+                });
+            }
         })();
     </script>
     {% endif %}

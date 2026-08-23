@@ -7,11 +7,14 @@ from records import (
     AllTimeEntry,
     Boarder,
     BoarderMonth,
-    HouseTrendPoint,
     BoarderRecord,
+    DistributionBucket,
     HistoryEntry,
+    HouseTrendPoint,
     MonthSummary,
     Punishment,
+    TopBoarderEntry,
+    WatchlistEntry,
     boarder_sort_key,
     normalize_name,
     sort_boarder_records,
@@ -27,6 +30,17 @@ _BOARDERS_COLUMNS = """
 # Meta key holding how many stored rows kept their legacy Match Key because
 # another row already claimed their new key (same pattern as boarders_seeded).
 MIGRATION_SKIPS_KEY = "match_key_migration_skips"
+
+# Named bucket edges for the House Dashboard Points-distribution histogram;
+# an upper bound of None means unbounded. Labels use en dashes.
+POINTS_DISTRIBUTION_BUCKETS = (
+    ("0", 0, 0),
+    ("1", 1, 1),
+    ("2–3", 2, 3),
+    ("4–5", 4, 5),
+    ("6–9", 6, 9),
+    ("10+", 10, None),
+)
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -538,6 +552,152 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
         MonthSummary(month=row[0], boarder_count=row[1], total_minutes=row[2])
         for row in cursor.fetchall()
     ]
+
+
+def _freshest_identity_map(conn: sqlite3.Connection) -> dict[str, tuple[str, str]]:
+    """Maps every known Match Key to its freshest-first (display, bed)."""
+    return {
+        entry.normalized_name: (entry.display_name, entry.bed)
+        for entry in list_all_time_boarders(conn)
+    }
+
+
+def top_boarders(
+    conn: sqlite3.Connection,
+    month: str | None = None,
+    limit: int = 10,
+) -> list[TopBoarderEntry]:
+    """Returns the highest-Points boarders within a range, ready for the
+    House Dashboard top-N widget.
+
+    ``month`` narrows to one stored month; None means all-time, summing each
+    boarder's months. Zero-point boarders never rank. Ties break on total
+    frequency then Match Key so the ordering is deterministic. Identity
+    fields resolve freshest-first like everywhere else in the app.
+    """
+    identity = _freshest_identity_map(conn)
+    if month is None:
+        cursor = conn.execute(
+            """
+            SELECT normalized_name,
+                   SUM(total_points), SUM(frequency), SUM(total_minutes)
+            FROM boarder_history
+            GROUP BY normalized_name
+            HAVING SUM(total_points) > 0
+            ORDER BY SUM(total_points) DESC, SUM(frequency) DESC, normalized_name ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+        points_key = lambda row: row[1]  # noqa: E731
+        frequency_of = lambda row: row[2]  # noqa: E731
+    else:
+        cursor = conn.execute(
+            """
+            SELECT normalized_name, total_points, frequency, total_minutes
+            FROM boarder_history
+            WHERE month = ? AND total_points > 0
+            ORDER BY total_points DESC, frequency DESC, normalized_name ASC
+            LIMIT ?
+            """,
+            (month, limit),
+        )
+        rows = cursor.fetchall()
+        points_key = lambda row: row[1]  # noqa: E731
+        frequency_of = lambda row: row[2]  # noqa: E731
+
+    return [
+        TopBoarderEntry(
+            normalized_name=row[0],
+            display_name=identity.get(row[0], (row[0], ""))[0],
+            bed=identity.get(row[0], ("", ""))[1],
+            points=row[1],
+            frequency=row[2],
+            minutes=row[3],
+        )
+        for row in rows
+    ]
+
+
+def points_distribution(conn: sqlite3.Connection, month: str) -> list[DistributionBucket]:
+    """Counts a chosen month's Points values into named buckets.
+
+    Every boarder recorded that month lands in exactly one bucket — zeros
+    included — so bucket counts always reconcile against the month's rows.
+    """
+    counts = {label: 0 for label, _, _ in POINTS_DISTRIBUTION_BUCKETS}
+    cursor = conn.execute(
+        "SELECT total_points FROM boarder_history WHERE month = ?",
+        (month,),
+    )
+    for (value,) in cursor.fetchall():
+        for label, lower, upper in POINTS_DISTRIBUTION_BUCKETS:
+            if value >= lower and (upper is None or value <= upper):
+                counts[label] += 1
+                break
+    return [
+        DistributionBucket(label=label, lower=lower, upper=upper, count=counts[label])
+        for label, lower, upper in POINTS_DISTRIBUTION_BUCKETS
+    ]
+
+
+def repeat_offenders(
+    conn: sqlite3.Connection,
+    threshold: int,
+    required_months: int = 3,
+) -> list[WatchlistEntry]:
+    """Finds boarders at or above a Points threshold across consecutive months.
+
+    A streak is consecutive calendar months (crossing year boundaries); a
+    month re-imported below the threshold breaks it. The longest qualifying
+    run is reported. Identity fields resolve freshest-first.
+    """
+    identity = _freshest_identity_map(conn)
+    months_above: dict[str, list[str]] = {}
+    cursor = conn.execute(
+        """
+        SELECT normalized_name, month, total_points
+        FROM boarder_history
+        ORDER BY normalized_name ASC, month ASC
+        """
+    )
+    for key, month_label, points in cursor.fetchall():
+        if points >= threshold:
+            months_above.setdefault(key, []).append(month_label)
+
+    offenders: list[WatchlistEntry] = []
+    for key, months in months_above.items():
+        best_run: list[str] = []
+        run: list[str] = []
+        previous_ordinal: int | None = None
+        for month_label in months:
+            ordinal = _month_ordinal(month_label)
+            if previous_ordinal is not None and ordinal == previous_ordinal + 1:
+                run.append(month_label)
+            else:
+                run = [month_label]
+            if len(run) > len(best_run):
+                best_run = list(run)
+            previous_ordinal = ordinal
+        if len(best_run) >= required_months:
+            display, bed = identity.get(key, (key, ""))
+            offenders.append(
+                WatchlistEntry(
+                    normalized_name=key,
+                    display_name=display,
+                    bed=bed,
+                    months=best_run,
+                )
+            )
+    offenders.sort(key=lambda e: (-len(e.months), e.months[-1], e.display_name))
+    return offenders
+
+
+def _month_ordinal(month_label: str) -> int:
+    """Returns a YYYY-MM label as a monotonic month index."""
+    year, mon = month_label.split("-")
+    return int(year) * 12 + int(mon)
 
 
 def house_trend(conn: sqlite3.Connection) -> list[HouseTrendPoint]:

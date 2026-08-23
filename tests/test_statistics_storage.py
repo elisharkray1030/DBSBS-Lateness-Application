@@ -357,3 +357,150 @@ class TestHouseTrend:
         assert [(p.month, p.incidents, p.minutes_late) for p in points] == [
             ("2026-03", 0, 0),
         ]
+
+
+class TestTopBoarders:
+    def test_orders_by_points_then_frequency_then_name(self, conn):
+        save_history(conn, "ALICE", total_points=9, frequency=2, month="2026-03")
+        save_history(conn, "BOB", total_points=9, frequency=3, month="2026-03")
+        save_history(conn, "CAROL", total_points=12, frequency=1, month="2026-03")
+
+        top = storage.top_boarders(conn, month="2026-03")
+
+        assert [e.normalized_name for e in top] == ["CAROL", "BOB", "ALICE"]
+
+    def test_all_time_range_sums_across_months(self, conn):
+        save_history(conn, "ALICE", total_points=4, month="2026-01")
+        save_history(conn, "ALICE", total_points=5, month="2026-02")
+
+        top = storage.top_boarders(conn)
+
+        assert [(e.normalized_name, e.points) for e in top] == [("ALICE", 9)]
+
+    def test_month_range_uses_only_that_month(self, conn):
+        save_history(conn, "ALICE", total_points=4, month="2026-01")
+        save_history(conn, "BOB", total_points=9, month="2026-02")
+
+        top = storage.top_boarders(conn, month="2026-02")
+
+        assert [e.normalized_name for e in top] == ["BOB"]
+
+    def test_limit_truncates_deterministically(self, conn):
+        for i in range(5, 15):
+            save_history(conn, f"BORD{i:02d}", total_points=i, month="2026-03")
+
+        top = storage.top_boarders(conn, month="2026-03", limit=10)
+
+        assert len(top) == 10
+        assert top[0].points == 14
+        assert top[-1].points == 5
+
+    def test_zero_point_boarders_excluded(self, conn):
+        save_history(conn, "ALICE", total_points=0, month="2026-03")
+
+        assert storage.top_boarders(conn, month="2026-03") == []
+
+    def test_unknown_month_returns_empty(self, conn):
+        assert storage.top_boarders(conn, month="1999-01") == []
+
+
+class TestPointsDistribution:
+    def test_buckets_reconcile_exactly_against_rows(self, conn):
+        for i, points in enumerate([0, 1, 2, 4, 7, 25]):
+            save_history(conn, f"BORD{i}", total_points=points, month="2026-03")
+
+        buckets = storage.points_distribution(conn, month="2026-03")
+
+        assert sum(b.count for b in buckets) == 6
+
+    def test_bucket_edges_match_expected_labels(self, conn):
+        for i, points in enumerate([0, 1, 2, 4, 7]):
+            save_history(conn, f"BORD{i}", total_points=points, month="2026-03")
+
+        buckets = storage.points_distribution(conn, month="2026-03")
+
+        counts = {b.label: b.count for b in buckets}
+        assert counts["0"] == 1
+        assert counts["1"] == 1
+        assert counts["2\u20133"] == 1
+        assert counts["4\u20135"] == 1
+        assert counts["6\u20139"] == 1
+        assert counts["10+"] == 0
+
+    def test_unknown_month_yields_all_zero_buckets(self, conn):
+        buckets = storage.points_distribution(conn, month="1999-01")
+
+        assert sum(b.count for b in buckets) == 0
+
+
+class TestRepeatOffenders:
+    def test_three_consecutive_months_above_threshold_detected(self, conn):
+        for month in ("2026-01", "2026-02", "2026-03"):
+            save_history(conn, "ALICE", total_points=15, month=month)
+
+        watchlist = storage.repeat_offenders(conn, threshold=12, required_months=3)
+
+        assert [e.normalized_name for e in watchlist] == ["ALICE"]
+        assert watchlist[0].months == ["2026-01", "2026-02", "2026-03"]
+
+    def test_year_boundary_months_are_consecutive(self, conn):
+        for month in ("2025-11", "2025-12", "2026-01"):
+            save_history(conn, "BOB", total_points=20, month=month)
+
+        watchlist = storage.repeat_offenders(conn, threshold=12, required_months=3)
+
+        assert [e.normalized_name for e in watchlist] == ["BOB"]
+
+    def test_below_threshold_month_breaks_the_streak(self, conn):
+        save_history(conn, "ALICE", total_points=15, month="2026-01")
+        save_history(conn, "ALICE", total_points=3, month="2026-02")
+        save_history(conn, "ALICE", total_points=15, month="2026-03")
+        save_history(conn, "ALICE", total_points=15, month="2026-04")
+
+        watchlist = storage.repeat_offenders(conn, threshold=12, required_months=3)
+
+        # The best surviving run is only two months long.
+        assert watchlist == []
+
+    def test_re_import_changing_a_month_changes_detection(self, conn):
+        for month in ("2026-01", "2026-02", "2026-03"):
+            save_history(conn, "ALICE", total_points=15, month=month)
+        save_history(conn, "ALICE", total_points=1, month="2026-02")  # corrected log
+
+        watchlist = storage.repeat_offenders(conn, threshold=12, required_months=3)
+
+        assert watchlist == []
+
+    def test_equal_to_threshold_qualifies(self, conn):
+        for month in ("2026-01", "2026-02", "2026-03"):
+            save_history(conn, "ALICE", total_points=12, month=month)
+
+        watchlist = storage.repeat_offenders(conn, threshold=12, required_months=3)
+
+        assert [e.normalized_name for e in watchlist] == ["ALICE"]
+
+    def test_two_month_streak_not_reported(self, conn):
+        for month in ("2026-01", "2026-02"):
+            save_history(conn, "ALICE", total_points=15, month=month)
+
+        assert storage.repeat_offenders(conn, threshold=12, required_months=3) == []
+
+    def test_longest_run_wins_when_multiple_runs_exist(self, conn):
+        for month in ("2026-01", "2026-05", "2026-06", "2026-07"):
+            save_history(conn, "ALICE", total_points=15, month=month)
+
+        watchlist = storage.repeat_offenders(conn, threshold=12, required_months=3)
+
+        assert watchlist[0].months == ["2026-05", "2026-06", "2026-07"]
+
+    def test_identity_resolves_freshest_snapshot(self, conn):
+        save_history(conn, "ALICE", bed="101", display_name="Old Alice",
+                     total_points=15, month="2026-01")
+        save_history(conn, "ALICE", bed="202", display_name="New Alice",
+                     total_points=15, month="2026-02")
+        save_history(conn, "ALICE", bed="202", display_name="New Alice",
+                     total_points=15, month="2026-03")
+
+        watchlist = storage.repeat_offenders(conn, threshold=12, required_months=3)
+
+        assert (watchlist[0].display_name, watchlist[0].bed) == ("New Alice", "202")
