@@ -3,7 +3,7 @@ import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 try:
     from flask import (
@@ -45,7 +45,7 @@ from punishments import (
     list_consequences,
     transition,
 )
-from records import normalize_name
+from records import build_profile_summary, normalize_name
 
 app = Flask(__name__)
 # Sessions carry only transient flash feedback (no auth, no secrets); the
@@ -508,6 +508,37 @@ def consequences():
         boarders_view='current',
         all_time_boarders=None,
         all_time_query='',
+        current_year=datetime.now().astimezone().year,
+    )
+
+
+@app.route('/boarder/<path:key>')
+def boarder_profile(key):
+    """Renders one boarder's profile, addressed by URL-encoded Match Key.
+
+    The key is normalized defensively so punctuation variants collapse to
+    the same profile; unknown or empty keys render a clear empty state.
+    """
+    normalized = normalize_name(key)
+    if normalized != key and normalized:
+        return redirect(f"/boarder/{quote(normalized)}")
+
+    identity = None
+    series = []
+    with connect() as conn:
+        if normalized:
+            identity = storage.resolve_boarder_identity(conn, normalized)
+            series = storage.get_boarder_series(conn, normalized)
+
+    return render_template(
+        'boarder.html',
+        panels_in_page=False,
+        selected_tab='',
+        message=None,
+        error=None,
+        identity=identity,
+        series=series,
+        summary=build_profile_summary(series),
         current_year=datetime.now().astimezone().year,
     )
 

@@ -583,6 +583,51 @@
             color: var(--disabled-text);
         }
 
+        /* Boarder Profile identity header and headline figures. */
+        .profile-name-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .profile-name {
+            margin: 0;
+            color: var(--navy);
+        }
+
+        .profile-subline {
+            margin: 6px 0 0;
+            color: var(--text-muted);
+        }
+
+        .profile-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.3em;
+            font-weight: 700;
+            color: var(--navy);
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.85em;
+            margin-top: 2px;
+        }
+
         .month-report-scroll thead th {
             position: sticky;
             top: 0;

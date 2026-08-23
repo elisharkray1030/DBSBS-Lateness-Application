@@ -1,0 +1,99 @@
+{% extends "layout.html" %}
+
+{% block title %}Boarder Profile — DBS Boarding School{% endblock %}
+
+{% block heading %}
+    <h1>Boarder Profile</h1>
+{% endblock %}
+
+{% block content %}
+    <div class="print-brand">
+        <img src="{{ url_for('static', filename='dbslogoF-B.png') }}" alt="DBS Boarding School logo">
+        <span>DBS Boarding School</span>
+    </div>
+
+    {% if not identity %}
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+            <p>No records are stored for this boarder.</p>
+        </div>
+    {% else %}
+        <div class="upload-panel profile-header">
+            <div class="profile-name-row">
+                <h3 class="profile-name">{{ identity.display_name }}</h3>
+                {% if identity.is_current %}
+                    <span class="status-badge badge-current">Current</span>
+                {% else %}
+                    <span class="status-badge badge-former">Former</span>
+                {% endif %}
+            </div>
+            <p class="profile-subline">Bed {{ identity.bed }}</p>
+            {% if identity.first_month %}
+                <p class="profile-subline">Seen from {{ identity.first_month }} to {{ identity.last_month }}</p>
+            {% endif %}
+            <div class="profile-summary">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-incidents">{{ summary.total_incidents }}</div>
+                    <div class="stat-label">Total incidents</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-minutes">{{ summary.total_minutes }}</div>
+                    <div class="stat-label">Minutes late</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-points">{{ summary.total_points }}</div>
+                    <div class="stat-label">Points</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-best-month">{% if summary.best_month %}{{ summary.best_month.month }}{% else %}&mdash;{% endif %}</div>
+                    <div class="stat-label">Best month</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-worst-month">{% if summary.worst_month %}{{ summary.worst_month.month }}{% else %}&mdash;{% endif %}</div>
+                    <div class="stat-label">Worst month</div>
+                </div>
+            </div>
+        </div>
+
+        <section class="history-panel profile-history">
+            <h2>Boarder History</h2>
+            {% if series %}
+                <div class="table-scroll">
+                    <table class="boarder-history-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Month</th>
+                                <th scope="col">Frequency</th>
+                                <th scope="col">Minutes Late</th>
+                                <th scope="col">Points</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in series %}
+                            <tr>
+                                <td>{{ row.month }}</td>
+                                <td>{{ row.frequency }}</td>
+                                <td>{{ row.total_minutes }}</td>
+                                <td>{{ row.total_points }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td>Total</td>
+                                <td>{{ summary.total_incidents }}</td>
+                                <td>{{ summary.total_minutes }}</td>
+                                <td>{{ summary.total_points }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                    No Monthly Report history is recorded for this boarder.
+                </div>
+            {% endif %}
+        </section>
+    {% endif %}
+{% endblock %}

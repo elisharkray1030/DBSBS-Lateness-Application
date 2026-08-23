@@ -6,6 +6,7 @@ from uuid import uuid4
 from records import (
     AllTimeEntry,
     Boarder,
+    BoarderMonth,
     BoarderRecord,
     HistoryEntry,
     MonthSummary,
@@ -485,6 +486,44 @@ def save_month(
     conn.commit()
 
 
+def get_boarder_series(
+    conn: sqlite3.Connection, normalized_name: str
+) -> list[BoarderMonth]:
+    """Returns one boarder's saved month rows in chronological order.
+
+    Reads frozen history snapshots by Match Key, so a Removed boarder's
+    series survives removal untouched.
+    """
+    cursor = conn.execute(
+        """
+        SELECT month, frequency, total_minutes, total_points
+        FROM boarder_history
+        WHERE normalized_name = ?
+        ORDER BY month ASC
+        """,
+        (normalized_name,),
+    )
+    return [
+        BoarderMonth(month=row[0], frequency=row[1], total_minutes=row[2],
+                     total_points=row[3])
+        for row in cursor.fetchall()
+    ]
+
+
+def resolve_boarder_identity(
+    conn: sqlite3.Connection, normalized_name: str
+) -> AllTimeEntry | None:
+    """Resolves one Match Key to its All-Time entry, or None if unknown.
+
+    Reuses the derived All-Time List so the profile header inherits the same
+    freshest-first identity resolution and Current/Former derivation.
+    """
+    for entry in list_all_time_boarders(conn):
+        if entry.normalized_name == normalized_name:
+            return entry
+    return None
+
+
 def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     cursor = conn.execute(
         """
@@ -616,7 +655,7 @@ def search_history(conn: sqlite3.Connection, name_query: str) -> list[HistoryEnt
     normalized_query = f"%{normalize_name(name_query)}%"
     cursor = conn.execute(
         """
-        SELECT display_name, bed, month, frequency, total_minutes, total_points
+        SELECT normalized_name, display_name, bed, month, frequency, total_minutes, total_points
         FROM boarder_history
         WHERE normalized_name LIKE ?
         ORDER BY display_name, month ASC
@@ -625,12 +664,13 @@ def search_history(conn: sqlite3.Connection, name_query: str) -> list[HistoryEnt
     )
     return [
         HistoryEntry(
-            display_name=row[0],
-            bed=row[1],
-            month=row[2],
-            frequency=row[3],
-            total_minutes=row[4],
-            total_points=row[5],
+            normalized_name=row[0],
+            display_name=row[1],
+            bed=row[2],
+            month=row[3],
+            frequency=row[4],
+            total_minutes=row[5],
+            total_points=row[6],
         )
         for row in cursor.fetchall()
     ]

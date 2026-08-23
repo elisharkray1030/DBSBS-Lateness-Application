@@ -87,6 +87,45 @@ class HistoryEntry:
     frequency: int
     total_minutes: int
     total_points: int
+    normalized_name: str = ""
+
+
+@dataclass
+class BoarderMonth:
+    """One month of a boarder's saved history, in chronological series."""
+
+    month: str
+    frequency: int
+    total_minutes: int
+    total_points: int
+
+
+@dataclass
+class ProfileSummary:
+    """A boarder's lifetime figures plus their best and worst month."""
+
+    total_incidents: int
+    total_minutes: int
+    total_points: int
+    best_month: "BoarderMonth | None"
+    worst_month: "BoarderMonth | None"
+
+
+def build_profile_summary(series: "list[BoarderMonth]") -> ProfileSummary:
+    """Sums a boarder's monthly series into profile headline figures.
+
+    Best month is the fewest-Points month and worst the most-Points month;
+    ties resolve to the earliest month so the choice stays deterministic.
+    """
+    if not series:
+        return ProfileSummary(0, 0, 0, None, None)
+    return ProfileSummary(
+        total_incidents=sum(row.frequency for row in series),
+        total_minutes=sum(row.total_minutes for row in series),
+        total_points=sum(row.total_points for row in series),
+        best_month=min(series, key=lambda row: (row.total_points, row.month)),
+        worst_month=min(series, key=lambda row: (-row.total_points, row.month)),
+    )
 
 
 @dataclass

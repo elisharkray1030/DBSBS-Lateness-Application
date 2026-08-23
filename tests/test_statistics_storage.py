@@ -228,3 +228,69 @@ class TestAllTimeOrdering:
         entries = storage.list_all_time_boarders(conn)
 
         assert [e.display_name for e in entries] == ["Carol", "Dan", "Bob", "Alice"]
+
+
+class TestGetBoarderSeries:
+    def test_returns_monthly_series_chronologically(self, conn):
+        save_history(conn, "ALICE", frequency=2, total_minutes=5, total_points=7,
+                     month="2026-02")
+        save_history(conn, "ALICE", frequency=1, total_minutes=3, total_points=4,
+                     month="2026-01")
+
+        series = storage.get_boarder_series(conn, "ALICE")
+
+        assert [(row.month, row.frequency, row.total_minutes, row.total_points)
+                for row in series] == [
+            ("2026-01", 1, 3, 4),
+            ("2026-02", 2, 5, 7),
+        ]
+
+    def test_unknown_key_returns_empty(self, conn):
+        assert storage.get_boarder_series(conn, "NOBODY") == []
+
+    def test_removed_boarder_series_survives_removal(self, conn):
+        save_history(conn, "ALICE", month="2026-03")
+        conn.execute("DELETE FROM boarders")
+        conn.commit()
+
+        assert [row.month for row in storage.get_boarder_series(conn, "ALICE")] == [
+            "2026-03"
+        ]
+
+
+class TestResolveBoarderIdentity:
+    def test_current_master_entry_wins(self, conn):
+        storage.replace_boarders(conn, [make_boarder("ALICE", "Master Alice", "601A")])
+        save_history(conn, "ALICE", bed="999", display_name="Snapshot", month="2026-01")
+
+        resolved = storage.resolve_boarder_identity(conn, "ALICE")
+
+        assert (resolved.display_name, resolved.bed, resolved.is_current) == (
+            "Master Alice",
+            "601A",
+            True,
+        )
+
+    def test_former_resolves_freshest_snapshot(self, conn):
+        save_history(conn, "BOB", bed="101", display_name="Old Bob", month="2026-01")
+        save_history(conn, "BOB", bed="202", display_name="New Bob", month="2026-02")
+
+        resolved = storage.resolve_boarder_identity(conn, "BOB")
+
+        assert (resolved.display_name, resolved.bed, resolved.is_current) == (
+            "New Bob",
+            "202",
+            False,
+        )
+
+    def test_unknown_key_returns_none(self, conn):
+        assert storage.resolve_boarder_identity(conn, "NOBODY") is None
+
+
+class TestSearchHistoryCarriesMatchKey:
+    def test_search_results_carry_normalized_name_for_links(self, conn):
+        save_history(conn, "CHEN WEI", display_name="Chen Wei", month="2026-03")
+
+        results = storage.search_history(conn, "chen")
+
+        assert [entry.normalized_name for entry in results] == ["CHEN WEI"]

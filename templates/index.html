@@ -37,7 +37,7 @@
                             <tbody>
                                 {% for row in history_results %}
                                 <tr>
-                                    <td>{{ row.display_name }}</td>
+                                    <td><a class="boarder-link" href="/boarder/{{ row.normalized_name|urlencode }}">{{ row.display_name }}</a></td>
                                     <td>{{ row.bed }}</td>
                                     <td>{{ row.month }}</td>
                                     <td>{{ row.frequency }}</td>
