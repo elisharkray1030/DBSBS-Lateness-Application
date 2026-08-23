@@ -610,17 +610,20 @@ def top_boarders(
         )
         rows = cursor.fetchall()
 
-    return [
-        TopBoarderEntry(
-            normalized_name=row[0],
-            display_name=identity[row[0]].display_name if row[0] in identity else row[0],
-            bed=identity[row[0]].bed if row[0] in identity else "",
-            points=row[1],
-            frequency=row[2],
-            minutes=row[3],
+    entries = []
+    for row in rows:
+        who = identity.get(row[0])
+        entries.append(
+            TopBoarderEntry(
+                normalized_name=row[0],
+                display_name=who.display_name if who else row[0],
+                bed=who.bed if who else "",
+                points=row[1],
+                frequency=row[2],
+                minutes=row[3],
+            )
         )
-        for row in rows
-    ]
+    return entries
 
 
 def points_distribution(conn: sqlite3.Connection, month: str) -> list[DistributionBucket]:

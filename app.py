@@ -127,6 +127,8 @@ def _page_context(selected_tab: str = '', message: str | None = None,
         'boarders': [],
         'punishment_months': [],
         'punishments': [],
+        # 0 keeps the never-shown Punishments count line harmless on pages
+        # that don't track the archive total (previously rendered blank).
         'consequences_total': 0,
         'consequences_show_all': False,
         'consequences_month': None,
@@ -154,7 +156,7 @@ def _consume_flashes():
 
 def _migration_banner(skip_count: int) -> str:
     """Words the legacy-Match-Key banner in glossary vocabulary."""
-    noun = "record" if skip_count == 1 else "records"
+    noun = "row" if skip_count == 1 else "rows"
     pronoun = "its" if skip_count == 1 else "their"
     key_word = "Match Key" if skip_count == 1 else "Match Keys"
     return (

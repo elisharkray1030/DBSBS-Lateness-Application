@@ -308,7 +308,7 @@ class TestMigrationCollisionBanner:
 
         first = unescape(client.get("/").get_data(as_text=True))
         assert "legacy Match Key" in first
-        assert "1 stored record kept" in first
+        assert "1 stored row kept" in first
 
         again = client.get("/").get_data(as_text=True)
         assert "legacy Match Key" not in again
