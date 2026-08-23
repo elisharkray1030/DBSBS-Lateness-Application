@@ -67,6 +67,12 @@
                     <div class="stat-value" id="stat-points">{{ summary.total_points }}</div>
                     <div class="stat-label">Points</div>
                 </div>
+                {% if summary.best_month and summary.months_coincide %}
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-best-worst-month">{{ summary.best_month.month }}</div>
+                    <div class="stat-label">Best &amp; worst month</div>
+                </div>
+                {% else %}
                 <div class="stat-card">
                     <div class="stat-value" id="stat-best-month">{% if summary.best_month %}{{ summary.best_month.month }}{% else %}&mdash;{% endif %}</div>
                     <div class="stat-label">Best month</div>
@@ -75,6 +81,7 @@
                     <div class="stat-value" id="stat-worst-month">{% if summary.worst_month %}{{ summary.worst_month.month }}{% else %}&mdash;{% endif %}</div>
                     <div class="stat-label">Worst month</div>
                 </div>
+                {% endif %}
             </div>
         </div>
 

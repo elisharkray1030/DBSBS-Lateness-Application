@@ -102,13 +102,19 @@ class BoarderMonth:
 
 @dataclass
 class ProfileSummary:
-    """A boarder's lifetime figures plus their best and worst month."""
+    """A boarder's lifetime figures plus their best and worst month.
+
+    ``months_coincide`` is derived here, beside the other summary rules:
+    it is True exactly when best and worst landed on the same Month label,
+    so surfaces can collapse the pair into one indistinguishable card.
+    """
 
     total_incidents: int
     total_minutes: int
     total_points: int
     best_month: "BoarderMonth | None"
     worst_month: "BoarderMonth | None"
+    months_coincide: bool = False
 
 
 def build_profile_summary(series: "list[BoarderMonth]") -> ProfileSummary:
@@ -116,15 +122,20 @@ def build_profile_summary(series: "list[BoarderMonth]") -> ProfileSummary:
 
     Best month is the fewest-Points month and worst the most-Points month;
     ties resolve to the earliest month so the choice stays deterministic.
+    The two coincide — same Month label — whenever every month carries the
+    same Points or only one month exists.
     """
     if not series:
         return ProfileSummary(0, 0, 0, None, None)
+    best_month = min(series, key=lambda row: (row.total_points, row.month))
+    worst_month = min(series, key=lambda row: (-row.total_points, row.month))
     return ProfileSummary(
         total_incidents=sum(row.frequency for row in series),
         total_minutes=sum(row.total_minutes for row in series),
         total_points=sum(row.total_points for row in series),
-        best_month=min(series, key=lambda row: (row.total_points, row.month)),
-        worst_month=min(series, key=lambda row: (-row.total_points, row.month)),
+        best_month=best_month,
+        worst_month=worst_month,
+        months_coincide=best_month.month == worst_month.month,
     )
 
 

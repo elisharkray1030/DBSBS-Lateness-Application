@@ -120,6 +120,86 @@ class TestProfileSummary:
         # points, earliest month breaking ties.
         assert 'id="stat-best-month">2026-04' in html
         assert 'id="stat-worst-month">2026-02' in html
+        # Distinguishable months keep the familiar two-card pair.
+        assert 'id="stat-best-worst-month"' not in html
+
+    def test_single_month_renders_one_combined_card(self, fresh_client):
+        seed_history("ALICE", "Alice", "601A", [("2026-03", 1, 2, 3)])
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert 'id="stat-best-worst-month">2026-03' in html
+        assert "Best &amp; worst month" in html
+        assert 'id="stat-best-month"' not in html
+        assert 'id="stat-worst-month"' not in html
+        # The month text appears once across the summary cards, not twice.
+        stat_values = re.findall(r'id="stat-[^"]*"[^>]*>([^<]*)<', html)
+        assert stat_values.count("2026-03") == 1
+
+    def test_all_tied_months_render_one_combined_card(self, fresh_client):
+        seed_history(
+            "ALICE",
+            "Alice",
+            "601A",
+            [("2026-01", 1, 2, 3), ("2026-02", 1, 2, 3), ("2026-03", 1, 2, 3)],
+        )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert 'id="stat-best-worst-month">2026-01' in html
+        assert 'id="stat-best-month"' not in html
+        assert 'id="stat-worst-month"' not in html
+
+    def test_removed_boarder_follows_the_same_coincide_rule(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ZED", "601Z", 0, 0, 0)], "2026-01")
+            boarder_id = storage.add_boarder(conn, "ZED", "Zed", "601Z")
+            storage.delete_boarder(conn, boarder_id)
+
+        html = profile_html(fresh_client, "ZED").get_data(as_text=True)
+
+        assert 'id="stat-best-worst-month">2026-01' in html
+        assert 'id="stat-best-month"' not in html
+        assert 'id="stat-worst-month"' not in html
+
+    def test_reimport_breaking_a_tie_restores_two_cards(self, fresh_client):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 2, 3), ("2026-02", 1, 2, 3)])
+        assert 'id="stat-best-worst-month"' in profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        # A corrected Monthly Log re-imports February with more Points.
+        seed_history("ALICE", "Alice", "601A", [("2026-02", 2, 5, 9)])
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+        assert 'id="stat-best-month">2026-01' in html
+        assert 'id="stat-worst-month">2026-02' in html
+        assert 'id="stat-best-worst-month"' not in html
+
+    def test_deleting_down_to_one_survivor_shows_combined_card(self, fresh_client):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 2, 3), ("2026-02", 1, 2, 9)])
+        assert 'id="stat-best-month"' in profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        with app_module.connect() as conn:
+            storage.delete_month(conn, "2026-02")
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+        assert 'id="stat-best-worst-month">2026-01' in html
+        assert 'id="stat-best-month"' not in html
+
+    def test_empty_history_keeps_both_month_placeholders(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("CAROL", "602A", 1, 4, 9)],
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "CAROL").get_data(as_text=True)
+
+        assert 'id="stat-best-month">&mdash;' in html
+        assert 'id="stat-worst-month">&mdash;' in html
+        assert 'id="stat-best-worst-month"' not in html
 
     def test_monthly_table_totals_match_the_series(self, fresh_client):
         seed_history(
