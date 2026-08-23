@@ -528,6 +528,37 @@ def consequences():
     )
 
 
+@app.route('/statistics')
+def statistics():
+    """Renders the House Dashboard: the Statistics tab's home.
+
+    Every figure derives live from stored data on each visit, so re-imports
+    and month deletions are reflected immediately.
+    """
+    with connect() as conn:
+        trend = storage.house_trend(conn)
+
+    return render_template(
+        'dashboard.html',
+        panels_in_page=False,
+        selected_tab='statistics',
+        message=None,
+        error=None,
+        trend=trend,
+        trend_payload=_house_trend_payload(trend),
+        current_year=datetime.now().astimezone().year,
+    )
+
+
+def _house_trend_payload(trend):
+    """Plain-data payload for the house-wide trend chart."""
+    return {
+        "months": [point.month for point in trend],
+        "incidents": [point.incidents for point in trend],
+        "minutes": [point.minutes_late for point in trend],
+    }
+
+
 @app.route('/boarder/<path:key>')
 def boarder_profile(key):
     """Renders one boarder's profile, addressed by URL-encoded Match Key.

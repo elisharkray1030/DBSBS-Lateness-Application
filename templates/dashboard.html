@@ -1,0 +1,86 @@
+{% extends "layout.html" %}
+
+{% block title %}House Dashboard — DBS Boarding School{% endblock %}
+
+{% block heading %}
+    <h1>House Dashboard</h1>
+{% endblock %}
+
+{% block content %}
+    <div class="print-brand">
+        <img src="{{ url_for('static', filename='dbslogoF-B.png') }}" alt="DBS Boarding School logo">
+        <span>DBS Boarding School</span>
+    </div>
+
+    {% if not trend %}
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+            <p>No reports have been imported yet. Import a Monthly Log to see house-wide statistics.</p>
+        </div>
+    {% else %}
+        <section class="history-panel dashboard-trend">
+            <h2>House-wide Trend</h2>
+            <p class="dashboard-note">Lateness incidents and total minutes late across every month in the Report Archive.</p>
+            <div class="chart-block">
+                <canvas id="house-trend-chart" role="img"
+                        aria-label="Line chart of lateness incidents and total minutes late per month"></canvas>
+                <script type="application/json" id="house-trend-data">{{ trend_payload|tojson }}</script>
+            </div>
+            <div class="table-scroll">
+                <table class="trend-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Month</th>
+                            <th scope="col">Incidents</th>
+                            <th scope="col">Minutes Late</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for point in trend %}
+                        <tr>
+                            <td>{{ point.month }}</td>
+                            <td>{{ point.incidents }}</td>
+                            <td>{{ point.minutes_late }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+    {% if trend %}
+    <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+    <script>
+        // Draws the house-wide trend from the server-rendered payload alone;
+        // without JavaScript the per-month totals table stands in fully.
+        (function () {
+            var payloadEl = document.getElementById('house-trend-data');
+            var canvas = document.getElementById('house-trend-chart');
+            if (!payloadEl || !canvas || typeof Chart === 'undefined') return;
+            var payload = JSON.parse(payloadEl.textContent);
+            var styles = getComputedStyle(document.documentElement);
+            var navy = styles.getPropertyValue('--navy').trim() || '#1d2b53';
+            var red = styles.getPropertyValue('--brand-red').trim() || '#E51A3C';
+            new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: payload.months,
+                    datasets: [
+                        { label: 'Incidents', data: payload.incidents, borderColor: navy,
+                          backgroundColor: navy, tension: 0.25 },
+                        { label: 'Minutes late', data: payload.minutes, borderColor: red,
+                          backgroundColor: red, tension: 0.25 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        })();
+    </script>
+    {% endif %}
+{% endblock %}

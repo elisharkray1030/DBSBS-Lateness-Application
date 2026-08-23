@@ -138,6 +138,15 @@ class MonthSummary:
 
 
 @dataclass
+class HouseTrendPoint:
+    """One month's house-wide lateness totals for the dashboard trend."""
+
+    month: str
+    incidents: int
+    minutes_late: int
+
+
+@dataclass
 class AllTimeEntry:
     """One derived All-Time List row: every boarder ever recorded.
 

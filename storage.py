@@ -7,6 +7,7 @@ from records import (
     AllTimeEntry,
     Boarder,
     BoarderMonth,
+    HouseTrendPoint,
     BoarderRecord,
     HistoryEntry,
     MonthSummary,
@@ -535,6 +536,26 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     )
     return [
         MonthSummary(month=row[0], boarder_count=row[1], total_minutes=row[2])
+        for row in cursor.fetchall()
+    ]
+
+
+def house_trend(conn: sqlite3.Connection) -> list[HouseTrendPoint]:
+    """Returns per-month house-wide lateness totals, chronological ascending.
+
+    Derived live from stored history on every call, so re-imports and month
+    deletions are reflected immediately.
+    """
+    cursor = conn.execute(
+        """
+        SELECT month, SUM(frequency), SUM(total_minutes)
+        FROM boarder_history
+        GROUP BY month
+        ORDER BY month ASC
+        """
+    )
+    return [
+        HouseTrendPoint(month=row[0], incidents=row[1], minutes_late=row[2])
         for row in cursor.fetchall()
     ]
 

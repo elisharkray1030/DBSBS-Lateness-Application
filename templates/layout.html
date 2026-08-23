@@ -1227,6 +1227,7 @@
         {% else %}
         <a class="tab-link" href="/?tab=boarders">Boarders</a>
         {% endif %}
+        <a class="tab-link {% if selected_tab == 'statistics' %}active{% endif %}" href="/statistics">Statistics</a>
     </div>
 
     {% block content %}{% endblock %}

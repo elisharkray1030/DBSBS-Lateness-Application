@@ -331,3 +331,29 @@ class TestListBoarderPunishments:
         rows = storage.list_boarder_punishments(conn, "ZED")
 
         assert [p.month for p in rows] == ["2026-03"]
+
+
+class TestHouseTrend:
+    def test_empty_archive_returns_no_points(self, conn):
+        assert storage.house_trend(conn) == []
+
+    def test_sums_incidents_and_minutes_per_month_chronologically(self, conn):
+        save_history(conn, "ALICE", frequency=2, total_minutes=5, month="2026-02")
+        save_history(conn, "BOB", frequency=1, total_minutes=4, month="2026-02")
+        save_history(conn, "ALICE", frequency=3, total_minutes=9, month="2026-01")
+
+        points = storage.house_trend(conn)
+
+        assert [(p.month, p.incidents, p.minutes_late) for p in points] == [
+            ("2026-01", 3, 9),
+            ("2026-02", 3, 9),
+        ]
+
+    def test_zero_lateness_rows_still_count_their_zeros(self, conn):
+        save_history(conn, "ALICE", frequency=0, total_minutes=0, month="2026-03")
+
+        points = storage.house_trend(conn)
+
+        assert [(p.month, p.incidents, p.minutes_late) for p in points] == [
+            ("2026-03", 0, 0),
+        ]

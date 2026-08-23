@@ -48,6 +48,10 @@ _Avoid_: search history, records
 The per-boarder page addressed by URL-encoded Match Key: identity resolved freshest-first (with a Former badge off the Master List), lifetime summary figures with best and worst month, the month-by-month Boarder History, and — as it exists — the Punishment timeline. Reached uniformly for current and Removed boarders, so name variants collapse to one page.
 _Avoid_: student page, person record, individual view
 
+**House Dashboard**:
+The Statistics tab's home: house-wide lateness trend across the Report Archive, plus top-N boarders, monthly Points distribution, and the repeat-offender watchlist. Every figure derives live from stored data on each visit — nothing cached or stale.
+_Avoid_: analytics page, stats screen
+
 **Import**:
 Loading a monthly log to create or refresh that month's report.
 _Avoid_: upload, generate

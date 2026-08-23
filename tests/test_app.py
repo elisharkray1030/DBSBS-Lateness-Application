@@ -2748,7 +2748,7 @@ class TestChromeConsistency:
             })"""
         )
 
-        assert len(typography) == 4
+        assert len(typography) == 5
         assert len(set(typography)) == 1, typography
 
 
