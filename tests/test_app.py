@@ -44,7 +44,7 @@ def tab_button_class(html, tab_name):
 TAB_LABELS = {
     "reports": "View Reports in Database",
     "history": "Search Boarder History",
-    "consequences": "Consequences",
+    "consequences": "Punishments",
     "boarders": "Boarders",
 }
 

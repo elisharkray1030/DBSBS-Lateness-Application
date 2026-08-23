@@ -76,7 +76,7 @@
         {% macro consequences_count() -%}
             <p class="consequences-count" aria-live="polite">Showing {{ punishments|length }} of {{ consequences_total }} {{ 'punishment' if consequences_total == 1 else 'punishments' }}</p>
         {%- endmacro %}
-        <h2>Consequences</h2>
+        <h2>Punishments</h2>
         <div class="consequences-toolbar">
             <form action="/consequences" method="get" class="consequences-filters">
                 {% if consequences_show_all %}
@@ -540,7 +540,7 @@
                     event.preventDefault();
                     showConfirmModal({
                         title: 'Discard changes?',
-                        message: 'You have unsaved edits to a boarder. Discard them and open Consequences?',
+                        message: 'You have unsaved edits to a boarder. Discard them and open Punishments?',
                         confirmLabel: 'Discard',
                         onConfirm: () => {
                             discardBoarderEdits();

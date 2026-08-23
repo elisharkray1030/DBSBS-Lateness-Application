@@ -99,7 +99,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 
 @dataclass(frozen=True)
 class OfferedAction:
-    """One transition button the Consequences view offers on a row.
+    """One transition button the Punishments view offers on a row.
 
     ``reason_input`` marks the void variant: its form gains the optional
     reason field and the data attributes feeding the confirm dialog.
@@ -111,7 +111,7 @@ class OfferedAction:
     reason_input: bool = False
 
 
-# Which actions each status offers on the Consequences view, defined once
+# Which actions each status offers on the Punishments view, defined once
 # beside the POST-time legality table so UI offers cannot drift from what
 # the server accepts. Targets in _DUE_GATED_TARGETS appear only when the
 # server flags the row due. VALID_TRANSITIONS remains the POST-time
@@ -140,7 +140,7 @@ _VOID_ACTION = OfferedAction(
 
 
 def offered_actions(punishment: Punishment) -> list[OfferedAction]:
-    """Returns the ready-to-render action list for one Consequences row."""
+    """Returns the ready-to-render action list for one Punishments row."""
     actions = [
         OfferedAction(target=target, label=label)
         for target, label in _OFFERED_TRANSITIONS.get(punishment.status, ())
@@ -337,7 +337,7 @@ def list_consequences(
     status: str | None = None,
     now: datetime | None = None,
 ):
-    """Returns punishments for the Consequences view.
+    """Returns punishments for the Punishments view.
 
     Defaults to in-flight statuses; ``show_all`` lifts that. ``status`` further
     narrows to one status, ``month`` to one month.
