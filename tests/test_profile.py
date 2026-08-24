@@ -28,6 +28,35 @@ def seed_history(key, display_name, bed, months):
             )
 
 
+def open_charted_profile(browser_page, html):
+    """Fulfils /boarder/ with rendered HTML and local static files, then
+    waits until Chart.js has drawn the profile chart on the canvas."""
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+
+    def fulfill_static(route):
+        filename = route.request.url.rsplit("/", 1)[-1]
+        local = static_dir / filename
+        if local.is_file():
+            route.fulfill(
+                body=local.read_bytes(),
+                content_type="application/javascript",
+            )
+        else:
+            route.fulfill(status=404, body="not found")
+
+    page = browser_page
+    page.route("**/static/**", fulfill_static)
+    page.route(
+        "**/boarder/**",
+        lambda route: route.fulfill(body=html, content_type="text/html"),
+    )
+    page.goto("https://dbs.test/boarder/ALICE")
+    page.wait_for_function(
+        "() => typeof Chart !== 'undefined' && Chart.getChart(document.getElementById('profile-trend-chart')) !== null"
+    )
+    return page
+
+
 class TestSearchResultLinks:
     def test_search_results_link_names_to_profiles(self, fresh_client):
         seed_history("CHEN WEI", "Chen Wei", "701A", [("2026-03", 1, 2, 3)])
@@ -316,6 +345,22 @@ class TestPunishmentTimeline:
 
 
 class TestProfileTrendChart:
+    def test_chart_section_is_titled_lateness_by_month(self, fresh_client):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 3, 4)])
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert "<h2>Lateness by Month</h2>" in html
+        assert "Points by Month" not in html
+
+    def test_canvas_aria_announces_frequency_and_minutes_not_points(self, fresh_client):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 3, 4)])
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert "'s frequency and minutes late per month" in html
+        assert "points, frequency, and minutes late" not in html
+
     def test_chart_payload_matches_table_figures_exactly(self, fresh_client):
         seed_history(
             "ALICE",
@@ -356,33 +401,26 @@ class TestProfileTrendChart:
         assert '/static/chart.umd.min.js' in html
         assert not re.search(r'<script[^>]+src="https?://', html)
 
+    def test_drawn_chart_plots_frequency_and_minutes_in_brand_colors(self, fresh_client, browser_page):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 3, 4)])
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        page = open_charted_profile(browser_page, html)
+        datasets = page.evaluate(
+            "() => Chart.getChart(document.getElementById('profile-trend-chart'))"
+            ".data.datasets.map(d => ({ label: d.label, color: d.backgroundColor }))"
+        )
+
+        assert datasets == [
+            {"label": "Frequency", "color": "#1d2b53"},
+            {"label": "Minutes late", "color": "#E51A3C"},
+        ]
+
     def test_canvas_actually_draws_from_embedded_payload(self, fresh_client, browser_page):
         seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 3, 4)])
         html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
-        static_dir = Path(__file__).resolve().parent.parent / "static"
 
-        def fulfill_static(route):
-            filename = route.request.url.rsplit("/", 1)[-1]
-            local = static_dir / filename
-            if local.is_file():
-                route.fulfill(
-                    body=local.read_bytes(),
-                    content_type="application/javascript",
-                )
-            else:
-                route.fulfill(status=404, body="not found")
-
-        page = browser_page
-        page.route("**/static/**", fulfill_static)
-        page.route(
-            "**/boarder/**",
-            lambda route: route.fulfill(body=html, content_type="text/html"),
-        )
-        page.goto("https://dbs.test/boarder/ALICE")
-
-        page.wait_for_function(
-            "() => typeof Chart !== 'undefined' && Chart.getChart(document.getElementById('profile-trend-chart')) !== null"
-        )
+        open_charted_profile(browser_page, html)
 
 
 class TestProfileChrome:
