@@ -84,10 +84,10 @@
 
         {% if series %}
         <section class="history-panel profile-chart">
-            <h2>Points by Month</h2>
+            <h2>Lateness by Month</h2>
             <div class="chart-block">
                 <canvas id="profile-trend-chart" role="img"
-                        aria-label="Grouped bar chart of {{ identity.display_name }}'s points, frequency, and minutes late per month"></canvas>
+                        aria-label="Grouped bar chart of {{ identity.display_name }}'s frequency and minutes late per month"></canvas>
                 <script type="application/json" id="profile-trend-data">{{ chart_payload|tojson }}</script>
             </div>
         </section>
@@ -180,9 +180,8 @@
                 data: {
                     labels: payload.labels,
                     datasets: [
-                        { label: 'Points', data: payload.points, backgroundColor: colors.navy },
-                        { label: 'Frequency', data: payload.frequency, backgroundColor: colors.red },
-                        { label: 'Minutes late', data: payload.minutes, backgroundColor: colors.neutral }
+                        { label: 'Frequency', data: payload.frequency, backgroundColor: colors.navy },
+                        { label: 'Minutes late', data: payload.minutes, backgroundColor: colors.red }
                     ]
                 },
                 options: {
