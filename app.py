@@ -198,7 +198,7 @@ init_db()
 @app.route('/', methods=['GET', 'POST'])
 def home():
     current_month = None
-    history_results = None
+    search_results = None
     selected_tab = 'reports'
     message = None
     error = None
@@ -234,7 +234,7 @@ def home():
                         query = urlencode({"month": month_label})
                         return redirect(f"/?{query}")
 
-    # Boarder History search submits as a native GET form; every search
+    # Find-a-Boarder search submits as a native GET form; every search
     # renders its results (or the neutral no-matches empty state) directly.
     search_name = request.args.get('search_name')
     if search_name is not None:
@@ -244,7 +244,7 @@ def home():
             error = "Please enter a boarder name to search Boarder History."
         else:
             with connect() as conn:
-                history_results = storage.search_history(conn, search_name)
+                search_results = storage.search_boarders(conn, search_name)
 
     flash_message, flash_error = _consume_flashes()
     message = message or flash_message
@@ -268,7 +268,7 @@ def home():
         selected_tab=selected_tab,
         message=message,
         error=error,
-        history_results=history_results,
+        search_results=search_results,
         all_months=all_months,
         current_month=current_month,
         boarders=boarders,

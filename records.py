@@ -78,19 +78,6 @@ class UnparsedTimeRow:
 
 
 @dataclass
-class HistoryEntry:
-    """One stored row returned from a history search."""
-
-    display_name: str
-    bed: str
-    month: str
-    frequency: int
-    total_minutes: int
-    total_points: int
-    normalized_name: str = ""
-
-
-@dataclass
 class BoarderMonth:
     """One month of a boarder's saved history, in chronological series."""
 

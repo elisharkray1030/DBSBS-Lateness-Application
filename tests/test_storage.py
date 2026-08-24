@@ -120,8 +120,8 @@ class TestNormalizedNameKeyMigration:
         assert [(b.display_name, b.bed) for b in storage.list_boarders(connection)] == [
             ("Lucas CHAVEZ MOCAN, Lucas", "607B")
         ]
-        history = storage.search_history(connection, "chavez")
-        assert [entry.month for entry in history] == ["2026-04"]
+        rekeyed = storage.get_month_report(connection, "2026-04")
+        assert [r.name for r in rekeyed] == ["LUCAS CHAVEZ MOCAN LUCAS"]
         punishments = storage.list_punishments(connection)
         assert [p.normalized_name for p in punishments] == [
             "LUCAS CHAVEZ MOCAN LUCAS"
@@ -734,33 +734,6 @@ class TestGetMonthReport:
 
     def test_unknown_month_returns_empty(self, conn):
         assert storage.get_month_report(conn, "nope") == []
-
-
-class TestSearchHistory:
-    def test_partial_name_match(self, conn):
-        storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
-        storage.save_month(conn, [record("ALICIA", "102", 1, 2, 3)], "2026-04")
-
-        results = storage.search_history(conn, "ali")
-        assert len(results) == 2
-        assert {r.display_name for r in results} == {"Alice", "Alicia"}
-        assert {r.month for r in results} == {"2026-03", "2026-04"}
-
-    def test_case_insensitive_query(self, conn):
-        storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
-
-        results = storage.search_history(conn, "aLiCe")
-        assert [r.month for r in results] == ["2026-03"]
-
-    def test_whitespace_padded_query_matches(self, conn):
-        storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
-
-        padded = storage.search_history(conn, "  alice  ")
-        unpadded = storage.search_history(conn, "alice")
-        assert [r.month for r in padded] == [r.month for r in unpadded] == ["2026-03"]
-
-    def test_empty_query_returns_nothing(self, conn):
-        assert storage.search_history(conn, "") == []
 
 
 class TestDeleteMonth:

@@ -1,0 +1,7 @@
+{% macro status_badge(is_current) -%}
+    {%- if is_current -%}
+        <span class="status-badge badge-current">Current</span>
+    {%- else -%}
+        <span class="status-badge badge-former">Former</span>
+    {%- endif -%}
+{%- endmacro %}

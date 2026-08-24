@@ -161,13 +161,13 @@ Important behavior:
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
 - `list_months(conn)` returns the month summaries used in the UI (month label, boarder count, total minutes late), ordered newest-first.
 - `get_month_report(conn, month_label)` returns one month's stored `BoarderRecord` rows, ordered by the server's single Bed ordering rule (numeric part then suffix, lexical fallback). The report table may change display order without changing these stored values.
-- `search_history(conn, name_query)` performs a partial match against stored names.
+- `search_boarders(conn, name_query)` performs a partial Match Key match and returns one entry per boarder over the All-Time List population (Master List plus Boarder History and Punishments keys), sharing its freshest-first identity resolution and sort order.
 - `delete_month(conn, month_label)` removes a month and returns the deleted row count.
 - `replace_boarders(conn, rows)` replaces the master list after resolving duplicate normalized names last-row-wins and validating that no two different boarders share a Bed, raising a ValueError otherwise.
 
 ### `records.py` - the typed boarder record
 
-`records.py` defines the `BoarderRecord` (normalized identity, canonical display name, bed, frequency, total minutes late, total points) once, shared by the ingestion module, the CSV writer, the storage module, and the JSON body. It also holds the `Boarder` master-list row, the `UnparsedTimeRow` and `HistoryEntry` records, and the `bed_sort_key` rule that orders Monthly Report rows.
+`records.py` defines the `BoarderRecord` (normalized identity, canonical display name, bed, frequency, total minutes late, total points) once, shared by the ingestion module, the CSV writer, the storage module, and the JSON body. It also holds the `Boarder` master-list row and the `UnparsedTimeRow` record, and the `bed_sort_key` rule that orders Monthly Report rows.
 
 ### `templates/index.html` - User interface and client scripting
 

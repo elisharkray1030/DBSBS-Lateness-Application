@@ -8,7 +8,7 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import pytest
-from helpers import month_row, open_month_detail, record, seed_punishments
+from helpers import history_panel_html, month_row, open_month_detail, record, seed_punishments
 from records import Boarder
 
 import app as app_module
@@ -82,7 +82,7 @@ class TestHomeRender:
 
     def test_history_panel_keeps_its_heading(self):
         html = home_html()
-        assert "<h2>Search Boarder History</h2>" in html
+        assert "<h2>Find a Boarder</h2>" in html
 
 
 class TestTabNavigation:
@@ -1008,13 +1008,12 @@ class TestServerOwnedReportRows:
         assert "<td>${row.total_minutes}</td>" in html
         assert " mins</td>" not in html
 
-    def test_history_table_formats_numbers_like_month_report(self, fresh_client):
+    def test_history_search_results_share_month_report_table_styling(self, fresh_client):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 19, 21)], "2026-03")
         html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
-        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
-        assert "<td>19</td>" in history_panel
-        assert "<td>19 mins</td>" not in history_panel
+        history_panel = history_panel_html(html)
+        assert '<table class="boarders-table">' in history_panel
 
     def test_browser_sort_headers_reach_and_announce_direction(self, fresh_client, browser_page):
         with app_module.connect() as conn:
@@ -1160,15 +1159,15 @@ class TestServerOwnedReportRows:
         assert "Import and Save" in html
         assert "Generate" not in html
 
-    def test_history_button_uses_boarder_history_terminology(self):
+    def test_history_button_uses_find_a_boarder_terminology(self):
         html = home_html()
-        assert "Search Boarder History" in html
+        assert ">Find Boarder</button>" in html
         assert ">Search History</button>" not in html
 
-    def test_empty_history_uses_boarder_history_terminology(self, fresh_client):
+    def test_empty_history_uses_person_lookup_terminology(self, fresh_client):
         resp = fresh_client.get("/?search_name=ZZZ")
         html = resp.get_data(as_text=True)
-        assert "No Boarder History entries matched your search." in html
+        assert "No boarders matched your search." in html
         assert "No history records matched" not in html
 
     def test_search_submits_as_native_get_form(self):
@@ -1180,22 +1179,24 @@ class TestServerOwnedReportRows:
 
     def test_zero_hit_search_renders_neutral_empty_state_not_success_banner(self, fresh_client):
         html = fresh_client.get("/?search_name=ZZZ").get_data(as_text=True)
-        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
-        assert "No Boarder History entries matched your search." in history_panel
+        history_panel = history_panel_html(html)
+        assert "No boarders matched your search." in history_panel
         assert "banner-success" not in history_panel
 
     def test_hit_search_renders_results_table(self, fresh_client):
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
         html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
-        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
-        assert "Alice" in history_panel
-        assert "<table>" in history_panel
+        history_panel = history_panel_html(html)
+        # Identity resolves freshest-first: the Master List entry wins over
+        # the snapshot's display spelling.
+        assert "ALICE" in history_panel
+        assert '<table class="boarders-table">' in history_panel
 
     def test_blank_search_name_prompts_without_results_section(self, fresh_client):
         html = fresh_client.get("/?search_name=").get_data(as_text=True)
         assert "enter a boarder name" in html.lower()
-        assert "No Boarder History entries matched your search." not in html
+        assert "No boarders matched your search." not in html
 
     def test_browser_first_search_after_load_shows_miss_feedback(self, fresh_client, browser_page):
 
@@ -1224,7 +1225,7 @@ class TestServerOwnedReportRows:
 
         page.wait_for_selector("#history .empty-state")
         assert page.locator("#history .banner-success").count() == 0
-        assert "No Boarder History entries matched your search." in (
+        assert "No boarders matched your search." in (
             page.locator("#history .empty-state").text_content()
         )
 
@@ -1920,10 +1921,7 @@ class TestAccessibilityPolish:
             assert 'scope="col"' in table.group(0)
 
         history_html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
-        history_section = re.search(
-            r'<section id="history".*?</section>', history_html, re.S
-        ).group(0)
-        assert '<th scope="col">' in history_section
+        assert '<th scope="col">' in history_panel_html(history_html)
 
         consequences_html = fresh_client.get("/consequences").get_data(as_text=True)
         consequences_section = re.search(
@@ -2385,8 +2383,8 @@ class TestPrintOutputsActiveView:
         page.locator('.tab-link[data-tab="history"]').click()
         printed = self._printed_text(page)
 
-        assert "Alice" in printed
-        assert "Minutes Late" in printed
+        assert "ALICE" in printed
+        assert "Status" in printed
         assert "Enter name or partial name" not in printed
         assert "Report for" not in printed
 
@@ -2701,12 +2699,16 @@ class TestTransitionFeedbackLivesOnPage:
 
 
 class TestChromeConsistency:
-    def test_every_panel_opens_with_h2_matching_its_tab_label(self):
+    def test_every_panel_opens_with_expected_h2(self):
         html = home_html()
-        for panel_id, label in TAB_LABELS.items():
+        # The History panel's job became person lookup (#116), so its
+        # heading intentionally departs from the "Search Boarder History"
+        # tab label; every other panel stays in step with the tab bar.
+        expected_headings = dict(TAB_LABELS, history="Find a Boarder")
+        for panel_id, label in expected_headings.items():
             panel = panel_html(html, panel_id)
             assert f"<h2>{label}</h2>" in panel, (
-                f"{panel_id} panel lacks an <h2> matching its tab label"
+                f"{panel_id} panel lacks its expected <h2> {label!r}"
             )
 
     def test_section_subheadings_nest_one_level_beneath_panel_titles(self):
@@ -2732,7 +2734,7 @@ class TestChromeConsistency:
         html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
 
         panel = panel_html(html, "history")
-        title_index = panel.index("<h2>Search Boarder History</h2>")
+        title_index = panel.index("<h2>Find a Boarder</h2>")
         results_index = panel.index("<h3>Search Results</h3>")
         assert title_index < results_index
 

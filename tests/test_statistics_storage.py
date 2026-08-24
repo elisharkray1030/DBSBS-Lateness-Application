@@ -287,15 +287,6 @@ class TestResolveBoarderIdentity:
         assert storage.resolve_boarder_identity(conn, "NOBODY") is None
 
 
-class TestSearchHistoryCarriesMatchKey:
-    def test_search_results_carry_normalized_name_for_links(self, conn):
-        save_history(conn, "CHEN WEI", display_name="Chen Wei", month="2026-03")
-
-        results = storage.search_history(conn, "chen")
-
-        assert [entry.normalized_name for entry in results] == ["CHEN WEI"]
-
-
 class TestListBoarderPunishments:
     def test_returns_all_states_chronologically_including_voided(self, conn):
         storage.assign_punishments(
