@@ -7,42 +7,36 @@
 {% block content %}
     <!-- History Search Panel -->
     <section id="history" class="panel {% if selected_tab == 'history' %}active{% endif %} history-panel">
-        <h2>Search Boarder History</h2>
+        <h2>Find a Boarder</h2>
         <form action="/" method="get" class="form-row">
             <div class="form-field">
                 <label for="search_name"><strong>Boarder Name</strong></label>
                 <input type="text" id="search_name" name="search_name" placeholder="Enter name or partial name" required>
             </div>
             <div>
-                <button type="submit" class="btn btn-primary">Search Boarder History</button>
+                <button type="submit" class="btn btn-primary">Find Boarder</button>
             </div>
         </form>
 
-        {% if history_results is not none %}
+        {% if search_results is not none %}
             <div class="results-section">
                 <h3>Search Results</h3>
-                {% if history_results %}
+                {% if search_results %}
                     <div class="table-scroll">
-                        <table>
+                        <table class="boarders-table">
                             <thead>
                                 <tr>
-                                    <th scope="col">Boarder Name</th>
                                     <th scope="col">Bed</th>
-                                    <th scope="col">Month</th>
-                                    <th scope="col">Frequency</th>
-                                    <th scope="col">Minutes Late</th>
-                                    <th scope="col">Total Points</th>
+                                    <th scope="col">Boarder Name</th>
+                                    <th scope="col">Status</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {% for row in history_results %}
-                                <tr>
-                                    <td><a class="boarder-link" href="/boarder/{{ row.normalized_name|urlencode }}">{{ row.display_name }}</a></td>
+                                {% for row in search_results %}
+                                <tr data-boarder-key="{{ row.normalized_name }}">
                                     <td>{{ row.bed }}</td>
-                                    <td>{{ row.month }}</td>
-                                    <td>{{ row.frequency }}</td>
-                                    <td>{{ row.total_minutes }}</td>
-                                    <td>{{ row.total_points }}</td>
+                                    <td><a class="boarder-link" href="/boarder/{{ row.normalized_name|urlencode }}">{{ row.display_name }}</a></td>
+                                    <td>{% if row.is_current %}<span class="status-badge badge-current">Current</span>{% else %}<span class="status-badge badge-former">Former</span>{% endif %}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -51,7 +45,7 @@
                 {% else %}
                     <div class="empty-state">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
-                        No Boarder History entries matched your search.
+                        No boarders matched your search.
                     </div>
                 {% endif %}
             </div>

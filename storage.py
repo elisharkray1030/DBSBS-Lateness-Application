@@ -10,7 +10,6 @@ from records import (
     BoarderMonth,
     BoarderRecord,
     DistributionBucket,
-    HistoryEntry,
     HouseTrendPoint,
     MonthSummary,
     Punishment,
@@ -799,6 +798,25 @@ def list_all_time_boarders(conn: sqlite3.Connection) -> list[AllTimeEntry]:
     return entries
 
 
+def search_boarders(conn: sqlite3.Connection, name_query: str) -> list[AllTimeEntry]:
+    """Returns one entry per Match Key whose key contains the query.
+
+    A person lookup, not a history listing: shares the All-Time List's
+    derivation wholesale — same union of Master List, Boarder History and
+    Punishments keys, freshest-first identity resolution, Current/Former
+    status, and sort order — narrowed to keys containing the normalized
+    query substring.
+    """
+    needle = normalize_name(name_query)
+    if not needle:
+        return []
+    return [
+        entry
+        for entry in list_all_time_boarders(conn)
+        if needle in entry.normalized_name
+    ]
+
+
 def list_punishment_months(conn: sqlite3.Connection) -> list[str]:
     """Returns Months represented by Punishments, newest first."""
     cursor = conn.execute(
@@ -835,34 +853,6 @@ def get_month_report(conn: sqlite3.Connection, month_label: str) -> list[Boarder
         for row in cursor.fetchall()
     ]
     return sort_boarder_records(records)
-
-
-def search_history(conn: sqlite3.Connection, name_query: str) -> list[HistoryEntry]:
-    if not name_query:
-        return []
-
-    normalized_query = f"%{normalize_name(name_query)}%"
-    cursor = conn.execute(
-        """
-        SELECT normalized_name, display_name, bed, month, frequency, total_minutes, total_points
-        FROM boarder_history
-        WHERE normalized_name LIKE ?
-        ORDER BY display_name, month ASC
-        """,
-        (normalized_query,),
-    )
-    return [
-        HistoryEntry(
-            normalized_name=row[0],
-            display_name=row[1],
-            bed=row[2],
-            month=row[3],
-            frequency=row[4],
-            total_minutes=row[5],
-            total_points=row[6],
-        )
-        for row in cursor.fetchall()
-    ]
 
 
 def delete_month(conn: sqlite3.Connection, month_label: str) -> int:
