@@ -1,6 +1,15 @@
+import re
+
 from records import BoarderRecord
 
 import storage
+
+
+def history_panel_html(html):
+    """Extracts the History panel section from rendered index-page HTML."""
+    match = re.search(r'<section id="history".*?</section>', html, re.S)
+    assert match is not None, "no history panel found"
+    return match.group(0)
 
 
 def _display_name(name, display_name=None):

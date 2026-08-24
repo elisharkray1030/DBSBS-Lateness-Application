@@ -1,18 +1,10 @@
 """Flask-client coverage for the Find-a-Boarder person lookup (#116)."""
 
-import re
-
-from helpers import record
+from helpers import history_panel_html, record
 
 import app as app_module
 import storage
 from records import Boarder
-
-
-def history_panel(html):
-    match = re.search(r'<section id="history".*?</section>', html, re.S)
-    assert match is not None, "no history panel found"
-    return match.group(0)
 
 
 def seed_history(key, display_name, bed, months):
@@ -36,7 +28,7 @@ class TestOneRowPerBoarder:
             [("2026-01", 1, 2, 3), ("2026-02", 1, 2, 3), ("2026-03", 1, 2, 3)],
         )
 
-        panel = history_panel(fresh_client.get("/?search_name=alice").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=alice").get_data(as_text=True))
 
         assert panel.count('href="/boarder/ALICE"') == 1
 
@@ -49,7 +41,7 @@ class TestOneRowPerBoarder:
                 conn, [record("CHEN, WEI", "701A", 2, 5, 9)], "2026-04"
             )
 
-        panel = history_panel(
+        panel = history_panel_html(
             fresh_client.get("/?search_name=chen wei").get_data(as_text=True)
         )
 
@@ -58,7 +50,7 @@ class TestOneRowPerBoarder:
     def test_comma_variant_query_matches_the_collapsed_identity(self, fresh_client):
         seed_history("CHEN WEI", "Chen Wei", "701A", [("2026-03", 1, 2, 3)])
 
-        panel = history_panel(
+        panel = history_panel_html(
             fresh_client.get("/?search_name=chen,%20wei").get_data(as_text=True)
         )
 
@@ -67,10 +59,10 @@ class TestOneRowPerBoarder:
     def test_whitespace_padded_query_matches(self, fresh_client):
         seed_history("ALICE", "Alice", "601A", [("2026-03", 1, 2, 3)])
 
-        padded = history_panel(
+        padded = history_panel_html(
             fresh_client.get("/?search_name=%20%20alice%20%20").get_data(as_text=True)
         )
-        unpadded = history_panel(
+        unpadded = history_panel_html(
             fresh_client.get("/?search_name=alice").get_data(as_text=True)
         )
 
@@ -86,7 +78,7 @@ class TestIdentityColumns:
             storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
         seed_history("ALICE", "Alice", "601A", [("2026-02", 0, 0, 0)])
 
-        panel = history_panel(fresh_client.get("/?search_name=ALICE").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=ALICE").get_data(as_text=True))
 
         assert 'href="/boarder/ALICE"' in panel
         assert "badge-current" in panel
@@ -99,7 +91,7 @@ class TestIdentityColumns:
             boarder_id = storage.add_boarder(conn, "ZED", "Zed", "601Z")
             storage.delete_boarder(conn, boarder_id)
 
-        panel = history_panel(fresh_client.get("/?search_name=zed").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=zed").get_data(as_text=True))
 
         assert "badge-former" in panel
         assert ">Former</span>" in panel
@@ -111,7 +103,7 @@ class TestIdentityColumns:
             bob = next(b for b in storage.list_boarders(conn) if b.normalized_name == "BOB")
             storage.delete_boarder(conn, bob.id)
 
-        panel = history_panel(fresh_client.get("/?search_name=bob").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=bob").get_data(as_text=True))
 
         assert "New Bob" in panel
         assert "<td>202</td>" in panel
@@ -122,7 +114,7 @@ class TestWidenedMatchPool:
         with app_module.connect() as conn:
             storage.replace_boarders(conn, [Boarder("CAROL", "Carol", "602C")])
 
-        panel = history_panel(fresh_client.get("/?search_name=carol").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=carol").get_data(as_text=True))
 
         assert 'href="/boarder/CAROL"' in panel
 
@@ -136,7 +128,7 @@ class TestWidenedMatchPool:
                 assigned_at="2026-04-01T09:00:00+00:00",
             )
 
-        panel = history_panel(fresh_client.get("/?search_name=carol").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=carol").get_data(as_text=True))
 
         assert 'href="/boarder/CAROL"' in panel
 
@@ -149,7 +141,7 @@ class TestResultOrdering:
             ada = storage.add_boarder(conn, "ADA", "Ada", "702")
             storage.delete_boarder(conn, ada)
 
-        panel = history_panel(fresh_client.get("/?search_name=a").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=a").get_data(as_text=True))
 
         assert panel.index('href="/boarder/ABE"') < panel.index('href="/boarder/ADA"')
 
@@ -159,10 +151,10 @@ class TestLookupStates:
         html = fresh_client.get("/?search_name=").get_data(as_text=True)
 
         assert "enter a boarder name" in html.lower()
-        assert "results-section" not in history_panel(html)
+        assert "results-section" not in history_panel_html(html)
 
     def test_zero_hit_query_renders_neutral_empty_state(self, fresh_client):
-        panel = history_panel(fresh_client.get("/?search_name=ZZZ").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=ZZZ").get_data(as_text=True))
 
         assert "No boarders matched your search." in panel
         assert "banner-success" not in panel
@@ -175,7 +167,7 @@ class TestLookupStates:
     def test_per_month_columns_are_gone_from_results_table(self, fresh_client):
         seed_history("ALICE", "Alice", "601A", [("2026-03", 2, 19, 21)])
 
-        panel = history_panel(fresh_client.get("/?search_name=alice").get_data(as_text=True))
+        panel = history_panel_html(fresh_client.get("/?search_name=alice").get_data(as_text=True))
 
         assert '<th scope="col">Month</th>' not in panel
         assert '<th scope="col">Frequency</th>' not in panel

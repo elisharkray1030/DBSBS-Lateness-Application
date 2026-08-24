@@ -8,7 +8,7 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import pytest
-from helpers import month_row, open_month_detail, record, seed_punishments
+from helpers import history_panel_html, month_row, open_month_detail, record, seed_punishments
 from records import Boarder
 
 import app as app_module
@@ -1012,7 +1012,7 @@ class TestServerOwnedReportRows:
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 19, 21)], "2026-03")
         html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
-        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
+        history_panel = history_panel_html(html)
         assert '<table class="boarders-table">' in history_panel
 
     def test_browser_sort_headers_reach_and_announce_direction(self, fresh_client, browser_page):
@@ -1179,7 +1179,7 @@ class TestServerOwnedReportRows:
 
     def test_zero_hit_search_renders_neutral_empty_state_not_success_banner(self, fresh_client):
         html = fresh_client.get("/?search_name=ZZZ").get_data(as_text=True)
-        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
+        history_panel = history_panel_html(html)
         assert "No boarders matched your search." in history_panel
         assert "banner-success" not in history_panel
 
@@ -1187,7 +1187,7 @@ class TestServerOwnedReportRows:
         with app_module.connect() as conn:
             storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
         html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
-        history_panel = re.search(r'<section id="history".*?</section>', html, re.S).group(0)
+        history_panel = history_panel_html(html)
         # Identity resolves freshest-first: the Master List entry wins over
         # the snapshot's display spelling.
         assert "ALICE" in history_panel
@@ -1921,10 +1921,7 @@ class TestAccessibilityPolish:
             assert 'scope="col"' in table.group(0)
 
         history_html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
-        history_section = re.search(
-            r'<section id="history".*?</section>', history_html, re.S
-        ).group(0)
-        assert '<th scope="col">' in history_section
+        assert '<th scope="col">' in history_panel_html(history_html)
 
         consequences_html = fresh_client.get("/consequences").get_data(as_text=True)
         consequences_section = re.search(
