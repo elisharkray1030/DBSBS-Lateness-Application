@@ -2909,6 +2909,44 @@ class TestVisualConsistencyPass:
         )
         assert abs(gap - 8) <= 1, gap
 
+    def test_history_miss_icon_shares_the_text_line_and_centers_on_it(self, fresh_client, browser_page):
+        html = fresh_client.get("/?search_name=ZZZ").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+
+        metrics = page.evaluate(
+            """() => {
+                const state = document.querySelector('#history .empty-state');
+                const icon = state.querySelector('svg');
+                const textNode = [...state.childNodes].find(
+                    n => n.nodeType === Node.TEXT_NODE && n.textContent.trim()
+                );
+                const range = document.createRange();
+                range.selectNodeContents(textNode);
+                const rect = el => el.getBoundingClientRect();
+                const iconRect = rect(icon);
+                const textRect = range.getBoundingClientRect();
+                return {
+                    overlap:
+                        Math.min(iconRect.bottom, textRect.bottom) -
+                        Math.max(iconRect.top, textRect.top),
+                    centerDelta: Math.abs(
+                        (iconRect.top + iconRect.bottom) / 2 -
+                            (textRect.top + textRect.bottom) / 2
+                    ),
+                    gap: textRect.left - iconRect.right,
+                    iconHeight: iconRect.height,
+                };
+            }"""
+        )
+        assert metrics["iconHeight"] > 0, metrics
+        assert metrics["overlap"] > metrics["iconHeight"] / 2, metrics
+        # vertical-align: middle centers on baseline + half x-height, while the
+        # text rect spans full ascent-to-descent, so allow a small metric skew.
+        assert metrics["centerDelta"] <= 4, metrics
+        assert metrics["gap"] > 0, metrics
+
     def test_consequences_toolbar_controls_share_one_height(self, fresh_client, browser_page):
         html = fresh_client.get("/consequences").get_data(as_text=True)
 
