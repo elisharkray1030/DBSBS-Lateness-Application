@@ -12,6 +12,10 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 - Save month summaries in SQLite for later review
 - Search historical boarder records by name
 - View, download, and delete saved month reports
+- Assign punishments to boarders with deadline and status tracking (pending, completed, overdue, voided)
+- View a Statistics / House Dashboard with house-wide trend chart, top-N boarders, repeat-offender watchlist, and Points distribution histogram
+- Look up any boarder's profile with all-time history and a Points trend chart
+- Manage the boarder master list through the Boarders tab (view, add, edit, remove, import CSV, export CSV)
 
 ## Project Layout
 
@@ -19,7 +23,14 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 - [parser.py](parser.py) - the shared ingestion module (parse -> decide -> persist -> message), the single CSV writer, and the parser CLI
 - [storage.py](storage.py) - SQLite persistence behind an injectable connection seam
 - [records.py](records.py) - the typed boarder record shared by ingestion, storage, the CSV writer, and the JSON body
-- [templates/index.html](templates/index.html) - dashboard UI
+- [punishments.py](punishments.py) - punishment assignment, status transitions, deadline/overdue rules
+- [seed_demo_data.py](seed_demo_data.py) - deterministic demo seed script (Jan–Aug, no June)
+- [templates/layout.html](templates/layout.html) - base layout, tab navigation, pagination
+- [templates/index.html](templates/index.html) - main content panels (reports, find-a-boarder, punishments, boarders)
+- [templates/dashboard.html](templates/dashboard.html) - Statistics / House Dashboard view
+- [templates/boarder.html](templates/boarder.html) - individual boarder profile with all-time history and charts
+- [templates/macros.html](templates/macros.html) - shared Jinja macros (Current/Former badge, etc.)
+- [compose.yaml](compose.yaml) - Docker Compose service definition
 - [tests/](tests/) - pytest suite covering the ingestion and storage seams, plus Flask test-client route tests and Playwright browser tests for UI behavior (browser tests skip automatically when Playwright is not installed)
 - [namelist.csv](namelist.csv) - master boarder list used for matching (local-only: gitignored for privacy, not in the repo)
 - [requirements.txt](requirements.txt) - runtime dependencies
@@ -89,9 +100,20 @@ If you are using Docker Compose, the root `namelist.csv` is only consulted for t
 3. Enter a month label such as `2026-03`.
 4. Save the report.
 5. Use the month cards to view, download, or delete saved reports.
-6. Use the History tab to search boarder records by name.
+6. Use **Find a Boarder** to look up any boarder's all-time history and Points trend chart.
+7. Open a month report and click **Assign Punishments** to issue punishments to boarders who were late; set a deadline, then track status transitions (completed, overdue, voided) on the Punishments tab.
+8. Use the **Statistics** tab to view house-wide analytics: top-N boarders, repeat-offender watchlist, and Points distribution.
+9. Use the **Boarders** tab to view, add, edit, or remove boarders, import a CSV roster, or download the current roster.
 
 Printing is an intentional feature for Monthly Reports: with a report open, Print (or Ctrl/Cmd+P) outputs exactly that report — the application chrome, other tabs' content, and empty report skeletons are excluded from the printed page.
+
+## Demo data
+
+For development or testing, run `python seed_demo_data.py` to seed the database with deterministic demo months (January through August, excluding June). Accepts optional flags:
+
+```bash
+python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]
+```
 
 ## Data expectations
 
@@ -117,7 +139,7 @@ The web upload and the parser CLI run the exact same ingestion module, so the tw
 
 - Install dev dependencies (pytest, mypy, playwright) with `python -m pip install -r requirements-dev.txt`.
 - Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium and skip automatically when it is unavailable).
-- Run `python -m mypy app.py parser.py storage.py records.py punishments.py` for typechecking.
+- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py` for typechecking.
 - Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.
 - Lateness frequency, total minutes late, and total points are computed once in the ingestion module and carried on the typed boarder record; the month view, the download, and the CSV export all use that one definition.
@@ -169,9 +191,39 @@ Important behavior:
 
 `records.py` defines the `BoarderRecord` (normalized identity, canonical display name, bed, frequency, total minutes late, total points) once, shared by the ingestion module, the CSV writer, the storage module, and the JSON body. It also holds the `Boarder` master-list row and the `UnparsedTimeRow` record, and the `bed_sort_key` rule that orders Monthly Report rows.
 
-### `templates/index.html` - User interface and client scripting
+### `punishments.py` - punishment assignment, status transitions, and deadline rules
 
-The template renders the dashboard, search tab, month cards, month detail table, delete confirmation modal, and fetch behavior. The month detail table renders canonical display names and typed values supplied by the server, starts in the server-defined Bed order, and supports display-only sorting without changing the data used for printing, downloading, or Punishment assignment.
+`punishments.py` owns punishment lifecycle management: assigning punishments to boarders after a monthly report, enforcing deadline/overdue rules, and transitioning punishments through statuses (pending, completed, overdue, voided).
+
+Important behavior:
+
+- Imports from `storage` and `records` to read and write punishment rows against the shared connection seam.
+- Handles deadline validation, overdue detection, and status transitions.
+- The Assign Punishments flow lives in `app.py` (`/assign/<month>`) and delegates to this module.
+
+### `seed_demo_data.py` - deterministic demo data seeding
+
+`seed_demo_data.py` populates the database with deterministic demo data (January through August, excluding June) for development or testing. It reads the namelist, generates synthetic lateness logs, and ingests them through the same `ingest_log` path the web UI uses. Run with `python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]`.
+
+### `templates/index.html` - main content panels
+
+The template renders the Find a Boarder search, Reports database, Punishments panel, and Boarders management panel. The month detail table renders canonical display names and typed values supplied by the server, starts in the server-defined Bed order, and supports display-only sorting without changing the data used for printing, downloading, or Punishment assignment.
+
+### `templates/layout.html` - base layout and tab navigation
+
+The base layout template renders the tab bar, pagination controls, flash messages, and the application chrome. All page routes render through this layout.
+
+### `templates/dashboard.html` - Statistics / House Dashboard
+
+The Statistics view displays house-wide analytics: a house-wide trend chart, Top Boarders ranking, repeat-offender watchlist, and a Points distribution histogram.
+
+### `templates/boarder.html` - individual boarder profile
+
+The boarder profile page shows a boarder's all-time record, Points trend chart, and all punishments. Reached by clicking a boarder name anywhere in the app or via Find a Boarder search.
+
+### `templates/macros.html` - shared Jinja macros
+
+Shared template macros (e.g. the Current/Former status badge) used across the other templates.
 
 ## Troubleshooting
 
