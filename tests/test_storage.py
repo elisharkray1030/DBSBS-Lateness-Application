@@ -847,3 +847,72 @@ class TestAssignPunishments:
         assert saved.submitted_at == "2026-04-09T09:00:00+00:00"
         assert saved.voided_at == "2026-04-10T09:00:00+00:00"
         assert saved.void_reason == "later exempted"
+
+
+class TestTransitionPunishment:
+    def _assign_one(self, conn, name="ALICE", points=7):
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[record(name, "101", 2, 5, points)],
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+        return storage.list_punishments(conn)[0]
+
+    def test_overdue_persists_status_and_timestamp(self, conn):
+        row = self._assign_one(conn)
+        storage.transition_punishment(conn, row.id, "overdue", timestamp="2026-04-10T09:00:00+00:00")
+
+        saved = storage.get_punishment(conn, row.id)
+        assert saved.status == "overdue"
+        assert saved.overdue_at == "2026-04-10T09:00:00+00:00"
+        assert saved.phone_held_at is None
+        assert saved.submitted_at is None
+        assert saved.voided_at is None
+
+    def test_phone_held_persists_status_and_timestamp(self, conn):
+        row = self._assign_one(conn)
+        storage.transition_punishment(conn, row.id, "phone_held", timestamp="2026-04-11T09:00:00+00:00")
+
+        saved = storage.get_punishment(conn, row.id)
+        assert saved.status == "phone_held"
+        assert saved.phone_held_at == "2026-04-11T09:00:00+00:00"
+        assert saved.overdue_at is None
+        assert saved.submitted_at is None
+        assert saved.voided_at is None
+
+    def test_submitted_persists_status_and_timestamp(self, conn):
+        row = self._assign_one(conn)
+        storage.transition_punishment(conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
+
+        saved = storage.get_punishment(conn, row.id)
+        assert saved.status == "submitted"
+        assert saved.submitted_at == "2026-04-09T09:00:00+00:00"
+        assert saved.overdue_at is None
+        assert saved.phone_held_at is None
+        assert saved.voided_at is None
+
+    def test_voided_persists_status_timestamp_and_reason(self, conn):
+        row = self._assign_one(conn)
+        storage.transition_punishment(
+            conn,
+            row.id,
+            "voided",
+            timestamp="2026-04-05T09:00:00+00:00",
+            void_reason="exempt",
+        )
+
+        saved = storage.get_punishment(conn, row.id)
+        assert saved.status == "voided"
+        assert saved.voided_at == "2026-04-05T09:00:00+00:00"
+        assert saved.void_reason == "exempt"
+
+    def test_void_without_reason_persists_null_reason(self, conn):
+        row = self._assign_one(conn)
+        storage.transition_punishment(conn, row.id, "voided", timestamp="2026-04-05T09:00:00+00:00")
+
+        saved = storage.get_punishment(conn, row.id)
+        assert saved.status == "voided"
+        assert saved.voided_at == "2026-04-05T09:00:00+00:00"
+        assert saved.void_reason is None
