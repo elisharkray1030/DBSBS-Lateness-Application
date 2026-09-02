@@ -916,3 +916,26 @@ class TestTransitionPunishment:
         assert saved.status == "voided"
         assert saved.voided_at == "2026-04-05T09:00:00+00:00"
         assert saved.void_reason is None
+
+    def test_unknown_status_raises_value_error(self, conn):
+        row = self._assign_one(conn)
+
+        with pytest.raises(ValueError):
+            storage.transition_punishment(conn, row.id, "escalated", timestamp="2026-04-05T09:00:00+00:00")
+
+        saved = storage.get_punishment(conn, row.id)
+        assert saved.status == "assigned"
+        assert saved.overdue_at is None
+        assert saved.phone_held_at is None
+        assert saved.submitted_at is None
+        assert saved.voided_at is None
+
+    def test_unknown_status_error_names_status_and_valid_set(self, conn):
+        row = self._assign_one(conn)
+
+        with pytest.raises(ValueError, match=r"escalated.*(overdue|phone_held|submitted|voided)") as excinfo:
+            storage.transition_punishment(conn, row.id, "escalated", timestamp="2026-04-05T09:00:00+00:00")
+
+        message = str(excinfo.value)
+        for valid in ("overdue", "phone_held", "submitted", "voided"):
+            assert valid in message
