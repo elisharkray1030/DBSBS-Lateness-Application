@@ -135,6 +135,16 @@ The web upload and the parser CLI run the exact same ingestion module, so the tw
 - For Docker, keep the database file in a mounted folder so reports and the boarder list survive container restarts.
 - Monthly uploads are consumed directly from the request stream and are never written to disk or stored permanently by the app.
 
+### Shared office-LAN deployment (each staff PC runs the app)
+
+The deployment is multi-writer against a **shared SQLite database on a NAS share**:
+
+- Every staff member runs the app on their own PC (`python -m flask --app app run`) with `DB_PATH` pointing at the NAS share, e.g. `\\NAS\share\lateness_history.db`. The NAS is storage only — it does not run the app.
+- **Single-writer rule is essential.** SQLite is only safe when one process writes to it. Concurrent writers over SMB cause `database is locked` errors and corruption risk. The app must apply the shared-NAS mitigations in #130 (busy_timeout, read-only GET connections, lock retry) before this layout is used. **Do not use this layout until those land.**
+- **Seed once.** `init_db()` seeds an empty boarders table on first start (app.py:78-89). With N machines starting against an empty shared DB, seeding races. Pre-seed once (start the app on a single machine against an empty DB, let it seed), then copy the resulting DB to the NAS. Only one person should perform the first start.
+- **Back up the NAS share.** Add a scheduled snapshot (NAS-side or `robocopy` from one machine). The DB is the archive of record.
+- **Trust boundary:** office LAN only, plain HTTP, no auth, no `Secure` cookies. Do not expose it off-campus.
+
 ## Development notes
 
 - Install dev dependencies (pytest, mypy, playwright) with `python -m pip install -r requirements-dev.txt`.
