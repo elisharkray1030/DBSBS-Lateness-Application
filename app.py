@@ -104,12 +104,14 @@ def _request_csrf_token() -> str:
 
 def _csrf_failure():
     """Rejects a mutation with a clear error, leaving the database untouched."""
-    if request.path.startswith("/api/"):
-        return jsonify({"ok": False, "error": _CSRF_ERROR}), 403
-    if request.path.startswith("/delete_month/"):
-        return jsonify({"error": _CSRF_ERROR}), 403
+    for prefix, payload in (
+        ("/api/", {"ok": False, "error": _CSRF_ERROR}),
+        ("/delete_month/", {"error": _CSRF_ERROR}),
+    ):
+        if request.path.startswith(prefix):
+            return jsonify(payload), 403
     flash(_CSRF_ERROR, "error")
-    return _CSRF_ERROR, 403
+    return render_template("403.html", **_page_context(error=_CSRF_ERROR)), 403
 
 
 def _resolve_setting(name: str, default: str) -> str:
@@ -363,10 +365,9 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     settings = {
         "DB_PATH": os.environ.get("DB_PATH", _DEFAULT_DB_PATH),
         "NAMELIST_PATH": os.environ.get("NAMELIST_PATH", _DEFAULT_NAMELIST_PATH),
+        **provided,
         "SECRET_KEY": secret,
     }
-    settings.update(config or {})
-    settings["SECRET_KEY"] = secret
     app.config.update(settings)
     # Sessions carry only transient flash feedback (no auth, no secrets).
     app.secret_key = app.config["SECRET_KEY"]

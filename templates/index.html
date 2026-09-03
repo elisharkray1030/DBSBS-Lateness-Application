@@ -572,7 +572,7 @@
 
     // Session CSRF token for fetch mutations (HTML forms carry it as a
     // hidden field). Read once per call so tests can rotate the meta tag.
-    function csrfToken() {
+    function fetchCsrfToken() {
         const tag = document.querySelector('meta[name="csrf-token"]');
         return tag ? tag.content : '';
     }
@@ -732,7 +732,7 @@
     function deleteMonthReport(month) {
         fetch(`/delete_month/${month}`, {
             method: 'DELETE',
-            headers: { 'X-CSRF-Token': csrfToken() }
+            headers: { 'X-CSRF-Token': fetchCsrfToken() }
         })
         .then(response => response.json())
         .then(data => {
@@ -872,7 +872,7 @@
         boarderSaveButton.textContent = 'Saving…';
         fetch('/api/boarders', {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': fetchCsrfToken() },
             body: JSON.stringify({ boarders: updates })
         })
         .then(response => response.json())
@@ -914,7 +914,7 @@
         removeButton.disabled = true;
         fetch(`/api/boarders/${id}`, {
             method: 'DELETE',
-            headers: { 'X-CSRF-Token': csrfToken() }
+            headers: { 'X-CSRF-Token': fetchCsrfToken() }
         })
         .then(response => response.json())
         .then(data => {

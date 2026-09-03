@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+
+{% block heading %}
+    <h1>Invalid request</h1>
+{% endblock %}
+
+{% block content %}
+    <div class="upload-panel">
+        <p>Your session token did not match, so nothing was changed. Please reload the page and try again.</p>
+        <p><a class="btn btn-primary" href="/">Back to dashboard</a></p>
+    </div>
+{% endblock %}

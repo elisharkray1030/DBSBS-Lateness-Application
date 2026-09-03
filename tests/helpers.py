@@ -101,15 +101,22 @@ def post_csrf(client, url, data=None, **kwargs):
     return client.post(url, data=payload, **kwargs)
 
 
+def _with_token_headers(client, extra=None):
+    """Merges the session CSRF header over any caller-provided headers."""
+    headers = dict(extra or {})
+    headers.setdefault("X-CSRF-Token", csrf_token(client))
+    return headers
+
+
 def patch_csrf(client, url, **kwargs):
     """PATCHes JSON with the session CSRF token as a custom header."""
-    headers = dict(kwargs.pop("headers", {}) or {})
-    headers.setdefault("X-CSRF-Token", csrf_token(client))
-    return client.patch(url, headers=headers, **kwargs)
+    return client.patch(
+        url, headers=_with_token_headers(client, kwargs.pop("headers", None)), **kwargs
+    )
 
 
 def delete_csrf(client, url, **kwargs):
     """DELETEs with the session CSRF token as a custom header."""
-    headers = dict(kwargs.pop("headers", {}) or {})
-    headers.setdefault("X-CSRF-Token", csrf_token(client))
-    return client.delete(url, headers=headers, **kwargs)
+    return client.delete(
+        url, headers=_with_token_headers(client, kwargs.pop("headers", None)), **kwargs
+    )

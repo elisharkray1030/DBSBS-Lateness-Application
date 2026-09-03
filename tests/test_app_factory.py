@@ -9,6 +9,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 import app as app_module
 import storage
 from records import Boarder
@@ -61,12 +63,8 @@ class TestFactoryConfig:
 
     def test_missing_secret_aborts_startup(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SECRET_KEY", raising=False)
-        try:
+        with pytest.raises(SystemExit, match="SECRET_KEY"):
             app_module.create_app({"DB_PATH": str(tmp_path / "x.db")})
-        except SystemExit as exc:
-            assert "SECRET_KEY" in str(exc)
-        else:
-            raise AssertionError("create_app should SystemExit without SECRET_KEY")
 
     def test_foreign_app_context_falls_back_to_default(self, monkeypatch):
         from flask import Flask
