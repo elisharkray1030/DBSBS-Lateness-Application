@@ -3,6 +3,7 @@ import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 from urllib.parse import quote, urlencode
 
@@ -75,8 +76,20 @@ TOP_BOARDERS_DEFAULT_LIMIT = 10
 NAS_BUSY_TIMEOUT_S = 30.0
 
 
-def connect() -> "closing[sqlite3.Connection]":
-    """Opens a file-backed history store connection for the current call site."""
+def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
+    """Opens a file-backed history store connection for the current call site.
+
+    Pure-read surfaces pass ``read_only=True`` so readers never contend for
+    the write lock on the shared-NAS database. The mixed import view, all
+    state-changing routes and startup init use the default read-write form.
+    """
+    if read_only and DB_PATH != ":memory:":
+        conn = sqlite3.connect(
+            Path(DB_PATH).as_uri() + "?mode=ro",
+            uri=True,
+            timeout=NAS_BUSY_TIMEOUT_S,
+        )
+        return closing(conn)
     conn = sqlite3.connect(DB_PATH, timeout=NAS_BUSY_TIMEOUT_S)
     conn.execute("PRAGMA journal_mode=DELETE")
     return closing(conn)
@@ -394,7 +407,7 @@ def import_boarders():
 
 @app.route('/boarders/export')
 def export_boarders():
-    with connect() as conn:
+    with connect(read_only=True) as conn:
         boarders = storage.list_boarders(conn)
     csv_text = master_list_to_csv(boarders)
     csv_bytes = io.BytesIO(csv_text.encode('utf-8'))
@@ -420,7 +433,7 @@ def _boarder_bed_taken(bed, exclude_id=None):
 def _render_boarders(error=None, message=None):
     boarders_view = 'all-time' if request.args.get('view') == 'all-time' else 'current'
     all_time_query = request.args.get('q', '').strip()
-    with connect() as conn:
+    with connect(read_only=True) as conn:
         boarders_list = storage.list_boarders(conn)
         all_months = storage.list_months(conn)
         punishment_months = _punishment_months(conn, all_months)
@@ -448,7 +461,7 @@ def _render_boarders(error=None, message=None):
 
 @app.route('/api/month/<path:month>')
 def api_month(month):
-    with connect() as conn:
+    with connect(read_only=True) as conn:
         boarders = storage.get_month_report(conn, month)
     if not boarders:
         return jsonify({'error': f'No report found for {month}.'}), 404
@@ -471,7 +484,7 @@ def api_month(month):
 
 @app.route('/download_month/<path:month>')
 def download_month(month):
-    with connect() as conn:
+    with connect(read_only=True) as conn:
         boarders = storage.get_month_report(conn, month)
     if not boarders:
         return f"Error: No report found for {month}.", 404
@@ -533,7 +546,7 @@ def consequences():
     show_all = request.args.get('show_all') == '1'
     month = request.args.get('month') or None
     status = request.args.get('status') or None
-    with connect() as conn:
+    with connect(read_only=True) as conn:
         punishments = list_consequences(conn, show_all=show_all, month=month, status=status)
         consequences_total = len(storage.list_punishments(conn, statuses=NON_VOIDED_STATUSES))
         all_months = storage.list_months(conn)
@@ -562,10 +575,10 @@ def consequences():
 def statistics():
     """Renders the House Dashboard: the Statistics tab's home.
 
-    Every figure derives live from stored data on each visit, so re-imports
+    Every figure derives live from stored data on each visit, so     re-imports
     and month deletions are reflected immediately.
     """
-    with connect() as conn:
+    with connect(read_only=True) as conn:
         trend = storage.house_trend(conn)
         stored_months = [summary.month for summary in storage.list_months(conn)]
 
@@ -632,7 +645,7 @@ def boarder_profile(key):
     identity = None
     series = []
     punishments = []
-    with connect() as conn:
+    with connect(read_only=True) as conn:
         if normalized:
             identity = storage.resolve_boarder_identity(conn, normalized)
             series = storage.get_boarder_series(conn, normalized)
