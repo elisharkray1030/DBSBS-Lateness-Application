@@ -5,7 +5,7 @@ import time
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from urllib.parse import quote, urlencode
 
 try:
@@ -82,11 +82,12 @@ def _resolve_setting(name: str, default: str) -> str:
     """Resolves one application setting for the current application.
 
     Inside an application or request context the active application's
-    config wins; outside one (ad-hoc tooling) the environment fallback
-    applies. Importing this module never touches the database.
+    config wins; a context without the key (or no context, for ad-hoc
+    tooling) falls back to the environment, then the built-in default.
+    Importing this module never touches the database.
     """
     try:
-        return str(current_app.config[name])
+        return str(current_app.config.get(name, os.environ.get(name, default)))
     except RuntimeError:
         return os.environ.get(name, default)
 
@@ -303,7 +304,7 @@ def build_csv_response(boarders, download_name):
     )
 
 
-def create_app(config: "dict | None" = None) -> Flask:
+def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     """Builds the Flask application without touching the database.
 
     Precedence per key: inline ``config`` mapping beats environment beats

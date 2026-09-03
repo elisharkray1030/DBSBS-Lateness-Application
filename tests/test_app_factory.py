@@ -57,6 +57,14 @@ class TestFactoryConfig:
         assert app.config["NAMELIST_PATH"] == "namelist.csv"
         assert app.secret_key == "dbs-lateness-dashboard-local"
 
+    def test_foreign_app_context_falls_back_to_default(self, monkeypatch):
+        from flask import Flask
+
+        monkeypatch.delenv("DB_PATH", raising=False)
+        foreign = Flask("foreign")
+        with foreign.app_context():
+            assert app_module._db_path() == "lateness_history.db"
+
     def test_two_applications_stay_isolated(self, tmp_path):
         first = tmp_path / "first.db"
         second = tmp_path / "second.db"

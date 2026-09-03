@@ -51,7 +51,13 @@ python -m pip install -r requirements.txt
 
 On Windows, `python3` may point to the Microsoft Store stub instead of a real interpreter. If that happens, use `py -3 -m pip install -r requirements.txt` instead.
 
-4. Start the app:
+4. Prepare the database (first start only; a safe no-op afterwards):
+
+```bash
+python -m flask --app app init-db
+```
+
+5. Start the app:
 
 ```bash
 python -m flask --app app run
@@ -59,13 +65,13 @@ python -m flask --app app run
 
 If you are using the Windows launcher, `py -3 -m flask --app app run` is also a safe option.
 
-On Windows, you can also run the bundled launcher script from the project root:
+On Windows, you can also run the bundled launcher script from the project root (it prepares the database, then starts the app):
 
 ```powershell
 ./start-windows.ps1
 ```
 
-5. Open `http://127.0.0.1:5000/` in your browser.
+6. Open `http://127.0.0.1:5000/` in your browser.
 
 ### Docker setup
 
@@ -131,7 +137,7 @@ The web upload and the parser CLI run the exact same ingestion module, so the tw
 ## Persistence and deployment notes
 
 - The app stores month summaries in SQLite using the path from `DB_PATH`.
-- The boarder master list is stored in the same SQLite database and managed through the Boarders tab; `namelist.csv` is read once at first startup to seed an empty boarders table.
+- The boarder master list is stored in the same SQLite database and managed through the Boarders tab; `namelist.csv` seeds an empty boarders table when `python -m flask --app app init-db` is run (once; later runs are a no-op).
 - For Docker, keep the database file in a mounted folder so reports and the boarder list survive container restarts.
 - Monthly uploads are consumed directly from the request stream and are never written to disk or stored permanently by the app.
 
@@ -139,9 +145,9 @@ The web upload and the parser CLI run the exact same ingestion module, so the tw
 
 The deployment is multi-writer against a **shared SQLite database on a NAS share**:
 
-- Every staff member runs the app on their own PC (`python -m flask --app app run`) with `DB_PATH` pointing at the NAS share, e.g. `\\NAS\share\lateness_history.db`. The NAS is storage only — it does not run the app.
+- Every staff member runs the app on their own PC (`python -m flask --app app run`) with `DB_PATH` pointing at the NAS share, e.g. `\\NAS\share\lateness_history.db`, prepared once beforehand with `python -m flask --app app init-db` against that share. The NAS is storage only — it does not run the app.
 - **Single-writer rule is essential.** SQLite is only safe when one process writes to it. Concurrent writers over SMB cause `database is locked` errors and corruption risk. The app must apply the shared-NAS mitigations in #130 (busy_timeout, read-only GET connections, lock retry) before this layout is used. **Do not use this layout until those land.**
-- **Seed once.** `init_db()` seeds an empty boarders table on first start (app.py:78-89). With N machines starting against an empty shared DB, seeding races. Pre-seed once (start the app on a single machine against an empty DB, let it seed), then copy the resulting DB to the NAS. Only one person should perform the first start.
+- **Seed once.** Run `python -m flask --app app init-db` on a single machine against the empty shared DB to seed the boarders table, then start the app normally on every PC. Only one person should perform the seeding.
 - **Back up the NAS share.** Add a scheduled snapshot (NAS-side or `robocopy` from one machine). The DB is the archive of record.
 - **Trust boundary:** office LAN only, plain HTTP, no auth, no `Secure` cookies. Do not expose it off-campus.
 
