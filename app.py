@@ -68,9 +68,18 @@ WATCHLIST_MIN_STREAK_MONTHS = 3
 TOP_BOARDERS_DEFAULT_LIMIT = 10
 
 
+# Shared office-LAN deployment: every staff PC runs against one NAS-hosted
+# database file, so every connection waits on locks instead of failing
+# instantly. WAL stays off — its shared-memory sidecar is unreliable across
+# hosts on SMB — so the default rollback journal is retained deliberately.
+NAS_BUSY_TIMEOUT_S = 30.0
+
+
 def connect() -> "closing[sqlite3.Connection]":
     """Opens a file-backed history store connection for the current call site."""
-    return closing(sqlite3.connect(DB_PATH))
+    conn = sqlite3.connect(DB_PATH, timeout=NAS_BUSY_TIMEOUT_S)
+    conn.execute("PRAGMA journal_mode=DELETE")
+    return closing(conn)
 
 
 SEED_FLAG = "boarders_seeded"
