@@ -41,7 +41,7 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 
 ### Local Python setup
 
-1. Install Python 3.9+.
+1. Install Python 3.11+.
 2. Open a terminal in the project folder.
 3. Install dependencies in the Python environment you will use to run the app:
 
@@ -147,9 +147,10 @@ The deployment is multi-writer against a **shared SQLite database on a NAS share
 
 ## Development notes
 
+- Install Python 3.11+ (CI tests 3.11 and 3.12; Docker uses 3.12-slim).
 - Install dev dependencies (pytest, mypy, playwright) with `python -m pip install -r requirements-dev.txt`.
-- Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium and skip automatically when it is unavailable).
-- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py` for typechecking.
+- Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium — `python -m playwright install chromium` — and skip automatically when it is unavailable).
+- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py` for typechecking (config in `pyproject.toml`; CI runs both pytest and mypy on push/PR).
 - Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.
 - Lateness frequency, total minutes late, and total points are computed once in the ingestion module and carried on the typed boarder record; the month view, the download, and the CSV export all use that one definition.

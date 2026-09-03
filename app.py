@@ -3,6 +3,7 @@ import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime
+from typing import cast
 from urllib.parse import quote, urlencode
 
 try:
@@ -67,7 +68,7 @@ WATCHLIST_MIN_STREAK_MONTHS = 3
 TOP_BOARDERS_DEFAULT_LIMIT = 10
 
 
-def connect():
+def connect() -> "closing[sqlite3.Connection]":
     """Opens a file-backed history store connection for the current call site."""
     return closing(sqlite3.connect(DB_PATH))
 
@@ -75,7 +76,7 @@ def connect():
 SEED_FLAG = "boarders_seeded"
 
 
-def init_db():
+def init_db() -> None:
     with connect() as conn:
         storage.create_schema(conn)
         if storage.get_meta(conn, SEED_FLAG) is not None:
@@ -142,11 +143,16 @@ def _page_context(selected_tab: str = '', message: str | None = None,
     return context
 
 
-def _consume_flashes():
+def _consume_flashes() -> tuple[str | None, str | None]:
     """Returns (message, error) from one-shot session flash feedback."""
-    message = None
-    error = None
-    for category, text in get_flashed_messages(with_categories=True):
+    message: str | None = None
+    error: str | None = None
+    # Flask guarantees (category, text) pairs when with_categories=True;
+    # the stubs type the result loosely, so the cast records that contract.
+    flashes = cast(
+        "list[tuple[str, str]]", get_flashed_messages(with_categories=True)
+    )
+    for category, text in flashes:
         if category == "error":
             error = text
         else:
@@ -561,7 +567,7 @@ def statistics():
             conn, month=top_month or None, limit=TOP_BOARDERS_DEFAULT_LIMIT
         )
 
-        distribution_month = request.args.get('distribution_month', '')
+        distribution_month: str | None = request.args.get('distribution_month', '')
         if distribution_month not in stored_months:
             distribution_month = stored_months[0] if stored_months else None
         distribution = (
