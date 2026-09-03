@@ -27,8 +27,9 @@ os.close(_db_fd)
 # lateness_history.db — which is also why CI (fresh clone, no private
 # artifacts) went red. The Master List path points at a guaranteed-missing
 # file so init_db never seeds real Boarders here; Master List tests use
-# fresh_client instead. The context stays pushed for the session so direct
-# app_module.connect() calls in module-scoped setup resolve here.
+# fresh_client instead. Setup runs inside a bounded context that is popped
+# before any test runs; the autouse fixture below re-pushes it per test so
+# direct app_module.connect() calls resolve to this database.
 _module_app = app_module.create_app(
     {
         "DB_PATH": _db_path,
@@ -36,20 +37,33 @@ _module_app = app_module.create_app(
         "TESTING": True,
     }
 )
-_module_ctx = _module_app.app_context()
-_module_ctx.push()
-app_module.init_db()
-with app_module.connect() as _seed_conn:
-    storage.save_month(
-        _seed_conn,
-        [
-            record("ALICE", "101", frequency=2, total_minutes=5, total_points=7),
-            record("BOB", "102", frequency=4, total_minutes=8, total_points=12),
-        ],
-        "2026-03",
-    )
+with _module_app.app_context():
+    app_module.init_db()
+    with app_module.connect() as _seed_conn:
+        storage.save_month(
+            _seed_conn,
+            [
+                record("ALICE", "101", frequency=2, total_minutes=5, total_points=7),
+                record("BOB", "102", frequency=4, total_minutes=8, total_points=12),
+            ],
+            "2026-03",
+        )
 
 client = _module_app.test_client()
+
+
+@pytest.fixture(autouse=True)
+def _module_app_context():
+    """Pushes the module application's context for each test in this module.
+
+    Route tests through the module-level client run inside their request
+    contexts already; this covers the direct app_module.connect() calls in
+    the punishment-route test classes. Fixture-built clients (fresh_client
+    and friends) push their own contexts on top, so they keep resolving to
+    their own databases.
+    """
+    with _module_app.app_context():
+        yield
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -59,8 +73,9 @@ def _cleanup_temp_db():
         os.unlink(_db_path)
 
 
-def home_html():
-    response = client.get("/")
+def home_html(test_client=None):
+    """Renders home through the module client, or a given test client."""
+    response = (test_client or client).get("/")
     assert response.status_code == 200
     return response.get_data(as_text=True)
 
@@ -1951,7 +1966,7 @@ class TestAccessibilityPolish:
 
     def test_data_table_headers_carry_scope(self, fresh_client):
         self._seed_punishments(fresh_client)
-        home = fresh_client.get("/").get_data(as_text=True)
+        home = home_html(fresh_client)
         for table_id in ("boarders-table", "month-detail-table"):
             table = re.search(rf'<table[^>]*id="{table_id}".*?</table>', home, re.S)
             assert table is not None
