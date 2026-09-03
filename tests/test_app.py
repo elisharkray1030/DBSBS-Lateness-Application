@@ -18,6 +18,29 @@ _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
 os.environ["DB_PATH"] = _db_path
 
+# The module-level client must never touch the developer's real database.
+# os.environ above lands too late (app reads DB_PATH at import), and several
+# tests below call app_module.connect() directly, so rebind the module global
+# explicitly. Seed one synthetic month: without any month the home page
+# renders its empty state (index.html `{% if all_months %}`), leaving every
+# report-row assertion to depend on whatever months happen to sit in the
+# gitignored lateness_history.db — which is also why CI (fresh clone, no
+# private artifacts) went red. The Master List path points at a
+# guaranteed-missing file so init_db never seeds real Boarders here; Master
+# List tests use fresh_client instead.
+app_module.DB_PATH = _db_path
+app_module.NAMELIST_PATH = _db_path + ".namelist-missing.csv"
+app_module.init_db()
+with app_module.connect() as _seed_conn:
+    storage.save_month(
+        _seed_conn,
+        [
+            record("ALICE", "101", frequency=2, total_minutes=5, total_points=7),
+            record("BOB", "102", frequency=4, total_minutes=8, total_points=12),
+        ],
+        "2026-03",
+    )
+
 client = app_module.app.test_client()
 
 

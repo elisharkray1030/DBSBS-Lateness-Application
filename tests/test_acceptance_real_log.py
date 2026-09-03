@@ -21,6 +21,14 @@ MASTER_LIST_PATH = REPO_ROOT / "namelist.csv"
 MONTHLY_LOG_PATH = REPO_ROOT / "data" / "raw" / "Test Monthly Log (Month) .csv"
 TARGET_BED = "607B"
 
+# Both artifacts are real Boarder data, gitignored for privacy (see .gitignore:
+# /namelist.csv, data/raw/). They exist on staff dev machines but never on CI,
+# so skip there — same conditional-skip pattern as the Playwright browser seam.
+pytestmark = pytest.mark.skipif(
+    not MASTER_LIST_PATH.exists() or not MONTHLY_LOG_PATH.exists(),
+    reason="needs private real-data artifacts (gitignored, absent on CI)",
+)
+
 
 @pytest.fixture(scope="module")
 def real_outcome():
