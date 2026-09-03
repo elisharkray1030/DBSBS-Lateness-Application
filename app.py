@@ -1,6 +1,7 @@
 import io
 import os
 import sqlite3
+import time
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
@@ -96,6 +97,51 @@ def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
 
 
 SEED_FLAG = "boarders_seeded"
+
+
+# Bounded mutation retry for the shared office-LAN deployment: a second
+# writer's momentary contention surfaces as an instantly-raised locked error
+# despite the lock-wait, so each mutation re-runs its whole block (fresh
+# connection per attempt) a few times with backoff. Reads stay out of this —
+# they rely on the lock-wait alone.
+RETRY_ATTEMPTS = 3
+RETRY_DELAYS_S = (0.1, 0.2)
+_LOCKED_MARKER = "database is locked"
+
+
+class DatabaseBusy(Exception):
+    """Sustained lock contention on a named staff action."""
+
+    def __init__(self, action: str):
+        super().__init__(action)
+        self.action = action
+
+
+def busy_message(action: str) -> str:
+    """Words the sustained-contention error for a staff action."""
+    return (
+        f"Error: Could not {action} — the database is busy. "
+        "Nothing was changed; please try again."
+    )
+
+
+def with_lock_retry(action: str, work):
+    """Runs ``work`` while it fails with the locked-database signal.
+
+    Each attempt re-runs the whole block on a fresh connection; ``work`` is
+    a zero-argument callable so ``return`` statements inside the block behave
+    normally. Sustained contention raises :class:`DatabaseBusy`.
+    """
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            return work()
+        except sqlite3.OperationalError as exc:
+            locked = _LOCKED_MARKER in str(exc).lower()
+            if not locked or attempt == RETRY_ATTEMPTS - 1:
+                if locked:
+                    raise DatabaseBusy(action) from exc
+                raise
+            time.sleep(RETRY_DELAYS_S[attempt])
 
 
 def init_db() -> None:
@@ -247,20 +293,34 @@ def home():
             elif not month_label:
                 error = "Please enter a valid month label for this report. Example: '2026-03'."
             else:
-                with connect() as conn:
-                    master_list = storage.boarder_master_list(conn)
-                    log_stream = io.TextIOWrapper(file.stream, encoding='utf-8-sig')
+                # Buffer the upload before retrying: each attempt re-reads
+                # these bytes on a fresh connection.
+                payload = file.read()
+
+                def attempt():
+                    log_stream = io.TextIOWrapper(io.BytesIO(payload), encoding='utf-8-sig')
                     try:
-                        outcome = ingest_log(log_stream, month_label, master_list, conn)
+                        with connect() as conn:
+                            master_list = storage.boarder_master_list(conn)
+                            outcome = ingest_log(log_stream, month_label, master_list, conn)
                     finally:
                         log_stream.detach()
 
                     if isinstance(outcome, RejectedOutcome):
-                        error = f"Error: {outcome.reason}"
+                        return f"Error: {outcome.reason}"
+                    flash(outcome.message, "success")
+                    query = urlencode({"month": month_label})
+                    return redirect(f"/?{query}")
+
+                try:
+                    result = with_lock_retry("import the Monthly Log", attempt)
+                except DatabaseBusy as exc:
+                    error = busy_message(exc.action)
+                else:
+                    if isinstance(result, str):
+                        error = result
                     else:
-                        flash(outcome.message, "success")
-                        query = urlencode({"month": month_label})
-                        return redirect(f"/?{query}")
+                        return result
 
     # Find-a-Boarder search submits as a native GET form; every search
     # renders its results (or the neutral no-matches empty state) directly.
@@ -325,12 +385,19 @@ def _validate_boarder(display_name, bed, exclude_id=None):
 def add_boarder():
     display_name = request.form.get('name', '').strip()
     bed = request.form.get('bed', '').strip()
-    error = _validate_boarder(display_name, bed)
-    if error:
-        return _render_boarders(error=error)
-    with connect() as conn:
-        storage.add_boarder(conn, normalize_name(display_name), display_name, bed)
-    return redirect('/boarders')
+
+    def attempt():
+        error = _validate_boarder(display_name, bed)
+        if error:
+            return _render_boarders(error=error)
+        with connect() as conn:
+            storage.add_boarder(conn, normalize_name(display_name), display_name, bed)
+        return redirect('/boarders')
+
+    try:
+        return with_lock_retry("add the boarder", attempt)
+    except DatabaseBusy as exc:
+        return _render_boarders(error=busy_message(exc.action))
 
 
 @app.route('/api/boarders/<int:boarder_id>', methods=['PATCH'])
@@ -338,12 +405,19 @@ def api_edit_boarder(boarder_id):
     data = request.get_json(silent=True) or {}
     display_name = str(data.get('name', '')).strip()
     bed = str(data.get('bed', '')).strip()
-    error = _validate_boarder(display_name, bed, exclude_id=boarder_id)
-    if error:
-        return jsonify({'ok': False, 'error': error}), 400
-    with connect() as conn:
-        storage.update_boarder(conn, boarder_id, normalize_name(display_name), display_name, bed)
-    return jsonify({'ok': True})
+
+    def attempt():
+        error = _validate_boarder(display_name, bed, exclude_id=boarder_id)
+        if error:
+            return jsonify({'ok': False, 'error': error}), 400
+        with connect() as conn:
+            storage.update_boarder(conn, boarder_id, normalize_name(display_name), display_name, bed)
+        return jsonify({'ok': True})
+
+    try:
+        return with_lock_retry("update the boarder", attempt)
+    except DatabaseBusy as exc:
+        return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
 @app.route('/api/boarders', methods=['PATCH'])
@@ -370,19 +444,31 @@ def api_edit_boarders():
         bed = bed.strip()
         updates.append((boarder_id, normalize_name(display_name), display_name, bed))
 
+    def attempt():
+        try:
+            with connect() as conn:
+                storage.update_boarders(conn, updates)
+        except ValueError as exc:
+            return jsonify({'ok': False, 'error': f'Error: {exc}'}), 400
+        return jsonify({'ok': True})
+
     try:
-        with connect() as conn:
-            storage.update_boarders(conn, updates)
-    except ValueError as exc:
-        return jsonify({'ok': False, 'error': f'Error: {exc}'}), 400
-    return jsonify({'ok': True})
+        return with_lock_retry("update the Master List", attempt)
+    except DatabaseBusy as exc:
+        return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
 @app.route('/api/boarders/<int:boarder_id>', methods=['DELETE'])
 def api_delete_boarder(boarder_id):
-    with connect() as conn:
-        storage.delete_boarder(conn, boarder_id)
-    return jsonify({'ok': True})
+    def attempt():
+        with connect() as conn:
+            storage.delete_boarder(conn, boarder_id)
+        return jsonify({'ok': True})
+
+    try:
+        return with_lock_retry("remove the boarder", attempt)
+    except DatabaseBusy as exc:
+        return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
 @app.route('/boarders/import', methods=['POST'])
@@ -390,19 +476,28 @@ def import_boarders():
     file = request.files.get('boarder_csv')
     if not file or file.filename == '':
         return _render_boarders(error="Error: No CSV file selected.")
+    # Buffer the upload before retrying: each attempt re-reads these bytes on
+    # a fresh connection, since the request stream is single-shot.
+    payload = file.read()
 
-    with connect() as conn:
-        log_stream = io.TextIOWrapper(file.stream, encoding='utf-8-sig')
-        try:
-            rows = parse_namelist_stream(log_stream)
-        finally:
-            log_stream.detach()
+    def attempt():
+        with connect() as conn:
+            log_stream = io.TextIOWrapper(io.BytesIO(payload), encoding='utf-8-sig')
+            try:
+                rows = parse_namelist_stream(log_stream)
+            finally:
+                log_stream.detach()
 
-        try:
-            storage.replace_boarders(conn, rows)
-        except ValueError as exc:
-            return _render_boarders(error=f"Error: {exc}")
-    return redirect('/boarders')
+            try:
+                storage.replace_boarders(conn, rows)
+            except ValueError as exc:
+                return _render_boarders(error=f"Error: {exc}")
+        return redirect('/boarders')
+
+    try:
+        return with_lock_retry("import the Master List", attempt)
+    except DatabaseBusy as exc:
+        return _render_boarders(error=busy_message(exc.action))
 
 
 @app.route('/boarders/export')
@@ -495,13 +590,19 @@ def download_month(month):
 
 @app.route('/delete_month/<path:month>', methods=['DELETE'])
 def delete_month(month):
-    with connect() as conn:
-        deleted_count = storage.delete_month(conn, month)
+    def attempt():
+        with connect() as conn:
+            deleted_count = storage.delete_month(conn, month)
 
-    if deleted_count == 0:
-        return jsonify({'error': f'No report found for {month}.'}), 404
+        if deleted_count == 0:
+            return jsonify({'error': f'No report found for {month}.'}), 404
 
-    return jsonify({'success': True, 'deleted': deleted_count})
+        return jsonify({'success': True, 'deleted': deleted_count})
+
+    try:
+        return with_lock_retry("delete the month's report", attempt)
+    except DatabaseBusy as exc:
+        return jsonify({'error': busy_message(exc.action)}), 503
 
 
 @app.route('/assign/<path:month>', methods=['POST'])
@@ -514,31 +615,39 @@ def assign_month(month):
     # Positive consent: each checked box means "assign a punishment to this
     # boarder"; every eligible boarder not checked is exempted.
     selected = set(request.form.getlist('assign'))
-    with connect() as conn:
-        boarders = storage.get_month_report(conn, month)
-        if not boarders:
-            return f"Error: No report found for {month}.", 404
 
-        exemptions = {
-            boarder.name
-            for boarder in boarders
-            if boarder.total_points > 0 and boarder.name not in selected
-        }
-        outcome = assign_batch(
-            conn,
-            month=month,
-            boarders=boarders,
-            exemptions=exemptions,
-            deadline=deadline,
-        )
+    def attempt():
+        with connect() as conn:
+            boarders = storage.get_month_report(conn, month)
+            if not boarders:
+                return f"Error: No report found for {month}.", 404
 
-    if isinstance(outcome, AssignmentRejected):
-        flash(f"Error: {outcome.reason}", "error")
+            exemptions = {
+                boarder.name
+                for boarder in boarders
+                if boarder.total_points > 0 and boarder.name not in selected
+            }
+            outcome = assign_batch(
+                conn,
+                month=month,
+                boarders=boarders,
+                exemptions=exemptions,
+                deadline=deadline,
+            )
+
+        if isinstance(outcome, AssignmentRejected):
+            flash(f"Error: {outcome.reason}", "error")
+            return _consequences_redirect()
+
+        flash(outcome.message, "success")
+        query = urlencode({'month': month})
+        return redirect(f"/?{query}")
+
+    try:
+        return with_lock_retry("assign punishments", attempt)
+    except DatabaseBusy as exc:
+        flash(busy_message(exc.action), "error")
         return _consequences_redirect()
-
-    flash(outcome.message, "success")
-    query = urlencode({'month': month})
-    return redirect(f"/?{query}")
 
 
 @app.route('/consequences')
@@ -691,20 +800,27 @@ def transition_punishment(punishment_id):
     target = request.form.get('to', '').strip()
     void_reason = request.form.get('void_reason', '').strip() or None
 
-    with connect() as conn:
-        outcome = transition(
-            conn,
-            punishment_id=punishment_id,
-            target=target,
-            void_reason=void_reason,
-        )
+    def attempt():
+        with connect() as conn:
+            outcome = transition(
+                conn,
+                punishment_id=punishment_id,
+                target=target,
+                void_reason=void_reason,
+            )
 
-    if isinstance(outcome, TransitionRejected):
-        flash(f"Error: {outcome.reason}", "error")
-    else:
-        flash(outcome.message, "success")
+        if isinstance(outcome, TransitionRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            flash(outcome.message, "success")
 
-    return _consequences_redirect()
+        return _consequences_redirect()
+
+    try:
+        return with_lock_retry("update the punishment", attempt)
+    except DatabaseBusy as exc:
+        flash(busy_message(exc.action), "error")
+        return _consequences_redirect()
 
 
 if __name__ == '__main__':
