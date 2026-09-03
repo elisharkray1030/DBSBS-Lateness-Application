@@ -83,3 +83,33 @@ def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10"
         assigned_at=assigned_at,
     )
     return storage.list_punishments(conn)
+
+
+def csrf_token(client):
+    """Returns the session CSRF token, seeding the session with a GET first."""
+    client.get("/")
+    with client.session_transaction() as sess:
+        token = sess.get("csrf_token")
+    assert token, "no CSRF token in session"
+    return token
+
+
+def post_csrf(client, url, data=None, **kwargs):
+    """POSTs a form with the session CSRF token injected."""
+    payload = dict(data or {})
+    payload.setdefault("csrf_token", csrf_token(client))
+    return client.post(url, data=payload, **kwargs)
+
+
+def patch_csrf(client, url, **kwargs):
+    """PATCHes JSON with the session CSRF token as a custom header."""
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.setdefault("X-CSRF-Token", csrf_token(client))
+    return client.patch(url, headers=headers, **kwargs)
+
+
+def delete_csrf(client, url, **kwargs):
+    """DELETEs with the session CSRF token as a custom header."""
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.setdefault("X-CSRF-Token", csrf_token(client))
+    return client.delete(url, headers=headers, **kwargs)

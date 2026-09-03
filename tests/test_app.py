@@ -8,7 +8,16 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import pytest
-from helpers import history_panel_html, month_row, open_month_detail, record, seed_punishments
+from helpers import (
+    delete_csrf,
+    history_panel_html,
+    month_row,
+    open_month_detail,
+    patch_csrf,
+    post_csrf,
+    record,
+    seed_punishments,
+)
 from records import Boarder
 
 import app as app_module
@@ -34,6 +43,7 @@ _module_app = app_module.create_app(
     {
         "DB_PATH": _db_path,
         "NAMELIST_PATH": _db_path + ".namelist-missing.csv",
+        "SECRET_KEY": "test-secret-key",
         "TESTING": True,
     }
 )
@@ -198,7 +208,7 @@ class TestImportMonthPicker:
             "report_month": "March 2026",
             "log_file": (io.BytesIO(b"Name,Transaction Time\nALICE,07:42\n"), "log.csv"),
         }
-        response = client.post("/", data=data, content_type="multipart/form-data")
+        response = post_csrf(client, "/", data=data, content_type="multipart/form-data")
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
@@ -380,7 +390,7 @@ class TestImportUsesDbBoarders:
                 conn,
                 [Boarder("ALICE", "Alice", "601A"), Boarder("GHOST", "Ghost", "999")],
             )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -396,7 +406,7 @@ class TestImportUsesDbBoarders:
     def test_import_does_not_match_csv_only_boarder(self, fresh_client):
         with app_module.connect() as conn:
             storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -411,32 +421,32 @@ class TestImportUsesDbBoarders:
 
 class TestBoarderAdd:
     def test_add_boarder_appears_in_list(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": "601C"})
         assert resp.status_code == 302
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert "Carol" in html
         assert "601C" in html
 
     def test_add_empty_name_is_rejected_inline(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "", "bed": "601C"})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "", "bed": "601C"})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "name is required" in html.lower()
 
     def test_add_empty_bed_is_rejected_inline(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": ""})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": ""})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "bed is required" in html.lower()
 
     def test_add_duplicate_name_is_rejected_inline(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "alice", "bed": "601C"})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "alice", "bed": "601C"})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "already" in html.lower()
 
     def test_add_duplicate_bed_is_rejected_inline(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601A"})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": "601A"})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "601A" in html
@@ -456,7 +466,7 @@ class TestBoarderEditApi:
 
     def test_patch_updates_name_and_bed(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "602A"}
         )
         assert resp.status_code == 200
@@ -467,9 +477,9 @@ class TestBoarderEditApi:
         assert "ALICE" not in html
 
     def test_patch_rejects_name_taken_by_another(self, fresh_client):
-        fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
+        post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": "601C"})
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "carol", "bed": "601A"}
         )
         assert resp.status_code == 400
@@ -478,9 +488,9 @@ class TestBoarderEditApi:
         assert self._boarder(fresh_client, "ALICE").bed == "601A"
 
     def test_patch_rejects_bed_taken_by_another(self, fresh_client):
-        fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
+        post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": "601C"})
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alice", "bed": "601C"}
         )
         assert resp.status_code == 400
@@ -490,7 +500,7 @@ class TestBoarderEditApi:
 
     def test_patch_keeping_own_bed_is_not_a_conflict(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "601A"}
         )
         assert resp.status_code == 200
@@ -498,7 +508,7 @@ class TestBoarderEditApi:
 
     def test_patch_rejects_empty_name(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "", "bed": "601A"}
         )
         assert resp.status_code == 400
@@ -509,7 +519,7 @@ class TestBoarderEditApi:
 
     def test_patch_rejects_empty_bed(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alice", "bed": ""}
         )
         assert resp.status_code == 400
@@ -523,7 +533,7 @@ class TestBoarderEditApi:
             boarders = storage.list_boarders(conn)
         by_name = {boarder.normalized_name: boarder for boarder in boarders}
 
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             "/api/boarders",
             json={
                 "boarders": [
@@ -547,7 +557,7 @@ class TestBoarderEditApi:
             boarders = storage.list_boarders(conn)
         by_name = {boarder.normalized_name: boarder for boarder in boarders}
 
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             "/api/boarders",
             json={
                 "boarders": [
@@ -574,7 +584,7 @@ class TestBoarderDeleteApi:
 
     def test_delete_removes_from_list(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.delete(f"/api/boarders/{boarder_id}")
+        resp = delete_csrf(fresh_client, f"/api/boarders/{boarder_id}")
         assert resp.status_code == 200
         assert resp.get_json() == {"ok": True}
         html = fresh_client.get("/boarders").get_data(as_text=True)
@@ -585,7 +595,7 @@ class TestBoarderDeleteApi:
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
             seed_punishments(conn, boarders=[record("ALICE", "601A", 2, 5, 7)])
-        resp = fresh_client.delete(f"/api/boarders/{boarder_id}")
+        resp = delete_csrf(fresh_client, f"/api/boarders/{boarder_id}")
         assert resp.status_code == 200
         with app_module.connect() as conn:
             saved = storage.get_month_report(conn, "2026-03")
@@ -596,7 +606,7 @@ class TestBoarderDeleteApi:
         assert puns[0].display_name == "Alice"
 
     def test_delete_unknown_boarder_is_noop(self, fresh_client):
-        resp = fresh_client.delete("/api/boarders/999")
+        resp = delete_csrf(fresh_client, "/api/boarders/999")
         assert resp.status_code == 200
         with app_module.connect() as conn:
             assert len(storage.list_boarders(conn)) == 2
@@ -604,10 +614,10 @@ class TestBoarderDeleteApi:
     def test_import_matches_after_edit(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
-        fresh_client.patch(
+        patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "602A"}
         )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -625,7 +635,7 @@ class TestRemovedPostRoutes:
     def test_old_edit_post_route_404s(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             f"/boarders/{boarder_id}/edit", data={"name": "Alicia", "bed": "602A"}
         )
         assert resp.status_code == 404
@@ -633,13 +643,13 @@ class TestRemovedPostRoutes:
     def test_old_delete_post_route_404s(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
-        resp = fresh_client.post(f"/boarders/{boarder_id}/delete")
+        resp = post_csrf(fresh_client, f"/boarders/{boarder_id}/delete")
         assert resp.status_code == 404
 
 
 class TestBoarderBulkImport:
     def test_import_csv_replaces_roster(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "roster.csv"),
@@ -653,7 +663,7 @@ class TestBoarderBulkImport:
         assert "ALICE" not in html
 
     def test_import_empty_csv_replaces_roster_with_empty(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
@@ -665,7 +675,7 @@ class TestBoarderBulkImport:
             assert storage.list_boarders(conn) == []
 
     def test_import_all_skipped_rows_replaces_roster_with_empty(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n,bad\nNoBed,\n"), "skipped.csv"),
@@ -677,7 +687,7 @@ class TestBoarderBulkImport:
             assert storage.list_boarders(conn) == []
 
     def test_import_exact_duplicate_names_collapse_last_wins(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (
@@ -693,7 +703,7 @@ class TestBoarderBulkImport:
         assert [(b.display_name, b.bed) for b in boarders] == [("Carol", "602C")]
 
     def test_import_case_variant_duplicate_names_collapse_last_wins(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (
@@ -709,13 +719,13 @@ class TestBoarderBulkImport:
         assert [(b.display_name, b.bed) for b in boarders] == [("carol", "602C")]
 
     def test_import_rejects_missing_file(self, fresh_client):
-        resp = fresh_client.post("/boarders/import", data={})
+        resp = post_csrf(fresh_client, "/boarders/import", data={})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "file" in html.lower()
 
     def test_empty_roster_empty_state_points_at_tab(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
@@ -727,7 +737,7 @@ class TestBoarderBulkImport:
         assert "namelist.csv" not in html
 
     def test_empty_roster_empty_state_names_the_master_list(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
@@ -740,14 +750,14 @@ class TestBoarderBulkImport:
         assert "Add a boarder here, or import a CSV to replace it." in html
 
     def test_empty_roster_rejects_monthly_log_import(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
             },
             content_type="multipart/form-data",
         )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -760,14 +770,14 @@ class TestBoarderBulkImport:
         assert "master list is missing or empty" in html
 
     def test_import_roster_used_by_ingestion(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nZed,999\n"), "roster.csv"),
             },
             content_type="multipart/form-data",
         )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -783,7 +793,7 @@ class TestBoarderBulkImport:
 
 class TestBoarderBulkImportDuplicateBed:
     def test_duplicate_bed_import_shows_inline_error_and_keeps_roster(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601A\nDana,601A\n"), "roster.csv"),
@@ -803,7 +813,7 @@ class TestBoarderBulkImportDuplicateBed:
         ]
 
     def test_duplicate_bed_import_does_not_partially_replace(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (
@@ -823,14 +833,14 @@ class TestBoarderBulkImportDuplicateBed:
         ]
 
     def test_duplicate_bed_import_after_prior_import_keeps_prior_roster(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "roster.csv"),
             },
             content_type="multipart/form-data",
         )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nZed,601C\nWye,601C\n"), "roster.csv"),
@@ -847,7 +857,7 @@ class TestBoarderBulkImportDuplicateBed:
         ]
 
     def test_import_matching_existing_bed_is_still_valid(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601A\n"), "roster.csv"),
@@ -873,7 +883,7 @@ class TestBoarderExport:
         assert ["BOB", "601B"] in rows
 
     def test_export_matches_import_roundtrip(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\n"), "roster.csv"),
@@ -891,7 +901,7 @@ LOG_CSV = "Name,Transaction Time\nALICE,07:45\n"
 
 class TestImportPostRedirectGet:
     def _import(self, client, month="2026-07", body=LOG_CSV, filename="log.csv"):
-        return client.post(
+        return post_csrf(client, 
             "/",
             data={
                 "report_month": month,
@@ -1305,7 +1315,7 @@ class TestAssignRoute:
             )
 
     def test_assign_creates_punishments_for_late_boarders(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
         )
@@ -1316,7 +1326,7 @@ class TestAssignRoute:
             assert {r.normalized_name for r in rows} == {"ALICE", "BOB"}
 
     def test_unchecked_boarders_are_not_assigned(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE"]},
         )
@@ -1327,7 +1337,7 @@ class TestAssignRoute:
             assert {r.normalized_name for r in rows} == {"ALICE"}
 
     def test_checked_boarders_are_assigned(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
         )
@@ -1338,7 +1348,7 @@ class TestAssignRoute:
             assert {r.normalized_name for r in rows} == {"ALICE", "BOB"}
 
     def test_confirmation_names_boarders_by_display_name(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE"]},
             follow_redirects=True,
@@ -1349,7 +1359,7 @@ class TestAssignRoute:
         assert "ALICE" not in html
 
     def test_missing_deadline_redirects_to_consequences_with_error(self):
-        response = client.post("/assign/2026-03", data={})
+        response = post_csrf(client, "/assign/2026-03", data={})
 
         assert response.status_code == 302
         assert response.headers["Location"].endswith("/consequences")
@@ -1359,7 +1369,7 @@ class TestAssignRoute:
         assert "deadline" in html.lower()
 
     def test_rejected_assignment_preserves_consequences_filters(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={
                 "deadline": "",
@@ -1377,7 +1387,7 @@ class TestAssignRoute:
         assert "show_all=1" in location
 
     def test_assign_redirect_shows_message_and_opens_month(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
             follow_redirects=True,
@@ -1389,13 +1399,13 @@ class TestAssignRoute:
         assert "report_month" in html
 
     def test_assign_success_url_carries_no_message_payload(self):
-        response = client.post("/assign/2026-03", data={"deadline": "2026-04-10"})
+        response = post_csrf(client, "/assign/2026-03", data={"deadline": "2026-04-10"})
 
         assert response.status_code == 302
         assert "message=" not in response.headers["Location"]
 
     def test_month_with_no_report_is_an_error(self):
-        response = client.post("/assign/2026-99", data={"deadline": "2026-04-10"})
+        response = post_csrf(client, "/assign/2026-99", data={"deadline": "2026-04-10"})
 
         assert response.status_code == 404
 
@@ -1641,7 +1651,7 @@ class TestTransitionRoute:
             return storage.list_punishments(conn)[0].id
 
     def test_mark_overdue(self):
-        response = client.post(f"/punishment/{self._alice_id()}/transition", data={"to": "overdue"})
+        response = post_csrf(client, f"/punishment/{self._alice_id()}/transition", data={"to": "overdue"})
 
         assert response.status_code == 302
         with app_module.connect() as conn:
@@ -1650,7 +1660,7 @@ class TestTransitionRoute:
             assert row.overdue_at is not None
 
     def test_void_with_reason(self):
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{self._alice_id()}/transition",
             data={"to": "voided", "void_reason": "exempt"},
         )
@@ -1676,7 +1686,7 @@ class TestTransitionRoute:
         assert row is not None
         assert 'name="to" value="voided"' in row.group(0)
 
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition",
             data={"to": "voided", "void_reason": "later exempted"},
         )
@@ -1694,7 +1704,7 @@ class TestTransitionRoute:
             seed_punishments(conn, deadline="2099-01-01", include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
         )
 
@@ -1711,7 +1721,7 @@ class TestTransitionRoute:
             seed_punishments(conn, deadline=deadline, include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
         )
 
@@ -1726,7 +1736,7 @@ class TestTransitionRoute:
             seed_punishments(conn, deadline=deadline, include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
         )
 
@@ -1740,7 +1750,7 @@ class TestTransitionRoute:
             storage.transition_punishment(
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
-        response = client.post(f"/punishment/{self._alice_id()}/transition", data={"to": "phone_held"})
+        response = post_csrf(client, f"/punishment/{self._alice_id()}/transition", data={"to": "phone_held"})
 
         assert response.status_code == 302
         assert response.headers["Location"].endswith("/consequences")
@@ -2700,7 +2710,7 @@ class TestTransitionFeedbackLivesOnPage:
             return storage.list_punishments(conn)[0].id
 
     def _post_transition(self, data):
-        return client.post(f"/punishment/{self._alice_id()}/transition", data=data)
+        return post_csrf(client, f"/punishment/{self._alice_id()}/transition", data=data)
 
     def test_rejected_transition_redirects_to_consequences_preserving_filters(self):
         response = self._post_transition(
@@ -3772,7 +3782,7 @@ class TestUiTidinessHoldsEverywhere:
         icon = '<use href="#icon-inbox"/>'
         # The app auto-seeds the Master List, so clear it to reach the
         # boarders empty state.
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={"boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv")},
             content_type="multipart/form-data",

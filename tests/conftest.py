@@ -1,8 +1,15 @@
+import os
 import sqlite3
 
 import pytest
 
 import storage
+
+# Test runs provide an explicit session secret so module-level ``import app``
+# (which hard-fails without one in production) stays importable. Production
+# still refuses to boot without SECRET_KEY; every factory call below also
+# passes it inline.
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
 
 @pytest.fixture
@@ -34,6 +41,7 @@ def fresh_client(tmp_path):
         {
             "DB_PATH": str(db_path),
             "NAMELIST_PATH": str(namelist),
+            "SECRET_KEY": "test-secret-key",
             "TESTING": True,
         }
     )

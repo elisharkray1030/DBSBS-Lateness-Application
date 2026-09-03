@@ -1,5 +1,6 @@
 import io
 import os
+import secrets
 import sqlite3
 import time
 from contextlib import closing
@@ -59,7 +60,6 @@ bp = Blueprint("lateness", __name__)
 # wins over environment. No database I/O happens at import time.
 _DEFAULT_DB_PATH = "lateness_history.db"
 _DEFAULT_NAMELIST_PATH = "namelist.csv"
-_DEFAULT_SECRET_KEY = "dbs-lateness-dashboard-local"
 
 # Repeat-offender watchlist: a boarder reaching this many Points for this
 # many consecutive calendar months lands on the House Dashboard watchlist.
@@ -76,6 +76,40 @@ TOP_BOARDERS_DEFAULT_LIMIT = 10
 # instantly. WAL stays off — its shared-memory sidecar is unreliable across
 # hosts on SMB — so the default rollback journal is retained deliberately.
 NAS_BUSY_TIMEOUT_S = 30.0
+
+
+# Per-session CSRF token: single random value per session, sent as a hidden
+# form field on HTML POSTs and as a custom header on fetch PATCH/DELETE.
+CSRF_SESSION_KEY = "csrf_token"
+CSRF_FORM_FIELD = "csrf_token"
+CSRF_HEADER = "X-CSRF-Token"
+_CSRF_ERROR = "Invalid CSRF token. Please reload the page and try again."
+
+
+def _ensure_csrf_token() -> str:
+    """Returns the session token, creating it lazily on first page view."""
+    token = session.get(CSRF_SESSION_KEY)
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session[CSRF_SESSION_KEY] = token
+    return str(token)
+
+
+def _request_csrf_token() -> str:
+    """Reads the submitted token from form field or fetch header."""
+    form_token = request.form.get(CSRF_FORM_FIELD, "")
+    header_token = request.headers.get(CSRF_HEADER, "")
+    return str(form_token or header_token or "")
+
+
+def _csrf_failure():
+    """Rejects a mutation with a clear error, leaving the database untouched."""
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": _CSRF_ERROR}), 403
+    if request.path.startswith("/delete_month/"):
+        return jsonify({"error": _CSRF_ERROR}), 403
+    flash(_CSRF_ERROR, "error")
+    return _CSRF_ERROR, 403
 
 
 def _resolve_setting(name: str, default: str) -> str:
@@ -312,20 +346,55 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     always land in ``app.config``; any extra keys (e.g. ``TESTING``) pass
     through untouched. Database preparation is explicit via the
     ``init-db`` command or :func:`init_db`, never an import side effect.
+    ``SECRET_KEY`` has no default: startup aborts with a clear message
+    when neither inline config nor environment provides one.
     """
     app = Flask(__name__)
+    provided = config or {}
+    if "SECRET_KEY" in provided:
+        secret = provided["SECRET_KEY"]
+    else:
+        secret = os.environ.get("SECRET_KEY", "")
+    if not secret:
+        raise SystemExit(
+            "SECRET_KEY environment variable is required to start the app. "
+            "Set it in the environment or compose file before running."
+        )
     settings = {
         "DB_PATH": os.environ.get("DB_PATH", _DEFAULT_DB_PATH),
         "NAMELIST_PATH": os.environ.get("NAMELIST_PATH", _DEFAULT_NAMELIST_PATH),
-        "SECRET_KEY": os.environ.get("SECRET_KEY", _DEFAULT_SECRET_KEY),
+        "SECRET_KEY": secret,
     }
     settings.update(config or {})
+    settings["SECRET_KEY"] = secret
     app.config.update(settings)
-    # Sessions carry only transient flash feedback (no auth, no secrets); the
-    # fallback key keeps single-process local deployments working without config.
+    # Sessions carry only transient flash feedback (no auth, no secrets).
     app.secret_key = app.config["SECRET_KEY"]
+    # Plain-HTTP office LAN: HttpOnly + SameSite=Lax, deliberately no
+    # Secure flag (browsers would drop a Secure cookie over HTTP). The LAN
+    # itself is the trust boundary; Secure returns with HTTPS later.
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = False
     app.jinja_env.globals["humanized_status"] = humanized_status
     app.register_blueprint(bp)
+
+    @app.before_request
+    def _csrf_guard():
+        """Seeds the session token on reads; gates every mutation on it."""
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            if CSRF_SESSION_KEY not in session:
+                _ensure_csrf_token()
+            return None
+        session_token = session.get(CSRF_SESSION_KEY, "")
+        submitted = _request_csrf_token()
+        if not session_token or not submitted or submitted != session_token:
+            return _csrf_failure()
+        return None
+
+    @app.context_processor
+    def _inject_csrf_token():
+        return {"csrf_token": session.get(CSRF_SESSION_KEY, "")}
 
     @app.cli.command("init-db")
     def init_db_command() -> None:

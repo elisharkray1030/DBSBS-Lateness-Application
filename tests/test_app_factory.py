@@ -18,7 +18,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def _unchecked_client(db_path, namelist_path=None):
     """Builds a factory application without running database init."""
-    config = {"DB_PATH": str(db_path), "TESTING": True}
+    config = {"DB_PATH": str(db_path), "SECRET_KEY": "test-secret-key", "TESTING": True}
     if namelist_path is not None:
         config["NAMELIST_PATH"] = str(namelist_path)
     return app_module.create_app(config)
@@ -27,7 +27,7 @@ def _unchecked_client(db_path, namelist_path=None):
 class TestImportHasNoSideEffects:
     def test_importing_app_creates_no_database_file(self, tmp_path):
         db_path = tmp_path / "untouched.db"
-        env = dict(os.environ, DB_PATH=str(db_path))
+        env = dict(os.environ, DB_PATH=str(db_path), SECRET_KEY="test-secret-key")
         result = subprocess.run(
             [sys.executable, "-c", "import app"],
             cwd=REPO_ROOT,
@@ -45,17 +45,28 @@ class TestFactoryConfig:
         monkeypatch.setenv("DB_PATH", str(tmp_path / "env.db"))
         monkeypatch.setenv("SECRET_KEY", "env-secret")
         inline = tmp_path / "inline.db"
-        app = app_module.create_app({"DB_PATH": str(inline)})
+        app = app_module.create_app(
+            {"DB_PATH": str(inline), "SECRET_KEY": "inline-secret"}
+        )
         assert app.config["DB_PATH"] == str(inline)
-        assert app.secret_key == "env-secret"
+        assert app.secret_key == "inline-secret"
 
     def test_environment_beats_builtin_defaults(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DB_PATH", str(tmp_path / "env.db"))
-        monkeypatch.delenv("SECRET_KEY", raising=False)
+        monkeypatch.setenv("SECRET_KEY", "env-secret")
         app = app_module.create_app()
         assert app.config["DB_PATH"] == str(tmp_path / "env.db")
         assert app.config["NAMELIST_PATH"] == "namelist.csv"
-        assert app.secret_key == "dbs-lateness-dashboard-local"
+        assert app.secret_key == "env-secret"
+
+    def test_missing_secret_aborts_startup(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SECRET_KEY", raising=False)
+        try:
+            app_module.create_app({"DB_PATH": str(tmp_path / "x.db")})
+        except SystemExit as exc:
+            assert "SECRET_KEY" in str(exc)
+        else:
+            raise AssertionError("create_app should SystemExit without SECRET_KEY")
 
     def test_foreign_app_context_falls_back_to_default(self, monkeypatch):
         from flask import Flask
@@ -93,7 +104,7 @@ class TestInitDbCommand:
         namelist = tmp_path / "namelist.csv"
         namelist.write_text("Bed,Name\n601A,ALICE\n", encoding="utf-8")
         app = app_module.create_app(
-            {"DB_PATH": str(db_path), "NAMELIST_PATH": str(namelist)}
+            {"DB_PATH": str(db_path), "NAMELIST_PATH": str(namelist), "SECRET_KEY": "test-secret-key"}
         )
         runner = app.test_cli_runner()
         result = runner.invoke(args=["init-db"])
@@ -107,7 +118,7 @@ class TestInitDbCommand:
         namelist = tmp_path / "namelist.csv"
         namelist.write_text("Bed,Name\n601A,ALICE\n", encoding="utf-8")
         app = app_module.create_app(
-            {"DB_PATH": str(db_path), "NAMELIST_PATH": str(namelist)}
+            {"DB_PATH": str(db_path), "NAMELIST_PATH": str(namelist), "SECRET_KEY": "test-secret-key"}
         )
         runner = app.test_cli_runner()
         assert runner.invoke(args=["init-db"]).exit_code == 0

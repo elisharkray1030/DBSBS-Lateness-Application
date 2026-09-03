@@ -62,6 +62,7 @@
         {% endmacro %}
         {% macro transition_form(p, action) -%}
             <form action="/punishment/{{ p.id }}/transition" method="post"{% if action.reason_input %} class="void-form" data-boarder="{{ p.display_name }}" data-month="{{ p.month }}"{% endif %}>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="to" value="{{ action.target }}">
                 {{ consequence_filters() }}
                 {% if action.reason_input %}<input type="text" name="void_reason" placeholder="Reason (optional)" aria-label="Void reason (optional)">{% endif %}
@@ -217,6 +218,7 @@
         <div class="upload-panel">
             <h3 class="upload-title">Add Boarder</h3>
             <form action="/boarders/add" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="form-row">
                     <div class="form-field">
                         <label for="boarder_name"><strong>Boarder Name</strong></label>
@@ -234,6 +236,7 @@
         </div>
         <div class="month-detail-toolbar">
             <form action="/boarders/import" method="POST" enctype="multipart/form-data" class="consequences-filters">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <label for="boarder_csv"><strong>Replace Master List from CSV</strong></label>
                 <input type="file" id="boarder_csv" name="boarder_csv" accept=".csv" required>
                 <button type="submit" class="btn btn-primary btn-sm">Import</button>
@@ -282,6 +285,7 @@
         <div class="upload-panel">
             <h3 class="upload-title">Import Monthly Log</h3>
             <form action="/" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="form-row">
                     <div class="form-field">
                         <label for="log_file"><strong>Select Monthly Log CSV</strong></label>
@@ -384,6 +388,7 @@
                 <div id="month-detail-assign" class="assign-panel hidden">
                     <h4>Assign Punishments</h4>
                     <form id="assign-form" action="" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         {% if consequences_month %}<input type="hidden" name="month" value="{{ consequences_month }}">{% endif %}
                         {% if consequences_status %}<input type="hidden" name="status" value="{{ consequences_status }}">{% endif %}
                         {% if consequences_show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
@@ -565,11 +570,17 @@
         });
     });
 
+    // Session CSRF token for fetch mutations (HTML forms carry it as a
+    // hidden field). Read once per call so tests can rotate the meta tag.
+    function csrfToken() {
+        const tag = document.querySelector('meta[name="csrf-token"]');
+        return tag ? tag.content : '';
+    }
+
     // Voiding a punishment is destructive and irreversible: route it through
     // the shared confirm dialog naming the Boarder and month. The optional
     // reason input stays in the form and submits with it.
-    document.querySelectorAll('form.void-form').forEach(form => {
-        form.addEventListener('submit', function(event) {
+    document.querySelectorAll('form.void-form').forEach(form => {        form.addEventListener('submit', function(event) {
             event.preventDefault();
             showConfirmModal({
                 title: 'Void punishment?',
@@ -720,7 +731,8 @@
     // Delete a month report via AJAX (invoked from the confirm modal)
     function deleteMonthReport(month) {
         fetch(`/delete_month/${month}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: { 'X-CSRF-Token': csrfToken() }
         })
         .then(response => response.json())
         .then(data => {
@@ -860,7 +872,7 @@
         boarderSaveButton.textContent = 'Saving…';
         fetch('/api/boarders', {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
             body: JSON.stringify({ boarders: updates })
         })
         .then(response => response.json())
@@ -901,7 +913,8 @@
         // Disabled while in flight so double-clicks cannot duplicate writes.
         removeButton.disabled = true;
         fetch(`/api/boarders/${id}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: { 'X-CSRF-Token': csrfToken() }
         })
         .then(response => response.json())
         .then(data => {

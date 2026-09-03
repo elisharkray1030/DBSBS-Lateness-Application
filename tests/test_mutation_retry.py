@@ -12,7 +12,7 @@ import pytest
 
 import app as app_module
 import storage as storage_module
-from tests.helpers import record
+from tests.helpers import delete_csrf, patch_csrf, post_csrf, record
 
 
 def test_brief_contention_on_add_succeeds(fresh_client, monkeypatch):
@@ -27,7 +27,7 @@ def test_brief_contention_on_add_succeeds(fresh_client, monkeypatch):
 
     monkeypatch.setattr(storage_module, "add_boarder", flaky_add)
 
-    response = fresh_client.post(
+    response = post_csrf(fresh_client, 
         "/boarders/add", data={"name": "Cara", "bed": "602A"}
     )
 
@@ -51,7 +51,7 @@ def test_sustained_contention_on_add_fails_clean(fresh_client, monkeypatch):
         storage_module, "add_boarder", _always_locked(calls)
     )
 
-    response = fresh_client.post(
+    response = post_csrf(fresh_client, 
         "/boarders/add", data={"name": "Cara", "bed": "602A"}
     )
 
@@ -74,7 +74,7 @@ def test_sustained_contention_on_month_delete_is_503(fresh_client, monkeypatch):
         storage_module, "delete_month", _always_locked(calls)
     )
 
-    response = fresh_client.delete("/delete_month/2026-03")
+    response = delete_csrf(fresh_client, "/delete_month/2026-03")
 
     assert response.status_code == 503
     assert calls["count"] == 3
@@ -99,7 +99,7 @@ def test_retried_assignment_creates_no_duplicates(fresh_client, monkeypatch):
 
     monkeypatch.setattr(app_module, "assign_batch", flaky_assign)
 
-    response = fresh_client.post(
+    response = post_csrf(fresh_client, 
         "/assign/2026-03",
         data={"deadline": "2026-04-10", "assign": ["ALICE"]},
     )
@@ -132,7 +132,7 @@ def test_sustained_contention_on_transition_flashes_and_redirects(
         app_module, "transition", _always_locked(calls)
     )
 
-    response = fresh_client.post(
+    response = post_csrf(fresh_client, 
         f"/punishment/{punishment_id}/transition", data={"to": "submitted"}
     )
 
