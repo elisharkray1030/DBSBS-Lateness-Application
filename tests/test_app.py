@@ -16,20 +16,28 @@ import storage
 
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
-os.environ["DB_PATH"] = _db_path
 
 # The module-level client must never touch the developer's real database.
-# os.environ above lands too late (app reads DB_PATH at import), and several
-# tests below call app_module.connect() directly, so rebind the module global
-# explicitly. Seed one synthetic month: without any month the home page
-# renders its empty state (index.html `{% if all_months %}`), leaving every
-# report-row assertion to depend on whatever months happen to sit in the
-# gitignored lateness_history.db — which is also why CI (fresh clone, no
-# private artifacts) went red. The Master List path points at a
-# guaranteed-missing file so init_db never seeds real Boarders here; Master
-# List tests use fresh_client instead.
-app_module.DB_PATH = _db_path
-app_module.NAMELIST_PATH = _db_path + ".namelist-missing.csv"
+# Built through the application factory with inline config: importing the
+# application module performs no database I/O, so the old
+# environment-before-import workaround is gone. Seed one synthetic month:
+# without any month the home page renders its empty state
+# (index.html `{% if all_months %}`), leaving every report-row assertion to
+# depend on whatever months happen to sit in the gitignored
+# lateness_history.db — which is also why CI (fresh clone, no private
+# artifacts) went red. The Master List path points at a guaranteed-missing
+# file so init_db never seeds real Boarders here; Master List tests use
+# fresh_client instead. The context stays pushed for the session so direct
+# app_module.connect() calls in module-scoped setup resolve here.
+_module_app = app_module.create_app(
+    {
+        "DB_PATH": _db_path,
+        "NAMELIST_PATH": _db_path + ".namelist-missing.csv",
+        "TESTING": True,
+    }
+)
+_module_ctx = _module_app.app_context()
+_module_ctx.push()
 app_module.init_db()
 with app_module.connect() as _seed_conn:
     storage.save_month(
@@ -41,7 +49,7 @@ with app_module.connect() as _seed_conn:
         "2026-03",
     )
 
-client = app_module.app.test_client()
+client = _module_app.test_client()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -49,7 +57,6 @@ def _cleanup_temp_db():
     yield
     if os.path.exists(_db_path):
         os.unlink(_db_path)
-    os.environ.pop("DB_PATH", None)
 
 
 def home_html():
@@ -228,76 +235,78 @@ class TestBoardersTab:
 
 
 class TestBoarderSeeding:
-    def test_startup_seeds_boarders_from_namelist(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+    def _app_over(self, tmp_path, namelist_text=None):
+        """Factory application over a throwaway database for seeding tests."""
         namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
+        if namelist_text is None:
+            if namelist.exists():
+                namelist.unlink()
+        else:
+            namelist.write_text(namelist_text, encoding="utf-8")
+        return app_module.create_app(
+            {
+                "DB_PATH": str(tmp_path / "seed.db"),
+                "NAMELIST_PATH": str(namelist),
+                "TESTING": True,
+            }
+        )
 
-    def test_seeding_is_skipped_when_boarders_exist(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
-        namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
+    def test_startup_seeds_boarders_from_namelist(self, tmp_path):
+        app = self._app_over(tmp_path, "Bed,Name\n601A,Alice\n")
+        with app.app_context():
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
-    def test_no_namelist_leaves_boarders_empty(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {}
+    def test_seeding_is_skipped_when_boarders_exist(self, tmp_path):
+        app = self._app_over(tmp_path)
+        with app.app_context():
+            app_module.init_db()
+            with app_module.connect() as conn:
+                storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+            (tmp_path / "namelist.csv").write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
-    def test_seed_does_not_resurrect_after_emptying_roster(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
-            conn.execute("DELETE FROM boarders")
-            conn.commit()
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {}
+    def test_no_namelist_leaves_boarders_empty(self, tmp_path):
+        app = self._app_over(tmp_path)
+        with app.app_context():
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {}
 
-    def test_no_namelist_forfeits_seed_forever(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
-        app_module.init_db()
-        namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {}
+    def test_seed_does_not_resurrect_after_emptying_roster(self, tmp_path):
+        app = self._app_over(tmp_path, "Bed,Name\n601A,Alice\n")
+        with app.app_context():
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
+                conn.execute("DELETE FROM boarders")
+                conn.commit()
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {}
 
-    def test_populated_deployment_marks_seeded_without_wipe(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        with app_module.connect() as conn:
-            storage.create_schema(conn)
-            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
-        namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
+    def test_no_namelist_forfeits_seed_forever(self, tmp_path):
+        app = self._app_over(tmp_path)
+        with app.app_context():
+            app_module.init_db()
+            (tmp_path / "namelist.csv").write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {}
+
+    def test_populated_deployment_marks_seeded_without_wipe(self, tmp_path):
+        app = self._app_over(tmp_path)
+        with app.app_context():
+            with app_module.connect() as conn:
+                storage.create_schema(conn)
+                storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+            (tmp_path / "namelist.csv").write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
 
 class TestMigrationCollisionBanner:
@@ -305,29 +314,34 @@ class TestMigrationCollisionBanner:
     the home tab surfaces that count as a one-shot banner per session, and
     databases with nothing to report never see it."""
 
-    def _client_over_seeded_db(self, tmp_path, monkeypatch, collide):
-        db_path = tmp_path / "banner.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
-        with app_module.connect() as conn:
-            storage.create_schema(conn)
-            if collide:
-                colliding_boarder_rows = [
-                    ("CHEN, WEI", "Chen Wei A", "701A"),
-                    ("CHEN  WEI", "Chen Wei B", "701B"),
-                ]
-                conn.executemany(
-                    "INSERT INTO boarders (normalized_name, display_name, bed) VALUES (?, ?, ?)",
-                    colliding_boarder_rows,
-                )
-            else:
-                storage.add_boarder(conn, "ALICE", "Alice", "601A")
-            conn.commit()
-        app_module.init_db()
-        return app_module.app.test_client()
+    def _client_over_seeded_db(self, tmp_path, collide):
+        app = app_module.create_app(
+            {
+                "DB_PATH": str(tmp_path / "banner.db"),
+                "NAMELIST_PATH": str(tmp_path / "missing.csv"),
+                "TESTING": True,
+            }
+        )
+        with app.app_context():
+            with app_module.connect() as conn:
+                storage.create_schema(conn)
+                if collide:
+                    colliding_boarder_rows = [
+                        ("CHEN, WEI", "Chen Wei A", "701A"),
+                        ("CHEN  WEI", "Chen Wei B", "701B"),
+                    ]
+                    conn.executemany(
+                        "INSERT INTO boarders (normalized_name, display_name, bed) VALUES (?, ?, ?)",
+                        colliding_boarder_rows,
+                    )
+                else:
+                    storage.add_boarder(conn, "ALICE", "Alice", "601A")
+                conn.commit()
+            app_module.init_db()
+            return app.test_client()
 
-    def test_nonzero_skips_flash_banner_once_per_session(self, tmp_path, monkeypatch):
-        client = self._client_over_seeded_db(tmp_path, monkeypatch, collide=True)
+    def test_nonzero_skips_flash_banner_once_per_session(self, tmp_path):
+        client = self._client_over_seeded_db(tmp_path, collide=True)
 
         first = unescape(client.get("/").get_data(as_text=True))
         assert "legacy Match Key" in first
@@ -336,8 +350,8 @@ class TestMigrationCollisionBanner:
         again = client.get("/").get_data(as_text=True)
         assert "legacy Match Key" not in again
 
-    def test_zero_skips_never_flash_banner(self, tmp_path, monkeypatch):
-        client = self._client_over_seeded_db(tmp_path, monkeypatch, collide=False)
+    def test_zero_skips_never_flash_banner(self, tmp_path):
+        client = self._client_over_seeded_db(tmp_path, collide=False)
 
         for _ in range(2):
             html = client.get("/").get_data(as_text=True)
@@ -1937,7 +1951,7 @@ class TestAccessibilityPolish:
 
     def test_data_table_headers_carry_scope(self, fresh_client):
         self._seed_punishments(fresh_client)
-        home = home_html()
+        home = fresh_client.get("/").get_data(as_text=True)
         for table_id in ("boarders-table", "month-detail-table"):
             table = re.search(rf'<table[^>]*id="{table_id}".*?</table>', home, re.S)
             assert table is not None

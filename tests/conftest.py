@@ -14,20 +14,34 @@ def conn():
 
 
 @pytest.fixture()
-def fresh_client(tmp_path, monkeypatch):
-    """A Flask test client over a throwaway database seeded with ALICE/BOB."""
+def fresh_client(tmp_path):
+    """A Flask test client over a throwaway database seeded with ALICE/BOB.
+
+    Built through the application factory with inline config, so no
+    environment-before-import setup is needed. The application context
+    stays pushed for the test, so ``app_module.connect()`` in the test body
+    resolves to this fixture's database.
+    """
     import app as app_module
 
     db_path = tmp_path / "test.db"
-    monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
     namelist = tmp_path / "namelist.csv"
     namelist.write_text(
         "Bed,Name\n601A,ALICE\n601B,BOB\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+    app = app_module.create_app(
+        {
+            "DB_PATH": str(db_path),
+            "NAMELIST_PATH": str(namelist),
+            "TESTING": True,
+        }
+    )
+    pushed = app.app_context()
+    pushed.push()
     app_module.init_db()
-    return app_module.app.test_client()
+    yield app.test_client()
+    pushed.pop()
 
 
 @pytest.fixture

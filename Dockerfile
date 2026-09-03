@@ -18,4 +18,7 @@ RUN mkdir -p /data
 
 EXPOSE 8000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
+# Explicit one-time database preparation runs before serving: importing the
+# application performs no database I/O, and init-db is a safe no-op against
+# an existing database.
+CMD ["sh", "-c", "flask --app app init-db && gunicorn --bind 0.0.0.0:8000 app:app"]

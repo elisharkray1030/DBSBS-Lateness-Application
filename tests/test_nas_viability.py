@@ -17,10 +17,14 @@ from tests.helpers import record
 
 
 @pytest.fixture
-def file_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "nas.db"
-    monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-    return db_path
+def file_db(tmp_path):
+    app = app_module.create_app(
+        {"DB_PATH": str(tmp_path / "nas.db"), "TESTING": True}
+    )
+    pushed = app.app_context()
+    pushed.push()
+    yield tmp_path / "nas.db"
+    pushed.pop()
 
 
 def test_every_connection_waits_on_locks(file_db):
@@ -54,22 +58,28 @@ def test_write_through_read_only_is_refused(file_db):
 
 
 @pytest.fixture
-def read_client(tmp_path, monkeypatch):
+def read_client(tmp_path):
     """Flask client over a throwaway file DB with one saved Monthly Report."""
-    import app as app_module
-
     db_path = tmp_path / "readers.db"
-    monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
     namelist = tmp_path / "namelist.csv"
     namelist.write_text("Bed,Name\n601A,ALICE\n601B,BOB\n", encoding="utf-8")
-    monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
+    app = app_module.create_app(
+        {
+            "DB_PATH": str(db_path),
+            "NAMELIST_PATH": str(namelist),
+            "TESTING": True,
+        }
+    )
+    pushed = app.app_context()
+    pushed.push()
     app_module.init_db()
     with app_module.connect() as conn:
         storage.save_month(
             conn, [record("ALICE", "601A", 2, 5, 7)], "2026-03"
         )
         conn.commit()
-    return app_module.app.test_client()
+    yield app.test_client()
+    pushed.pop()
 
 
 def test_month_report_loads_while_write_holds_db(read_client):

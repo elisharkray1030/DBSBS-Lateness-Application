@@ -10,7 +10,9 @@ from urllib.parse import quote, urlencode
 
 try:
     from flask import (
+        Blueprint,
         Flask,
+        current_app,
         flash,
         get_flashed_messages,
         jsonify,
@@ -51,14 +53,13 @@ from punishments import (
 )
 from records import build_profile_summary, normalize_name
 
-app = Flask(__name__)
-# Sessions carry only transient flash feedback (no auth, no secrets); the
-# fallback key keeps single-process local deployments working without config.
-app.secret_key = os.environ.get("SECRET_KEY", "dbs-lateness-dashboard-local")
-app.jinja_env.globals["humanized_status"] = humanized_status
+bp = Blueprint("lateness", __name__)
 
-DB_PATH = os.environ.get("DB_PATH", "lateness_history.db")
-NAMELIST_PATH = os.environ.get("NAMELIST_PATH", "namelist.csv")
+# Built-in defaults; environment wins over these and inline factory config
+# wins over environment. No database I/O happens at import time.
+_DEFAULT_DB_PATH = "lateness_history.db"
+_DEFAULT_NAMELIST_PATH = "namelist.csv"
+_DEFAULT_SECRET_KEY = "dbs-lateness-dashboard-local"
 
 # Repeat-offender watchlist: a boarder reaching this many Points for this
 # many consecutive calendar months lands on the House Dashboard watchlist.
@@ -77,6 +78,29 @@ TOP_BOARDERS_DEFAULT_LIMIT = 10
 NAS_BUSY_TIMEOUT_S = 30.0
 
 
+def _resolve_setting(name: str, default: str) -> str:
+    """Resolves one application setting for the current application.
+
+    Inside an application or request context the active application's
+    config wins; outside one (ad-hoc tooling) the environment fallback
+    applies. Importing this module never touches the database.
+    """
+    try:
+        return str(current_app.config[name])
+    except RuntimeError:
+        return os.environ.get(name, default)
+
+
+def _db_path() -> str:
+    """Resolves the database location for the current application."""
+    return _resolve_setting("DB_PATH", _DEFAULT_DB_PATH)
+
+
+def _namelist_path() -> str:
+    """Resolves the seed-list location, with the same precedence as above."""
+    return _resolve_setting("NAMELIST_PATH", _DEFAULT_NAMELIST_PATH)
+
+
 def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
     """Opens a file-backed history store connection for the current call site.
 
@@ -84,14 +108,15 @@ def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
     the write lock on the shared-NAS database. The mixed import view, all
     state-changing routes and startup init use the default read-write form.
     """
-    if read_only and DB_PATH != ":memory:":
+    db_path = _db_path()
+    if read_only and db_path != ":memory:":
         conn = sqlite3.connect(
-            Path(DB_PATH).as_uri() + "?mode=ro",
+            Path(db_path).as_uri() + "?mode=ro",
             uri=True,
             timeout=NAS_BUSY_TIMEOUT_S,
         )
         return closing(conn)
-    conn = sqlite3.connect(DB_PATH, timeout=NAS_BUSY_TIMEOUT_S)
+    conn = sqlite3.connect(db_path, timeout=NAS_BUSY_TIMEOUT_S)
     conn.execute("PRAGMA journal_mode=DELETE")
     return closing(conn)
 
@@ -144,7 +169,20 @@ def with_lock_retry(action: str, work):
             time.sleep(RETRY_DELAYS_S[attempt])
 
 
-def init_db() -> None:
+def init_db(app: "Flask | None" = None) -> None:
+    """Prepares the schema and once-only Master List seed.
+
+    Runs against the given application (pushing its context) or, without
+    one, against the active application context. Never runs at import.
+    """
+    if app is not None:
+        with app.app_context():
+            _init_db_impl()
+    else:
+        _init_db_impl()
+
+
+def _init_db_impl() -> None:
     with connect() as conn:
         storage.create_schema(conn)
         if storage.get_meta(conn, SEED_FLAG) is not None:
@@ -152,7 +190,7 @@ def init_db() -> None:
         if storage.list_boarders(conn):
             storage.set_meta(conn, SEED_FLAG, "1")
             return
-        rows = load_namelist_rows(NAMELIST_PATH)
+        rows = load_namelist_rows(_namelist_path())
         if rows:
             storage.replace_boarders(conn, rows)
         storage.set_meta(conn, SEED_FLAG, "1")
@@ -265,11 +303,42 @@ def build_csv_response(boarders, download_name):
     )
 
 
-# Ensure database schema exists before handling any requests.
-init_db()
+def create_app(config: "dict | None" = None) -> Flask:
+    """Builds the Flask application without touching the database.
+
+    Precedence per key: inline ``config`` mapping beats environment beats
+    built-in defaults. ``DB_PATH``, ``NAMELIST_PATH``, and ``SECRET_KEY``
+    always land in ``app.config``; any extra keys (e.g. ``TESTING``) pass
+    through untouched. Database preparation is explicit via the
+    ``init-db`` command or :func:`init_db`, never an import side effect.
+    """
+    app = Flask(__name__)
+    settings = {
+        "DB_PATH": os.environ.get("DB_PATH", _DEFAULT_DB_PATH),
+        "NAMELIST_PATH": os.environ.get("NAMELIST_PATH", _DEFAULT_NAMELIST_PATH),
+        "SECRET_KEY": os.environ.get("SECRET_KEY", _DEFAULT_SECRET_KEY),
+    }
+    settings.update(config or {})
+    app.config.update(settings)
+    # Sessions carry only transient flash feedback (no auth, no secrets); the
+    # fallback key keeps single-process local deployments working without config.
+    app.secret_key = app.config["SECRET_KEY"]
+    app.jinja_env.globals["humanized_status"] = humanized_status
+    app.register_blueprint(bp)
+
+    @app.cli.command("init-db")
+    def init_db_command() -> None:
+        """Creates the schema and once-only Master List seed."""
+        # Bound to this application explicitly: the surrounding context
+        # (test runners, nested shells) must never redirect initialization
+        # at another database.
+        init_db(app)
+        print("Database initialized.")
+
+    return app
 
 
-@app.route('/', methods=['GET', 'POST'])
+@bp.route('/', methods=['GET', 'POST'])
 def home():
     current_month = None
     search_results = None
@@ -364,7 +433,7 @@ def home():
     ))
 
 
-@app.route('/boarders')
+@bp.route('/boarders')
 def boarders():
     return _render_boarders()
 
@@ -381,7 +450,7 @@ def _validate_boarder(display_name, bed, exclude_id=None):
     return None
 
 
-@app.route('/boarders/add', methods=['POST'])
+@bp.route('/boarders/add', methods=['POST'])
 def add_boarder():
     display_name = request.form.get('name', '').strip()
     bed = request.form.get('bed', '').strip()
@@ -400,7 +469,7 @@ def add_boarder():
         return _render_boarders(error=busy_message(exc.action))
 
 
-@app.route('/api/boarders/<int:boarder_id>', methods=['PATCH'])
+@bp.route('/api/boarders/<int:boarder_id>', methods=['PATCH'])
 def api_edit_boarder(boarder_id):
     data = request.get_json(silent=True) or {}
     display_name = str(data.get('name', '')).strip()
@@ -420,7 +489,7 @@ def api_edit_boarder(boarder_id):
         return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
-@app.route('/api/boarders', methods=['PATCH'])
+@bp.route('/api/boarders', methods=['PATCH'])
 def api_edit_boarders():
     data = request.get_json(silent=True) or {}
     raw_updates = data.get('boarders')
@@ -458,7 +527,7 @@ def api_edit_boarders():
         return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
-@app.route('/api/boarders/<int:boarder_id>', methods=['DELETE'])
+@bp.route('/api/boarders/<int:boarder_id>', methods=['DELETE'])
 def api_delete_boarder(boarder_id):
     def attempt():
         with connect() as conn:
@@ -471,7 +540,7 @@ def api_delete_boarder(boarder_id):
         return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
-@app.route('/boarders/import', methods=['POST'])
+@bp.route('/boarders/import', methods=['POST'])
 def import_boarders():
     file = request.files.get('boarder_csv')
     if not file or file.filename == '':
@@ -500,7 +569,7 @@ def import_boarders():
         return _render_boarders(error=busy_message(exc.action))
 
 
-@app.route('/boarders/export')
+@bp.route('/boarders/export')
 def export_boarders():
     with connect(read_only=True) as conn:
         boarders = storage.list_boarders(conn)
@@ -554,7 +623,7 @@ def _render_boarders(error=None, message=None):
     ))
 
 
-@app.route('/api/month/<path:month>')
+@bp.route('/api/month/<path:month>')
 def api_month(month):
     with connect(read_only=True) as conn:
         boarders = storage.get_month_report(conn, month)
@@ -577,7 +646,7 @@ def api_month(month):
     })
 
 
-@app.route('/download_month/<path:month>')
+@bp.route('/download_month/<path:month>')
 def download_month(month):
     with connect(read_only=True) as conn:
         boarders = storage.get_month_report(conn, month)
@@ -588,7 +657,7 @@ def download_month(month):
     return build_csv_response(boarders, f"Monthly_Lateness_Report_{safe_month}.csv")
 
 
-@app.route('/delete_month/<path:month>', methods=['DELETE'])
+@bp.route('/delete_month/<path:month>', methods=['DELETE'])
 def delete_month(month):
     def attempt():
         with connect() as conn:
@@ -605,7 +674,7 @@ def delete_month(month):
         return jsonify({'error': busy_message(exc.action)}), 503
 
 
-@app.route('/assign/<path:month>', methods=['POST'])
+@bp.route('/assign/<path:month>', methods=['POST'])
 def assign_month(month):
     deadline = request.form.get('deadline', '').strip()
     if not deadline:
@@ -650,7 +719,7 @@ def assign_month(month):
         return _consequences_redirect()
 
 
-@app.route('/consequences')
+@bp.route('/consequences')
 def consequences():
     show_all = request.args.get('show_all') == '1'
     month = request.args.get('month') or None
@@ -680,7 +749,7 @@ def consequences():
     ))
 
 
-@app.route('/statistics')
+@bp.route('/statistics')
 def statistics():
     """Renders the House Dashboard: the Statistics tab's home.
 
@@ -740,7 +809,7 @@ def statistics():
     ))
 
 
-@app.route('/boarder/<path:key>')
+@bp.route('/boarder/<path:key>')
 def boarder_profile(key):
     """Renders one boarder's profile, addressed by URL-encoded Match Key.
 
@@ -795,7 +864,7 @@ def _consequences_redirect():
     return redirect(f"/consequences{query}")
 
 
-@app.route('/punishment/<int:punishment_id>/transition', methods=['POST'])
+@bp.route('/punishment/<int:punishment_id>/transition', methods=['POST'])
 def transition_punishment(punishment_id):
     target = request.form.get('to', '').strip()
     void_reason = request.form.get('void_reason', '').strip() or None
@@ -823,6 +892,12 @@ def transition_punishment(punishment_id):
         return _consequences_redirect()
 
 
+# Module-level instance keeps the existing entrypoints working
+# (``gunicorn app:app``, ``flask --app app run``); importing it performs
+# no database I/O.
+app = create_app()
+
+
 if __name__ == '__main__':
-    init_db()
+    init_db(app)
     app.run(debug=True)
