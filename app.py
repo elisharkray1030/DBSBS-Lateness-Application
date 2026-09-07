@@ -78,6 +78,15 @@ TOP_BOARDERS_DEFAULT_LIMIT = 10
 NAS_BUSY_TIMEOUT_S = 30.0
 
 
+# Request/error hardening: every upload body is bounded, operational events
+# go through the application logger, and unhandled failures answer cleanly.
+_DEFAULT_MAX_CONTENT_LENGTH = 16 * 1024 * 1024
+_DEFAULT_LOG_LEVEL = "INFO"
+_SERVER_ERROR = (
+    "An unexpected error occurred. Nothing may have been saved; please try again."
+)
+
+
 # Per-session CSRF token: single random value per session, sent as a hidden
 # form field on HTML POSTs and as a custom header on fetch PATCH/DELETE.
 CSRF_SESSION_KEY = "csrf_token"
@@ -126,6 +135,66 @@ def _resolve_setting(name: str, default: str) -> str:
         return str(current_app.config.get(name, os.environ.get(name, default)))
     except RuntimeError:
         return os.environ.get(name, default)
+
+
+def _resolve_max_content_length(provided: "dict[str, Any]") -> int:
+    """Resolves the upload cap in bytes: inline config beats environment.
+
+    An unreadable environment value falls back to the built-in default so a
+    typo never silently removes the guard; an inline value is trusted as-is
+    since it is a programming-time choice, not operator input.
+    """
+    if "MAX_CONTENT_LENGTH" in provided:
+        return int(provided["MAX_CONTENT_LENGTH"])
+    raw = os.environ.get("MAX_CONTENT_LENGTH", "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return _DEFAULT_MAX_CONTENT_LENGTH
+
+
+def _resolve_log_level(provided: "dict[str, Any]") -> str:
+    """Resolves the logger level name: inline config beats environment.
+
+    Unrecognized values fall back to INFO — a misspelled level must never
+    prevent the app from booting.
+    """
+    if "LOG_LEVEL" in provided:
+        raw = str(provided["LOG_LEVEL"])
+    else:
+        raw = os.environ.get("LOG_LEVEL", _DEFAULT_LOG_LEVEL)
+    normalized = raw.strip().upper()
+    if normalized in ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"):
+        return normalized
+    return _DEFAULT_LOG_LEVEL
+
+
+def _describe_limit(limit: int) -> str:
+    """Words a byte cap in the largest whole unit for staff-facing errors."""
+    if limit >= 1024 * 1024 and limit % (1024 * 1024) == 0:
+        return f"{limit // (1024 * 1024)} MB"
+    if limit >= 1024 and limit % 1024 == 0:
+        return f"{limit // 1024} KB"
+    return f"{limit} bytes"
+
+
+def _script_error_response(message: str, status: int):
+    """Answers script endpoints with JSON in the established shape family.
+
+    Mirrors the ``_csrf_failure`` prefix table: ``/api/`` payloads carry the
+    ``ok`` flag, ``/delete_month/`` ones match that route's existing
+    ``{"error": ...}`` shape. Returns None for page routes so the caller
+    falls through to its page rendering.
+    """
+    for prefix, payload in (
+        ("/api/", {"ok": False, "error": message}),
+        ("/delete_month/", {"error": message}),
+    ):
+        if request.path.startswith(prefix):
+            return jsonify(payload), status
+    return None
 
 
 def _db_path() -> str:
@@ -367,8 +436,15 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
         "NAMELIST_PATH": os.environ.get("NAMELIST_PATH", _DEFAULT_NAMELIST_PATH),
         **provided,
         "SECRET_KEY": secret,
+        # Resolved after the inline spread so the normalized value wins over
+        # a raw inline/environment string; precedence stays inline > env.
+        "MAX_CONTENT_LENGTH": _resolve_max_content_length(provided),
+        "LOG_LEVEL": _resolve_log_level(provided),
     }
     app.config.update(settings)
+    # Operational visibility: the application logger carries Import outcomes
+    # and 500 stacktraces; CLI entry points keep their plain print() output.
+    app.logger.setLevel(app.config["LOG_LEVEL"])
     # Sessions carry only transient flash feedback (no auth, no secrets).
     app.secret_key = app.config["SECRET_KEY"]
     # Plain-HTTP office LAN: HttpOnly + SameSite=Lax, deliberately no
@@ -396,6 +472,68 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     @app.context_processor
     def _inject_csrf_token():
         return {"csrf_token": session.get(CSRF_SESSION_KEY, "")}
+
+    @app.errorhandler(413)
+    def _upload_too_large(error):
+        """Rejects over-cap uploads with a staff-readable error.
+
+        Registered at app level (not on the blueprint) because the 413 can
+        surface inside the app-level CSRF guard while it reads the submitted
+        form — a blueprint handler would miss that path. Nothing is stored.
+        """
+        limit = _describe_limit(int(app.config["MAX_CONTENT_LENGTH"]))
+        app.logger.warning(
+            "Rejected oversize %s to %s (%s cap)",
+            request.method, request.path, limit,
+        )
+        if request.path == "/boarders/import":
+            message = (
+                f"Error: This Master List file exceeds the {limit} limit on "
+                "Imports. Nothing was imported."
+            )
+        elif request.path == "/":
+            message = (
+                f"Error: This Monthly Log exceeds the {limit} limit on "
+                "Imports. Nothing was imported."
+            )
+        else:
+            message = (
+                f"Error: This request exceeds the {limit} limit on Imports. "
+                "Nothing was changed."
+            )
+        script = _script_error_response(message, 413)
+        if script is not None:
+            return script
+        if request.path == "/boarders/import":
+            return _render_boarders(error=message), 413
+        with connect(read_only=True) as conn:
+            all_months = storage.list_months(conn)
+            boarders = storage.list_boarders(conn)
+            punishment_months = _punishment_months(conn, all_months)
+        return render_template('index.html', **_page_context(
+            panels_in_page=True,
+            selected_tab='reports',
+            error=message,
+            all_months=all_months,
+            boarders=boarders,
+            punishment_months=punishment_months,
+        )), 413
+
+    @app.errorhandler(500)
+    def _server_error(error):
+        """Logs the stacktrace and answers cleanly per surface.
+
+        Page routes render a shared-layout error page; script endpoints get
+        structured JSON in the same shape family as the CSRF rejection so
+        script clients never receive HTML where they expect JSON.
+        """
+        app.logger.exception(
+            "Unhandled %s %s", request.method, request.path
+        )
+        script = _script_error_response(_SERVER_ERROR, 500)
+        if script is not None:
+            return script
+        return render_template("500.html", **_page_context(error=_SERVER_ERROR)), 500
 
     @app.cli.command("init-db")
     def init_db_command() -> None:
@@ -430,8 +568,10 @@ def home():
 
             if not file or file.filename == '':
                 error = "Error: No Monthly Log selected."
+                current_app.logger.info("Monthly Log import with no file selected")
             elif not month_label:
                 error = "Please enter a valid month label for this report. Example: '2026-03'."
+                current_app.logger.info("Monthly Log import with no month label")
             else:
                 # Buffer the upload before retrying: each attempt re-reads
                 # these bytes on a fresh connection.
@@ -447,7 +587,14 @@ def home():
                         log_stream.detach()
 
                     if isinstance(outcome, RejectedOutcome):
+                        current_app.logger.warning(
+                            "Rejected Monthly Log import for month %s: %s",
+                            month_label, outcome.reason,
+                        )
                         return f"Error: {outcome.reason}"
+                    current_app.logger.info(
+                        "Imported Monthly Log for month %s", month_label
+                    )
                     flash(outcome.message, "success")
                     query = urlencode({"month": month_label})
                     return redirect(f"/?{query}")
@@ -455,6 +602,10 @@ def home():
                 try:
                     result = with_lock_retry("import the Monthly Log", attempt)
                 except DatabaseBusy as exc:
+                    current_app.logger.warning(
+                        "Monthly Log import for month %s hit sustained contention",
+                        month_label,
+                    )
                     error = busy_message(exc.action)
                 else:
                     if isinstance(result, str):
@@ -532,11 +683,13 @@ def add_boarder():
             return _render_boarders(error=error)
         with connect() as conn:
             storage.add_boarder(conn, normalize_name(display_name), display_name, bed)
+        current_app.logger.info("Added boarder %s to Master List", display_name)
         return redirect('/boarders')
 
     try:
         return with_lock_retry("add the boarder", attempt)
     except DatabaseBusy as exc:
+        current_app.logger.warning("Add-boarder hit sustained contention")
         return _render_boarders(error=busy_message(exc.action))
 
 
@@ -552,11 +705,13 @@ def api_edit_boarder(boarder_id):
             return jsonify({'ok': False, 'error': error}), 400
         with connect() as conn:
             storage.update_boarder(conn, boarder_id, normalize_name(display_name), display_name, bed)
+        current_app.logger.info("Updated boarder %s on Master List", display_name)
         return jsonify({'ok': True})
 
     try:
         return with_lock_retry("update the boarder", attempt)
     except DatabaseBusy as exc:
+        current_app.logger.warning("Boarder update hit sustained contention")
         return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
@@ -590,11 +745,13 @@ def api_edit_boarders():
                 storage.update_boarders(conn, updates)
         except ValueError as exc:
             return jsonify({'ok': False, 'error': f'Error: {exc}'}), 400
+        current_app.logger.info("Updated Master List (%d boarders)", len(updates))
         return jsonify({'ok': True})
 
     try:
         return with_lock_retry("update the Master List", attempt)
     except DatabaseBusy as exc:
+        current_app.logger.warning("Master List update hit sustained contention")
         return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
@@ -603,11 +760,13 @@ def api_delete_boarder(boarder_id):
     def attempt():
         with connect() as conn:
             storage.delete_boarder(conn, boarder_id)
+        current_app.logger.info("Removed boarder id %d from Master List", boarder_id)
         return jsonify({'ok': True})
 
     try:
         return with_lock_retry("remove the boarder", attempt)
     except DatabaseBusy as exc:
+        current_app.logger.warning("Boarder removal hit sustained contention")
         return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
 
 
@@ -615,6 +774,7 @@ def api_delete_boarder(boarder_id):
 def import_boarders():
     file = request.files.get('boarder_csv')
     if not file or file.filename == '':
+        current_app.logger.info("Master List import with no file selected")
         return _render_boarders(error="Error: No CSV file selected.")
     # Buffer the upload before retrying: each attempt re-reads these bytes on
     # a fresh connection, since the request stream is single-shot.
@@ -631,12 +791,18 @@ def import_boarders():
             try:
                 storage.replace_boarders(conn, rows)
             except ValueError as exc:
+                current_app.logger.warning(
+                    "Rejected Master List import from %s: %s",
+                    file.filename, exc,
+                )
                 return _render_boarders(error=f"Error: {exc}")
+        current_app.logger.info("Replaced Master List from %s", file.filename)
         return redirect('/boarders')
 
     try:
         return with_lock_retry("import the Master List", attempt)
     except DatabaseBusy as exc:
+        current_app.logger.warning("Master List import hit sustained contention")
         return _render_boarders(error=busy_message(exc.action))
 
 
@@ -737,11 +903,15 @@ def delete_month(month):
         if deleted_count == 0:
             return jsonify({'error': f'No report found for {month}.'}), 404
 
+        current_app.logger.info("Deleted Monthly Report for month %s", month)
         return jsonify({'success': True, 'deleted': deleted_count})
 
     try:
         return with_lock_retry("delete the month's report", attempt)
     except DatabaseBusy as exc:
+        current_app.logger.warning(
+            "Monthly Report deletion for month %s hit sustained contention", month
+        )
         return jsonify({'error': busy_message(exc.action)}), 503
 
 
@@ -779,6 +949,7 @@ def assign_month(month):
             flash(f"Error: {outcome.reason}", "error")
             return _punishments_redirect()
 
+        current_app.logger.info("Assigned Punishments for month %s", month)
         flash(outcome.message, "success")
         query = urlencode({'month': month})
         return redirect(f"/?{query}")
@@ -786,6 +957,9 @@ def assign_month(month):
     try:
         return with_lock_retry("assign punishments", attempt)
     except DatabaseBusy as exc:
+        current_app.logger.warning(
+            "Punishment assignment for month %s hit sustained contention", month
+        )
         flash(busy_message(exc.action), "error")
         return _punishments_redirect()
 
@@ -995,6 +1169,9 @@ def transition_punishment(punishment_id):
         if isinstance(outcome, TransitionRejected):
             flash(f"Error: {outcome.reason}", "error")
         else:
+            current_app.logger.info(
+                "Updated Punishment %d to %s", punishment_id, target
+            )
             flash(outcome.message, "success")
 
         return _punishments_redirect()
@@ -1002,6 +1179,9 @@ def transition_punishment(punishment_id):
     try:
         return with_lock_retry("update the punishment", attempt)
     except DatabaseBusy as exc:
+        current_app.logger.warning(
+            "Punishment update %d hit sustained contention", punishment_id
+        )
         flash(busy_message(exc.action), "error")
         return _punishments_redirect()
 
