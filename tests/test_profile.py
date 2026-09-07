@@ -457,6 +457,101 @@ class TestEscalationSection:
         assert "2026-03-01" in section.group(0)
         assert '<span class="due-badge">due</span>' in section.group(0)
 
+    def test_punishment_only_month_marks_missing_history(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-01",
+                assigned_at="2026-02-01T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        months = re.findall(r"<td>(2026-\d{2})</td>", section.group(0))
+        assert months == ["2026-02"]
+        assert "Assigned" in section.group(0)
+        assert "2026-03-01" in section.group(0)
+        # Missing lateness is explicit, never a silent zero or bare dash.
+        assert "No history" in section.group(0)
+
+    def test_neither_history_nor_punishments_shows_empty_state(self, fresh_client):
+        # Fresh fixture seeds BOB on the Master List with no history/punishments.
+        html = profile_html(fresh_client, "BOB").get_data(as_text=True)
+
+        assert 'id="escalation-table"' not in html
+        assert "No monthly history or punishments stored for this boarder." in html
+
+    def test_voided_plus_live_month_follows_live(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-01",
+                assigned_at="2026-02-01T09:00:00+00:00",
+            )
+            only_id = storage.list_boarder_punishments(conn, "ALICE")[0].id
+            storage.transition_punishment(
+                conn, only_id, "voided",
+                timestamp="2026-02-03T09:00:00+00:00", void_reason="exempt",
+            )
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-10",
+                assigned_at="2026-02-04T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        months = re.findall(r"<td>(2026-\d{2})</td>", section.group(0))
+        assert months == ["2026-02"]
+        # Live row wins: its deadline rides along, the voided one never does.
+        assert "2026-03-10" in section.group(0)
+        assert "2026-03-01" not in section.group(0)
+        assert "Voided" not in section.group(0)
+        # Voided detail stays visible only in the Punishment Timeline.
+        voided = re.search(
+            r'id="punishment-timeline-voided".*?</table>', html, re.S
+        )
+        assert voided is not None
+        assert "<td>2026-02</td>" in voided.group(0)
+
+    def test_voided_only_month_never_inflates_escalation(self, fresh_client):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 3, 4)])
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-01",
+                boarders=[record("ALICE", "601A", 1, 3, 4)],
+                deadline="2026-02-01",
+                assigned_at="2026-01-01T09:00:00+00:00",
+            )
+            only_id = storage.list_boarder_punishments(conn, "ALICE")[0].id
+            storage.transition_punishment(
+                conn, only_id, "voided",
+                timestamp="2026-01-05T09:00:00+00:00", void_reason="exempt",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        assert "No punishment assigned" in section.group(0)
+        assert "Voided" not in section.group(0)
+        voided = re.search(
+            r'id="punishment-timeline-voided".*?</table>', html, re.S
+        )
+        assert voided is not None
+        assert "<td>2026-01</td>" in voided.group(0)
+
 
 class TestProfileChrome:
     def test_profile_extends_shared_layout(self, fresh_client):
