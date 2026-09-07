@@ -880,21 +880,23 @@
             padding: 6px 12px;
         }
 
-        .consequences-filters {
+        .consequences-filters,
+        .punishments-filters {
             display: flex;
             gap: 12px;
             align-items: flex-end;
             flex-wrap: wrap;
         }
 
-        .consequences-filters label {
+        .consequences-filters label,
+        .punishments-filters label {
             display: flex;
             flex-direction: column;
             gap: 4px;
             font-size: 0.9em;
         }
 
-        .consequences-toolbar {
+        .punishments-toolbar {
             --control-height: 30px;
             display: flex;
             gap: 10px;
@@ -903,41 +905,41 @@
             flex-wrap: wrap;
         }
 
-        .consequences-toolbar .consequences-filters {
+        .punishments-toolbar .punishments-filters {
             align-items: center;
         }
 
-        .consequences-toolbar .consequences-filters label {
+        .punishments-toolbar .punishments-filters label {
             display: inline-flex;
             align-items: center;
             white-space: nowrap;
         }
 
-        .consequences-toolbar select,
-        .consequences-toolbar .btn-sm {
+        .punishments-toolbar select,
+        .punishments-toolbar .btn-sm {
             height: var(--control-height);
         }
 
-        .consequences-toolbar select {
+        .punishments-toolbar select {
             padding-top: 4px;
             padding-bottom: 4px;
         }
 
-        .consequences-count {
+        .punishments-count {
             margin: 0 0 16px;
             color: var(--text-muted);
             font-size: 0.9em;
         }
 
-        .consequences-toolbar + .consequences-count {
+        .punishments-toolbar + .punishments-count {
             margin-top: -12px;
         }
 
-        .consequences-group {
+        .punishments-group {
             margin-bottom: 24px;
         }
 
-        .consequences-group-title {
+        .punishments-group-title {
             margin: 0 0 6px;
             color: var(--navy);
         }
@@ -1069,7 +1071,7 @@
                 flex: none;
             }
 
-            .consequences-toolbar {
+            .punishments-toolbar {
                 flex-direction: column;
                 align-items: stretch;
             }
@@ -1087,8 +1089,8 @@
             .reports-panel > :not(#month-detail),
             .month-actions,
             .month-detail-toolbar,
-            .consequences-toolbar,
-            .consequences-count,
+            .punishments-toolbar,
+            .punishments-count,
             .banner,
             #month-detail-loading,
             #month-detail-error {
@@ -1233,7 +1235,7 @@
         <a class="tab-link" href="/?tab=reports">View Reports in Database</a>
         <a class="tab-link" href="/?tab=history">Search Boarder History</a>
         {% endif %}
-        <a class="tab-link {% if selected_tab == 'consequences' %}active{% endif %}" data-tab="consequences" href="/consequences">Punishments</a>
+        <a class="tab-link {% if selected_tab == 'punishments' %}active{% endif %}" data-tab="punishments" href="/punishments">Punishments</a>
         {% if panels_in_page %}
         <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">Boarders</button>
         {% else %}

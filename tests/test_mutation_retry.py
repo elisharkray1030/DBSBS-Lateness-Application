@@ -138,7 +138,7 @@ def test_sustained_contention_on_transition_flashes_and_redirects(
 
     assert response.status_code == 302
     assert calls["count"] == 3
-    assert "/consequences" in response.headers["Location"]
+    assert "/punishments" in response.headers["Location"]
     with app_module.connect(read_only=True) as conn:
         rows = storage_module.list_punishments(conn, statuses=("assigned",))
         assert len(rows) == 1

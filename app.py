@@ -49,7 +49,7 @@ from punishments import (
     assign_batch,
     attach_display_flags,
     humanized_status,
-    list_consequences,
+    list_punishments_view,
     transition,
 )
 from records import build_profile_summary, normalize_name
@@ -273,10 +273,10 @@ def _page_context(selected_tab: str = '', message: str | None = None,
         'punishments': [],
         # 0 keeps the never-shown Punishments count line harmless on pages
         # that don't track the archive total (previously rendered blank).
-        'consequences_total': 0,
-        'consequences_show_all': False,
-        'consequences_month': None,
-        'consequences_status': None,
+        'punishments_total': 0,
+        'punishments_show_all': False,
+        'punishments_month': None,
+        'punishments_status': None,
         'boarders_view': 'current',
         'all_time_boarders': None,
         'all_time_query': '',
@@ -750,7 +750,7 @@ def assign_month(month):
     deadline = request.form.get('deadline', '').strip()
     if not deadline:
         flash("Error: a deadline is required to assign punishments.", "error")
-        return _consequences_redirect()
+        return _punishments_redirect()
 
     # Positive consent: each checked box means "assign a punishment to this
     # boarder"; every eligible boarder not checked is exempted.
@@ -777,7 +777,7 @@ def assign_month(month):
 
         if isinstance(outcome, AssignmentRejected):
             flash(f"Error: {outcome.reason}", "error")
-            return _consequences_redirect()
+            return _punishments_redirect()
 
         flash(outcome.message, "success")
         query = urlencode({'month': month})
@@ -787,17 +787,17 @@ def assign_month(month):
         return with_lock_retry("assign punishments", attempt)
     except DatabaseBusy as exc:
         flash(busy_message(exc.action), "error")
-        return _consequences_redirect()
+        return _punishments_redirect()
 
 
-@bp.route('/consequences')
-def consequences():
+@bp.route('/punishments')
+def punishments():
     show_all = request.args.get('show_all') == '1'
     month = request.args.get('month') or None
     status = request.args.get('status') or None
     with connect(read_only=True) as conn:
-        punishments = list_consequences(conn, show_all=show_all, month=month, status=status)
-        consequences_total = len(storage.list_punishments(conn, statuses=NON_VOIDED_STATUSES))
+        punishments = list_punishments_view(conn, show_all=show_all, month=month, status=status)
+        punishments_total = len(storage.list_punishments(conn, statuses=NON_VOIDED_STATUSES))
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
         punishment_months = _punishment_months(conn, all_months)
@@ -806,18 +806,29 @@ def consequences():
 
     return render_template('index.html', **_page_context(
         panels_in_page=True,
-        selected_tab='consequences',
+        selected_tab='punishments',
         message=message,
         error=error,
         all_months=all_months,
         boarders=boarders,
         punishment_months=punishment_months,
         punishments=punishments,
-        consequences_total=consequences_total,
-        consequences_show_all=show_all,
-        consequences_month=month,
-        consequences_status=status,
+        punishments_total=punishments_total,
+        punishments_show_all=show_all,
+        punishments_month=month,
+        punishments_status=status,
     ))
+
+
+@bp.route('/consequences')
+def consequences_legacy_redirect():
+    """Legacy address for the Punishments view: temporary redirect.
+
+    Preserves the full query string so bookmarked month/status/show-all
+    filters survive the move to the canonical punishments address.
+    """
+    query = request.query_string.decode("utf-8")
+    return redirect(f"/punishments{('?' + query) if query else ''}")
 
 
 @bp.route('/statistics')
@@ -951,8 +962,8 @@ def boarder_profile(key):
     ))
 
 
-def _consequences_redirect():
-    """Builds the /consequences redirect, preserving submitted filter fields."""
+def _punishments_redirect():
+    """Builds the /punishments redirect, preserving submitted filter fields."""
     params = {}
     month = request.form.get('month', '').strip()
     status = request.form.get('status', '').strip()
@@ -964,7 +975,7 @@ def _consequences_redirect():
     if show_all == '1':
         params['show_all'] = show_all
     query = f"?{urlencode(params)}" if params else ""
-    return redirect(f"/consequences{query}")
+    return redirect(f"/punishments{query}")
 
 
 @bp.route('/punishment/<int:punishment_id>/transition', methods=['POST'])
@@ -986,13 +997,13 @@ def transition_punishment(punishment_id):
         else:
             flash(outcome.message, "success")
 
-        return _consequences_redirect()
+        return _punishments_redirect()
 
     try:
         return with_lock_retry("update the punishment", attempt)
     except DatabaseBusy as exc:
         flash(busy_message(exc.action), "error")
-        return _consequences_redirect()
+        return _punishments_redirect()
 
 
 # Module-level instance keeps the existing entrypoints working

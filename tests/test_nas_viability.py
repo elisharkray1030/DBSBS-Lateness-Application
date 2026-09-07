@@ -61,7 +61,7 @@ def test_read_only_routes_render_under_relative_db_path(relative_client):
         "/boarders/export",
         "/api/month/2026-03",
         "/download_month/2026-03",
-        "/consequences",
+        "/punishments",
         "/statistics",
         "/boarder/ALICE",
     ):
@@ -181,7 +181,7 @@ def test_pure_read_routes_open_read_only(read_client, monkeypatch):
         "/boarders/export",
         "/api/month/2026-03",
         "/download_month/2026-03",
-        "/consequences",
+        "/punishments",
         "/statistics",
         "/boarder/ALICE",
     ):

@@ -53,66 +53,66 @@
         {% endif %}
     </section>
 
-    <!-- Consequences Panel -->
-    <section id="consequences" class="panel {% if selected_tab == 'consequences' %}active{% endif %} consequences-panel">
-        {% macro consequence_filters() %}
-            {% if consequences_month %}<input type="hidden" name="month" value="{{ consequences_month }}">{% endif %}
-            {% if consequences_status %}<input type="hidden" name="status" value="{{ consequences_status }}">{% endif %}
-            {% if consequences_show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
+    <!-- Punishments Panel -->
+    <section id="punishments" class="panel {% if selected_tab == 'punishments' %}active{% endif %} punishments-panel">
+        {% macro punishment_filters() %}
+            {% if punishments_month %}<input type="hidden" name="month" value="{{ punishments_month }}">{% endif %}
+            {% if punishments_status %}<input type="hidden" name="status" value="{{ punishments_status }}">{% endif %}
+            {% if punishments_show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
         {% endmacro %}
         {% macro transition_form(p, action) -%}
             <form action="/punishment/{{ p.id }}/transition" method="post"{% if action.reason_input %} class="void-form" data-boarder="{{ p.display_name }}" data-month="{{ p.month }}"{% endif %}>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="to" value="{{ action.target }}">
-                {{ consequence_filters() }}
+                {{ punishment_filters() }}
                 {% if action.reason_input %}<input type="text" name="void_reason" placeholder="Reason (optional)" aria-label="Void reason (optional)">{% endif %}
                 <button type="submit" class="btn btn-{{ action.style }} btn-sm">{{ action.label }}</button>
             </form>
         {%- endmacro %}
-        {% macro consequences_count() -%}
-            <p class="consequences-count" aria-live="polite">Showing {{ punishments|length }} of {{ consequences_total }} {{ 'punishment' if consequences_total == 1 else 'punishments' }}</p>
+        {% macro punishments_count() -%}
+            <p class="punishments-count" aria-live="polite">Showing {{ punishments|length }} of {{ punishments_total }} {{ 'punishment' if punishments_total == 1 else 'punishments' }}</p>
         {%- endmacro %}
         <h2>Punishments</h2>
-        <div class="consequences-toolbar">
-            <form action="/consequences" method="get" class="consequences-filters">
-                {% if consequences_show_all %}
+        <div class="punishments-toolbar">
+            <form action="/punishments" method="get" class="punishments-filters">
+                {% if punishments_show_all %}
                     <input type="hidden" name="show_all" value="1">
                 {% endif %}
-                <label for="consequences-month"><strong>Month</strong></label>
-                <select id="consequences-month" name="month" onchange="this.form.submit()">
+                <label for="punishments-month"><strong>Month</strong></label>
+                <select id="punishments-month" name="month" onchange="this.form.submit()">
                     <option value="">All months</option>
                     {% for month in punishment_months %}
-                        <option value="{{ month }}" {% if consequences_month == month %}selected{% endif %}>{{ month }}</option>
+                        <option value="{{ month }}" {% if punishments_month == month %}selected{% endif %}>{{ month }}</option>
                     {% endfor %}
                 </select>
-                <label for="consequences-status"><strong>Status</strong></label>
-                <select id="consequences-status" name="status" onchange="this.form.submit()">
-                    <option value="">{% if consequences_show_all %}All statuses{% else %}In-flight only{% endif %}</option>
+                <label for="punishments-status"><strong>Status</strong></label>
+                <select id="punishments-status" name="status" onchange="this.form.submit()">
+                    <option value="">{% if punishments_show_all %}All statuses{% else %}In-flight only{% endif %}</option>
                     {% for s in ['assigned', 'overdue', 'phone_held', 'submitted', 'voided'] %}
-                        <option value="{{ s }}" {% if consequences_status == s %}selected{% endif %}>{{ humanized_status(s) }}</option>
+                        <option value="{{ s }}" {% if punishments_status == s %}selected{% endif %}>{{ humanized_status(s) }}</option>
                     {% endfor %}
                 </select>
             </form>
-            <form action="/consequences" method="get">
-                {% if consequences_month %}
-                    <input type="hidden" name="month" value="{{ consequences_month }}">
+            <form action="/punishments" method="get">
+                {% if punishments_month %}
+                    <input type="hidden" name="month" value="{{ punishments_month }}">
                 {% endif %}
-                {% if consequences_status %}
-                    <input type="hidden" name="status" value="{{ consequences_status }}">
+                {% if punishments_status %}
+                    <input type="hidden" name="status" value="{{ punishments_status }}">
                 {% endif %}
-                {% if not consequences_show_all %}
+                {% if not punishments_show_all %}
                     <input type="hidden" name="show_all" value="1">
                 {% endif %}
                 <button type="submit" class="btn btn-neutral btn-sm">
-                    {% if consequences_show_all %}Show in-flight only{% else %}Show all{% endif %}
+                    {% if punishments_show_all %}Show in-flight only{% else %}Show all{% endif %}
                 </button>
             </form>
         </div>
         {% if punishments %}
             {% for group in punishments|groupby('status') %}
-            <div class="consequences-group">
-                <h4 class="consequences-group-title">{{ humanized_status(group.grouper) }}</h4>
-                {% if loop.first %}{{ consequences_count() }}{% endif %}
+            <div class="punishments-group">
+                <h4 class="punishments-group-title">{{ humanized_status(group.grouper) }}</h4>
+                {% if loop.first %}{{ punishments_count() }}{% endif %}
                 <div class="table-scroll">
                     <table>
                         <thead>
@@ -152,7 +152,7 @@
             </div>
             {% endfor %}
         {% else %}
-            {{ consequences_count() }}
+            {{ punishments_count() }}
             <div class="empty-state">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
                 No punishments to show.
@@ -389,9 +389,9 @@
                     <h4>Assign Punishments</h4>
                     <form id="assign-form" action="" method="post">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        {% if consequences_month %}<input type="hidden" name="month" value="{{ consequences_month }}">{% endif %}
-                        {% if consequences_status %}<input type="hidden" name="status" value="{{ consequences_status }}">{% endif %}
-                        {% if consequences_show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
+                        {% if punishments_month %}<input type="hidden" name="month" value="{{ punishments_month }}">{% endif %}
+                        {% if punishments_status %}<input type="hidden" name="status" value="{{ punishments_status }}">{% endif %}
+                        {% if punishments_show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
                         <div class="form-field">
                             <label for="assign-deadline"><strong>Deadline</strong></label>
                             <input type="date" id="assign-deadline" name="deadline" required>
@@ -535,7 +535,7 @@
     tabButtons.forEach(button => {
         button.addEventListener('click', function(event) {
             const tabName = this.getAttribute('data-tab');
-            if (tabName === 'consequences') {
+            if (tabName === 'punishments') {
                 if (hasDirtyBoarderRow()) {
                     event.preventDefault();
                     showConfirmModal({
@@ -544,7 +544,7 @@
                         confirmLabel: 'Discard',
                         onConfirm: () => {
                             discardBoarderEdits();
-                            window.location.href = '/consequences';
+                            window.location.href = '/punishments';
                         }
                     });
                 }

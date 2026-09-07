@@ -99,7 +99,7 @@ def tab_button_class(html, tab_name):
 TAB_LABELS = {
     "reports": "View Reports in Database",
     "history": "Search Boarder History",
-    "consequences": "Punishments",
+    "punishments": "Punishments",
     "boarders": "Boarders",
 }
 
@@ -1358,17 +1358,17 @@ class TestAssignRoute:
         assert "Alice" in html
         assert "ALICE" not in html
 
-    def test_missing_deadline_redirects_to_consequences_with_error(self):
+    def test_missing_deadline_redirects_to_punishments_with_error(self):
         response = post_csrf(client, "/assign/2026-03", data={})
 
         assert response.status_code == 302
-        assert response.headers["Location"].endswith("/consequences")
+        assert response.headers["Location"].endswith("/punishments")
         page = client.get(response.headers["Location"])
         html = page.get_data(as_text=True)
         assert "banner-error" in html
         assert "deadline" in html.lower()
 
-    def test_rejected_assignment_preserves_consequences_filters(self):
+    def test_rejected_assignment_preserves_punishments_filters(self):
         response = post_csrf(client, 
             "/assign/2026-03",
             data={
@@ -1381,7 +1381,7 @@ class TestAssignRoute:
 
         assert response.status_code == 302
         location = response.headers["Location"]
-        assert location.startswith("/consequences")
+        assert location.startswith("/punishments")
         assert "month=2026-03" in location
         assert "status=assigned" in location
         assert "show_all=1" in location
@@ -1410,7 +1410,34 @@ class TestAssignRoute:
         assert response.status_code == 404
 
 
-class TestConsequencesRoute:
+class TestLegacyPunishmentsRedirect:
+    def test_legacy_address_redirects_to_canonical(self):
+        response = client.get("/consequences")
+
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/punishments")
+
+    def test_legacy_redirect_preserves_query_string(self):
+        response = client.get(
+            "/consequences?show_all=1&month=2026-03&status=submitted"
+        )
+
+        assert response.status_code == 302
+        location = response.headers["Location"]
+        assert location.startswith("/punishments")
+        assert "show_all=1" in location
+        assert "month=2026-03" in location
+        assert "status=submitted" in location
+
+    def test_legacy_redirect_lands_on_canonical_view(self):
+        response = client.get("/consequences", follow_redirects=True)
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'id="punishments"' in html
+
+
+class TestPunishmentsRoute:
     @pytest.fixture(autouse=True)
     def _seed_punishment(self):
         with app_module.connect() as conn:
@@ -1425,8 +1452,8 @@ class TestConsequencesRoute:
                 ],
             )
 
-    def test_consequences_page_lists_in_flight_punishments(self):
-        response = client.get("/consequences")
+    def test_punishments_page_lists_in_flight_punishments(self):
+        response = client.get("/punishments")
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
@@ -1434,14 +1461,14 @@ class TestConsequencesRoute:
         assert "Bob" in html
         assert "2026-04-10" in html
 
-    def test_consequences_tab_is_rendered(self):
+    def test_punishments_tab_is_rendered(self):
         html = client.get("/").get_data(as_text=True)
-        assert "data-tab=\"consequences\"" in html
+        assert "data-tab=\"punishments\"" in html
 
-    def test_consequences_tab_links_to_server_view(self):
+    def test_punishments_tab_links_to_server_view(self):
         html = client.get("/").get_data(as_text=True)
         assert re.search(
-            r'<a class="tab-link [^"]*" data-tab="consequences" href="/consequences">',
+            r'<a class="tab-link [^"]*" data-tab="punishments" href="/punishments">',
             html,
         )
 
@@ -1452,14 +1479,14 @@ class TestConsequencesRoute:
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        response = client.get("/consequences?show_all=1")
+        response = client.get("/punishments?show_all=1")
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
         assert "submitted" in html
 
     def test_month_filter_dropdown_lists_saved_months(self):
-        html = client.get("/consequences").get_data(as_text=True)
+        html = client.get("/punishments").get_data(as_text=True)
 
         assert 'value="2026-03"' in html
 
@@ -1473,7 +1500,7 @@ class TestConsequencesRoute:
                 assigned_at="2026-04-01T09:00:00+00:00",
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
+        html = client.get("/punishments").get_data(as_text=True)
 
         assert 'value="2026-04"' in html
 
@@ -1484,7 +1511,7 @@ class TestConsequencesRoute:
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        response = client.get("/consequences?status=submitted")
+        response = client.get("/punishments?status=submitted")
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
@@ -1498,8 +1525,8 @@ class TestConsequencesRoute:
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Alice" not in panel
         assert "Bob" in panel
 
@@ -1511,12 +1538,12 @@ class TestConsequencesRoute:
             )
 
         response = client.get(
-            "/consequences?show_all=1&month=2026-03&status=submitted"
+            "/punishments?show_all=1&month=2026-03&status=submitted"
         )
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Alice" in panel
         assert "Bob" not in panel
         assert re.search(r'<option value="2026-03" selected>', panel)
@@ -1529,7 +1556,7 @@ class TestConsequencesRoute:
             conn.execute("DELETE FROM punishments")
             conn.commit()
 
-        html = client.get("/consequences").get_data(as_text=True)
+        html = client.get("/punishments").get_data(as_text=True)
         assert "No punishments to show." in html
 
     def test_overdue_action_is_hidden_before_deadline(self):
@@ -1537,14 +1564,14 @@ class TestConsequencesRoute:
             conn.execute("DELETE FROM punishments")
             seed_punishments(conn, deadline="2099-01-01", include_report=False)
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Alice" in panel
         assert "Mark overdue" not in panel
 
     def test_filter_options_use_humanized_labels(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert re.search(r'<option value="phone_held" ?(selected)?>Phone held</option>', panel)
         assert re.search(r'<option value="voided" ?(selected)?>Voided</option>', panel)
         assert "<option>phone_held</option>" not in panel
@@ -1556,52 +1583,52 @@ class TestConsequencesRoute:
                 conn, row.id, "phone_held", timestamp="2026-04-11T09:00:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert '>Phone held</h4>' in panel
         assert "<td>Phone held</td>" in panel
         assert "<td>phone_held</td>" not in panel
 
-    def test_consequences_table_has_last_action_column_with_timestamp(self):
+    def test_punishments_table_has_last_action_column_with_timestamp(self):
         with app_module.connect() as conn:
             row = storage.list_punishments(conn, statuses=("assigned",))[0]
             storage.transition_punishment(
                 conn, row.id, "overdue", timestamp="2026-04-11T10:30:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert '<th scope="col">Last action</th>' in panel
         assert "2026-04-11 10:30" in panel
 
     def test_toolbar_has_no_punishments_subheading(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "<h3>Punishments</h3>" not in panel
 
     def test_filter_button_is_gone_and_selects_auto_submit(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
 
         assert ">Filter</button>" not in panel
 
-        month_select = re.search(r'<select id="consequences-month"[^>]*>', panel)
-        status_select = re.search(r'<select id="consequences-status"[^>]*>', panel)
+        month_select = re.search(r'<select id="punishments-month"[^>]*>', panel)
+        status_select = re.search(r'<select id="punishments-status"[^>]*>', panel)
         assert month_select is not None and status_select is not None
         assert 'onchange="this.form.submit()"' in month_select.group(0)
         assert 'onchange="this.form.submit()"' in status_select.group(0)
 
-    def test_toolbar_uses_dedicated_consequences_class(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
-        assert '<div class="consequences-toolbar">' in panel
+    def test_toolbar_uses_dedicated_punishments_class(self):
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
+        assert '<div class="punishments-toolbar">' in panel
         assert "month-detail-toolbar" not in panel
 
     def test_result_count_reads_showing_x_of_y(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert re.search(
-            r'<p class="consequences-count" aria-live="polite">Showing 2 of 2 punishments</p>',
+            r'<p class="punishments-count" aria-live="polite">Showing 2 of 2 punishments</p>',
             panel,
         )
 
@@ -1612,8 +1639,8 @@ class TestConsequencesRoute:
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Showing 1 of 2 punishments" in panel
 
     def test_empty_view_counts_zero_of_zero(self):
@@ -1621,8 +1648,8 @@ class TestConsequencesRoute:
             conn.execute("DELETE FROM punishments")
             conn.commit()
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Showing 0 of 0 punishments" in panel
 
     def test_voided_punishments_do_not_count_in_the_total(self):
@@ -1632,8 +1659,8 @@ class TestConsequencesRoute:
                 conn, row.id, "voided", timestamp="2026-04-05T09:00:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Showing 1 of 1 punishment</p>" in panel
 
 
@@ -1678,8 +1705,8 @@ class TestTransitionRoute:
                 conn, punishment_id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        html = client.get("/consequences?show_all=1").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments?show_all=1").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         row = re.search(
             rf'<tr data-punishment-id="{punishment_id}">.*?</tr>', panel, re.S
         )
@@ -1753,7 +1780,7 @@ class TestTransitionRoute:
         response = post_csrf(client, f"/punishment/{self._alice_id()}/transition", data={"to": "phone_held"})
 
         assert response.status_code == 302
-        assert response.headers["Location"].endswith("/consequences")
+        assert response.headers["Location"].endswith("/punishments")
         page = client.get(response.headers["Location"])
         assert b"not allowed" in page.data.lower()
 
@@ -1774,7 +1801,7 @@ class TestDestructiveActionsNameTarget:
     def test_void_opens_confirm_dialog_naming_boarder_and_month(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -1794,7 +1821,7 @@ class TestDestructiveActionsNameTarget:
     def test_void_reason_stays_in_form_after_confirm(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -1843,10 +1870,10 @@ def _parse_rgb(text):
 
 
 class TestConfirmModalDialogSemantics:
-    def _consequences_html(self, fresh_client):
+    def _punishments_html(self, fresh_client):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        return fresh_client.get("/consequences").get_data(as_text=True)
+        return fresh_client.get("/punishments").get_data(as_text=True)
 
     def _open_modal(self, page):
         stub_form_submit(page)
@@ -1854,7 +1881,7 @@ class TestConfirmModalDialogSemantics:
         page.wait_for_selector("#confirmModal.show")
 
     def test_modal_has_dialog_role_accessible_name_and_initial_focus(self, fresh_client, browser_page):
-        html = self._consequences_html(fresh_client)
+        html = self._punishments_html(fresh_client)
 
         page = browser_page
         page.set_content(html)
@@ -1871,7 +1898,7 @@ class TestConfirmModalDialogSemantics:
         assert "btn-danger" in focused
 
     def test_tab_is_trapped_esc_cancels_and_focus_is_restored(self, fresh_client, browser_page):
-        html = self._consequences_html(fresh_client)
+        html = self._punishments_html(fresh_client)
 
         page = browser_page
         page.set_content(html)
@@ -1969,7 +1996,7 @@ class TestAccessibilityPolish:
 
     def test_void_reason_input_has_programmatic_label(self, fresh_client):
         self._seed_punishments(fresh_client)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
         assert re.search(
             r'<input type="text" name="void_reason"[^>]*aria-label=', html
         )
@@ -1985,11 +2012,11 @@ class TestAccessibilityPolish:
         history_html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
         assert '<th scope="col">' in history_panel_html(history_html)
 
-        consequences_html = fresh_client.get("/consequences").get_data(as_text=True)
-        consequences_section = re.search(
-            r'<section id="consequences".*?</section>', consequences_html, re.S
+        punishments_html = fresh_client.get("/punishments").get_data(as_text=True)
+        punishments_section = re.search(
+            r'<section id="punishments".*?</section>', punishments_html, re.S
         ).group(0)
-        assert '<th scope="col">' in consequences_section
+        assert '<th scope="col">' in punishments_section
 
     def test_tab_bar_wraps_at_narrow_width(self, browser_page):
         html = home_html()
@@ -2027,11 +2054,11 @@ class TestAccessibilityPolish:
 
     def test_badge_and_disabled_styles_meet_aa_contrast(self, fresh_client, browser_page):
         self._seed_punishments(fresh_client)
-        consequences_html = fresh_client.get("/consequences?show_all=1").get_data(as_text=True)
+        punishments_html = fresh_client.get("/punishments?show_all=1").get_data(as_text=True)
         boarders_html = fresh_client.get("/boarders").get_data(as_text=True)
 
         page = browser_page
-        page.set_content(consequences_html)
+        page.set_content(punishments_html)
 
         def computed_colors(selector):
             return page.locator(selector).first.evaluate(
@@ -2420,10 +2447,10 @@ class TestPrintOutputsActiveView:
         )
         assert display == "none"
 
-    def test_printing_consequences_tab_excludes_other_views_and_skeleton(self, fresh_client, browser_page):
+    def test_printing_punishments_tab_excludes_other_views_and_skeleton(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -2712,7 +2739,7 @@ class TestTransitionFeedbackLivesOnPage:
     def _post_transition(self, data):
         return post_csrf(client, f"/punishment/{self._alice_id()}/transition", data=data)
 
-    def test_rejected_transition_redirects_to_consequences_preserving_filters(self):
+    def test_rejected_transition_redirects_to_punishments_preserving_filters(self):
         response = self._post_transition(
             {
                 "to": "phone_held",
@@ -2724,13 +2751,13 @@ class TestTransitionFeedbackLivesOnPage:
 
         assert response.status_code == 302
         location = response.headers["Location"]
-        assert location.startswith("/consequences")
+        assert location.startswith("/punishments")
         assert "month=2026-03" in location
         assert "status=assigned" in location
         assert "show_all=1" in location
         assert "message=" not in location
 
-    def test_rejected_transition_renders_inline_error_on_consequences(self):
+    def test_rejected_transition_renders_inline_error_on_punishments(self):
         response = self._post_transition({"to": "phone_held"})
 
         page = client.get(response.headers["Location"])
@@ -2785,9 +2812,9 @@ class TestChromeConsistency:
                 f"{panel_id} panel lost its {subheading!r} section sub-heading"
             )
 
-    def test_consequences_panel_has_no_section_subheading(self):
+    def test_punishments_panel_has_no_section_subheading(self):
         html = home_html()
-        panel = panel_html(html, "consequences")
+        panel = panel_html(html, "punishments")
         assert "<h3" not in panel
 
     def test_history_results_subheading_nests_beneath_panel_title(self, fresh_client):
@@ -2895,14 +2922,14 @@ class TestVisualConsistencyPass:
         assert abs(fill["leftGap"]) < 1 and abs(fill["rightGap"]) < 1
 
     def test_selects_drop_os_chrome_for_house_style(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
 
         style = page.evaluate(
             """() => {
-                const s = getComputedStyle(document.querySelector('#consequences-status'));
+                const s = getComputedStyle(document.querySelector('#punishments-status'));
                 return {
                     appearance: s.appearance,
                     image: s.backgroundImage,
@@ -2915,8 +2942,8 @@ class TestVisualConsistencyPass:
         assert "%231d2b53" in style["image"] or "#1d2b53" in style["image"], style
         assert style["radius"] == "6px"
 
-    def test_consequences_toolbar_sits_left_with_toggle_on_select_baseline(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+    def test_punishments_toolbar_sits_left_with_toggle_on_select_baseline(self, fresh_client, browser_page):
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -2924,10 +2951,10 @@ class TestVisualConsistencyPass:
         edges = page.evaluate(
             """() => {
                 const rect = el => el.getBoundingClientRect();
-                const heading = rect(document.querySelector('#consequences h2'));
-                const monthLabel = rect(document.querySelector('label[for="consequences-month"]'));
-                const statusSelect = rect(document.querySelector('#consequences-status'));
-                const toggle = rect(document.querySelector('.consequences-toolbar .btn-neutral'));
+                const heading = rect(document.querySelector('#punishments h2'));
+                const monthLabel = rect(document.querySelector('label[for="punishments-month"]'));
+                const statusSelect = rect(document.querySelector('#punishments-status'));
+                const toggle = rect(document.querySelector('.punishments-toolbar .btn-neutral'));
                 return {
                     leftDrift: monthLabel.left - heading.left,
                     baselineDelta: toggle.bottom - statusSelect.bottom,
@@ -2940,7 +2967,7 @@ class TestVisualConsistencyPass:
     def test_count_sits_clear_of_the_group_heading_it_follows(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -2948,15 +2975,15 @@ class TestVisualConsistencyPass:
         gap = page.evaluate(
             """() => {
                 const rect = el => el.getBoundingClientRect();
-                const title = rect(document.querySelector('.consequences-group-title'));
-                const count = rect(document.querySelector('.consequences-group .consequences-count'));
+                const title = rect(document.querySelector('.punishments-group-title'));
+                const count = rect(document.querySelector('.punishments-group .punishments-count'));
                 return count.top - title.bottom;
             }"""
         )
         assert gap >= 0, gap
 
     def test_empty_view_count_keeps_its_toolbar_coupling(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -2964,8 +2991,8 @@ class TestVisualConsistencyPass:
         gap = page.evaluate(
             """() => {
                 const rect = el => el.getBoundingClientRect();
-                const toolbar = rect(document.querySelector('.consequences-toolbar'));
-                const count = rect(document.querySelector('.consequences-toolbar + .consequences-count'));
+                const toolbar = rect(document.querySelector('.punishments-toolbar'));
+                const count = rect(document.querySelector('.punishments-toolbar + .punishments-count'));
                 return count.top - toolbar.bottom;
             }"""
         )
@@ -3009,23 +3036,23 @@ class TestVisualConsistencyPass:
         assert metrics["centerDelta"] <= 4, metrics
         assert metrics["gap"] > 0, metrics
 
-    def test_consequences_toolbar_controls_share_one_height(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+    def test_punishments_toolbar_controls_share_one_height(self, fresh_client, browser_page):
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
 
         heights = page.evaluate(
             """() => [
-                document.querySelector('#consequences-month'),
-                document.querySelector('#consequences-status'),
-                document.querySelector('.consequences-toolbar .btn-neutral'),
+                document.querySelector('#punishments-month'),
+                document.querySelector('#punishments-status'),
+                document.querySelector('.punishments-toolbar .btn-neutral'),
             ].map(el => el.getBoundingClientRect().height)"""
         )
         assert max(heights) - min(heights) < 1, heights
 
-    def test_consequences_toolbar_stacks_on_mobile_with_shared_heights(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+    def test_punishments_toolbar_stacks_on_mobile_with_shared_heights(self, fresh_client, browser_page):
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_viewport_size({"width": 375, "height": 800})
@@ -3034,10 +3061,10 @@ class TestVisualConsistencyPass:
 
             layout = page.evaluate(
                 """() => {
-                    const toolbar = document.querySelector('.consequences-toolbar');
+                    const toolbar = document.querySelector('.punishments-toolbar');
                     const els = [
-                        document.querySelector('#consequences-month'),
-                        document.querySelector('#consequences-status'),
+                        document.querySelector('#punishments-month'),
+                        document.querySelector('#punishments-status'),
                         toolbar.querySelector('.btn-neutral'),
                     ];
                     const rects = els.map(el => el.getBoundingClientRect());
@@ -3402,8 +3429,8 @@ class TestMonthReportToolbarOrdering:
         assert danger_controls == ["month-detail-delete"]
 
 
-class TestConsequencesRowActionContract:
-    """Pins exactly what /consequences renders as row actions per status.
+class TestPunishmentsRowActionContract:
+    """Pins exactly what /punishments renders as row actions per status.
 
     Characterization safety net for the row-action decomposition: every
     assertion here must keep passing unmodified when the duplicated form
@@ -3430,8 +3457,8 @@ class TestConsequencesRowActionContract:
             )
 
     def _row(self, fresh_client, punishment_id, query=""):
-        html = fresh_client.get(f"/consequences{query}").get_data(as_text=True)
-        panel = panel_html(html, "consequences")
+        html = fresh_client.get(f"/punishments{query}").get_data(as_text=True)
+        panel = panel_html(html, "punishments")
         match = re.search(
             rf'<tr data-punishment-id="{punishment_id}">.*?</tr>', panel, re.S
         )
@@ -3592,8 +3619,8 @@ class TestConsequencesRowActionContract:
         self._move(ids["ELLE"], "submitted", timestamp="2026-04-09T09:00:00+00:00")
         self._move(ids["FRAN"], "voided", timestamp="2026-04-12T09:00:00+00:00")
 
-        html = fresh_client.get("/consequences?show_all=1").get_data(as_text=True)
-        panel = panel_html(html, "consequences")
+        html = fresh_client.get("/punishments?show_all=1").get_data(as_text=True)
+        panel = panel_html(html, "punishments")
         rows = {}
         for match in re.finditer(r'<tr data-punishment-id="(\d+)">.*?</tr>', panel, re.S):
             rows[int(match.group(1))] = match.group(0)
@@ -3623,15 +3650,15 @@ class TestConsequencesRowActionContract:
         assert {pid: self._contracts(row) for pid, row in rows.items()} == expected
 
 
-class TestConsequencesRowActionTidiness:
-    def _consequences_html_with_punishment(self, fresh_client):
+class TestPunishmentsRowActionTidiness:
+    def _punishments_html_with_punishment(self, fresh_client):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        return fresh_client.get("/consequences").get_data(as_text=True)
+        return fresh_client.get("/punishments").get_data(as_text=True)
 
     def test_action_forms_sit_in_one_row_actions_wrapper_without_inline_styles(self, fresh_client):
-        html = self._consequences_html_with_punishment(fresh_client)
-        panel = panel_html(html, "consequences")
+        html = self._punishments_html_with_punishment(fresh_client)
+        panel = panel_html(html, "punishments")
 
         assert 'style="display:inline"' not in panel
         rows = re.findall(r'<tr data-punishment-id="\d+">.*?</tr>', panel, re.S)
@@ -3642,7 +3669,7 @@ class TestConsequencesRowActionTidiness:
             assert "<form" not in before_wrapper
 
     def test_row_actions_container_is_wrapping_evenly_gapped_and_centred(self, fresh_client, browser_page):
-        html = self._consequences_html_with_punishment(fresh_client)
+        html = self._punishments_html_with_punishment(fresh_client)
 
         page = browser_page
         page.set_content(html)
@@ -3663,7 +3690,7 @@ class TestConsequencesRowActionTidiness:
         assert style["gap"] > 0
 
     def test_void_reason_input_is_compact_like_neighbouring_buttons(self, fresh_client, browser_page):
-        html = self._consequences_html_with_punishment(fresh_client)
+        html = self._punishments_html_with_punishment(fresh_client)
 
         page = browser_page
         page.set_content(html)
@@ -3769,7 +3796,7 @@ class TestUiTidinessHoldsEverywhere:
         assert not overflow
 
     def test_no_rendered_copy_uses_the_master_list_avoid_term(self, fresh_client):
-        for route in ("/", "/boarders", "/consequences", "/statistics", "/boarder/ALICE"):
+        for route in ("/", "/boarders", "/punishments", "/statistics", "/boarder/ALICE"):
             html = fresh_client.get(route).get_data(as_text=True)
             assert "roster" not in html.lower(), (
                 f"{route} renders the Master List avoid-term"
@@ -3788,8 +3815,8 @@ class TestUiTidinessHoldsEverywhere:
             content_type="multipart/form-data",
         )
         boarders = panel_html(fresh_client.get("/boarders").get_data(as_text=True), "boarders")
-        consequences = panel_html(
-            fresh_client.get("/consequences").get_data(as_text=True), "consequences"
+        punishments = panel_html(
+            fresh_client.get("/punishments").get_data(as_text=True), "punishments"
         )
         reports = panel_html(fresh_client.get("/").get_data(as_text=True), "reports")
         history = panel_html(
@@ -3797,7 +3824,7 @@ class TestUiTidinessHoldsEverywhere:
         )
         for name, panel in (
             ("boarders", boarders),
-            ("consequences", consequences),
+            ("punishments", punishments),
             ("reports", reports),
             ("history", history),
         ):

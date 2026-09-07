@@ -11,7 +11,7 @@ from punishments import (
     assign_batch,
     humanized_status,
     last_action_at,
-    list_consequences,
+    list_punishments_view,
     transition,
 )
 
@@ -209,7 +209,7 @@ class TestTransition:
         assert row.submitted_at == "2026-04-11T09:00:00+00:00"
         assert row.voided_at == "2026-04-12T09:00:00+00:00"
         assert row.void_reason == "later exempted"
-        listed = list_consequences(conn, show_all=True)
+        listed = list_punishments_view(conn, show_all=True)
         assert listed[0].was_late is True
 
     @pytest.mark.parametrize(
@@ -245,7 +245,7 @@ class TestTransition:
         assert row.submitted_at > row.deadline
 
 
-class TestListConsequences:
+class TestListPunishmentsView:
     def _assign(self, conn, month="2026-03"):
         outcome = assign_batch(
             conn,
@@ -265,7 +265,7 @@ class TestListConsequences:
         alice = storage.list_punishments(conn, statuses=("assigned",))[0]
         transition(conn, alice.id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
 
-        rows = list_consequences(conn)
+        rows = list_punishments_view(conn)
         assert {r.normalized_name for r in rows} == {"BOB"}
         assert rows[0].status == "assigned"
 
@@ -275,14 +275,14 @@ class TestListConsequences:
         transition(conn, rows[0].id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
         transition(conn, rows[1].id, "voided", timestamp="2026-04-03T09:00:00+00:00", void_reason="exempt")
 
-        all_rows = list_consequences(conn, show_all=True)
+        all_rows = list_punishments_view(conn, show_all=True)
         assert len(all_rows) == 2
 
     def test_filters_by_month(self, conn):
         self._assign(conn, month="2026-03")
         self._assign(conn, month="2026-04")
 
-        rows = list_consequences(conn, month="2026-04")
+        rows = list_punishments_view(conn, month="2026-04")
         assert {r.normalized_name for r in rows} == {"ALICE", "BOB"}
         assert all(r.month == "2026-04" for r in rows)
 
@@ -306,7 +306,7 @@ class TestListConsequences:
         )
         assert isinstance(outcome, AssignmentSaved)
 
-        rows = list_consequences(conn)
+        rows = list_punishments_view(conn)
         assert [r.normalized_name for r in rows] == ["BOB", "ALICE"]
 
     def test_due_flagged_once_deadline_passes_while_assigned(self, conn):
@@ -316,9 +316,9 @@ class TestListConsequences:
         on_day = datetime.fromisoformat("2026-04-10T12:00:00+00:00")
         after = datetime.fromisoformat("2026-04-11T12:00:00+00:00")
 
-        assert all(r.is_due is False for r in list_consequences(conn, now=before))
-        assert all(r.is_due for r in list_consequences(conn, now=on_day))
-        assert all(r.is_due for r in list_consequences(conn, now=after))
+        assert all(r.is_due is False for r in list_punishments_view(conn, now=before))
+        assert all(r.is_due for r in list_punishments_view(conn, now=on_day))
+        assert all(r.is_due for r in list_punishments_view(conn, now=after))
 
     def test_submitted_never_due_even_after_deadline(self, conn):
         self._assign(conn)
@@ -326,7 +326,7 @@ class TestListConsequences:
         transition(conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
 
         after = datetime.fromisoformat("2026-04-30T12:00:00+00:00")
-        rows = list_consequences(conn, show_all=True, now=after)
+        rows = list_punishments_view(conn, show_all=True, now=after)
         submitted = next(r for r in rows if r.status == "submitted")
         assert submitted.is_due is False
 
@@ -335,7 +335,7 @@ class TestListConsequences:
         row = storage.list_punishments(conn, statuses=("assigned",))[0]
         transition(conn, row.id, "submitted", timestamp="2026-04-11T09:00:00+00:00")
 
-        rows = list_consequences(conn, show_all=True)
+        rows = list_punishments_view(conn, show_all=True)
         submitted = next(r for r in rows if r.status == "submitted")
         assert submitted.was_late is True
 
@@ -344,7 +344,7 @@ class TestListConsequences:
         row = storage.list_punishments(conn, statuses=("assigned",))[0]
         transition(conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
 
-        rows = list_consequences(conn, show_all=True)
+        rows = list_punishments_view(conn, show_all=True)
         submitted = next(r for r in rows if r.status == "submitted")
         assert submitted.was_late is False
 
@@ -353,7 +353,7 @@ class TestListConsequences:
         row = storage.list_punishments(conn, statuses=("assigned",))[0]
         transition(conn, row.id, "submitted", timestamp="2026-04-10T09:00:00+00:00")
 
-        rows = list_consequences(conn, show_all=True)
+        rows = list_punishments_view(conn, show_all=True)
         submitted = next(r for r in rows if r.status == "submitted")
         assert submitted.was_late is False
 
@@ -362,7 +362,7 @@ class TestListConsequences:
         row = storage.list_punishments(conn, statuses=("assigned",))[0]
         transition(conn, row.id, "submitted", timestamp="2026-04-11T09:00:00+00:00")
 
-        rows = list_consequences(conn, show_all=True)
+        rows = list_punishments_view(conn, show_all=True)
         submitted = next(r for r in rows if r.status == "submitted")
         assert submitted.was_late is True
 
@@ -371,7 +371,7 @@ class TestListConsequences:
         row = storage.list_punishments(conn, statuses=("assigned",))[0]
         transition(conn, row.id, "submitted", timestamp="2026-05-30T09:00:00+00:00")
 
-        rows = list_consequences(conn, show_all=True)
+        rows = list_punishments_view(conn, show_all=True)
         submitted = next(r for r in rows if r.status == "submitted")
         assert submitted.was_late is True
 
@@ -380,8 +380,8 @@ class TestListConsequences:
         rows = storage.list_punishments(conn, statuses=("assigned",))
         transition(conn, rows[0].id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
 
-        assigned = list_consequences(conn, status="assigned")
-        submitted = list_consequences(conn, status="submitted")
+        assigned = list_punishments_view(conn, status="assigned")
+        submitted = list_punishments_view(conn, status="submitted")
         assert {r.normalized_name for r in assigned} == {"BOB"}
         assert {r.normalized_name for r in submitted} == {"ALICE"}
 
@@ -390,7 +390,7 @@ class TestListConsequences:
         rows = storage.list_punishments(conn, statuses=("assigned",))
         transition(conn, rows[0].id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
 
-        submitted = list_consequences(conn, show_all=True, status="submitted")
+        submitted = list_punishments_view(conn, show_all=True, status="submitted")
 
         assert [row.normalized_name for row in submitted] == ["ALICE"]
 
@@ -399,7 +399,7 @@ class TestListConsequences:
         alice = storage.list_punishments(conn, statuses=("assigned",), month="2026-03")[0]
         transition(conn, alice.id, "submitted", timestamp="2026-04-09T09:00:00+00:00")
 
-        rows = list_consequences(conn, show_all=True)
+        rows = list_punishments_view(conn, show_all=True)
         assert [r.normalized_name for r in rows] == ["BOB", "ALICE"]
 
 

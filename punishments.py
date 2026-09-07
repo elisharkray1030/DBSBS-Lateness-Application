@@ -330,7 +330,7 @@ def attach_display_flags(punishments: list[Punishment], now: datetime | None = N
     return punishments
 
 
-def list_consequences(
+def list_punishments_view(
     conn,
     show_all: bool = False,
     month: str | None = None,
