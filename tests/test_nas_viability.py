@@ -17,6 +17,70 @@ from tests.helpers import record
 
 
 @pytest.fixture
+def relative_client(tmp_path, monkeypatch):
+    """Flask client configured with a relative database path (#152).
+
+    Mirrors the shipped default (a plain filename in the working
+    directory): only DB_PATH is relative, so any failure isolates the
+    read-only branch of the connection helper.
+    """
+    monkeypatch.chdir(tmp_path)
+    namelist = tmp_path / "namelist.csv"
+    namelist.write_text("Bed,Name\n601A,ALICE\n601B,BOB\n", encoding="utf-8")
+    app = app_module.create_app(
+        {
+            "DB_PATH": "readers.db",
+            "NAMELIST_PATH": str(namelist),
+            "TESTING": True,
+        }
+    )
+    pushed = app.app_context()
+    pushed.push()
+    app_module.init_db()
+    with app_module.connect() as conn:
+        storage.save_month(
+            conn, [record("ALICE", "601A", 2, 5, 7)], "2026-03"
+        )
+        conn.commit()
+    yield app.test_client()
+    pushed.pop()
+
+
+def test_read_only_connection_opens_against_relative_db_path(relative_client):
+    with app_module.connect(read_only=True) as conn:
+        (timeout,) = conn.execute("PRAGMA busy_timeout").fetchone()
+    assert timeout == 30000
+    with app_module.connect(read_only=True) as conn:
+        with pytest.raises(sqlite3.OperationalError):
+            conn.execute("CREATE TABLE u (a TEXT)")
+
+
+def test_read_only_routes_render_under_relative_db_path(relative_client):
+    for path in (
+        "/boarders",
+        "/boarders/export",
+        "/api/month/2026-03",
+        "/download_month/2026-03",
+        "/consequences",
+        "/statistics",
+        "/boarder/ALICE",
+    ):
+        response = relative_client.get(path)
+        assert response.status_code == 200, path
+
+
+def test_write_paths_work_under_relative_db_path(relative_client):
+    from tests.helpers import post_csrf
+
+    response = post_csrf(
+        relative_client, "/boarders/add", data={"name": "Cara", "bed": "602A"}
+    )
+    assert response.status_code == 302
+    with app_module.connect(read_only=True) as conn:
+        assert storage.boarder_exists(conn, "CARA")
+
+
+@pytest.fixture
 def file_db(tmp_path):
     app = app_module.create_app(
         {"DB_PATH": str(tmp_path / "nas.db"), "TESTING": True}

@@ -148,7 +148,7 @@ def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
     db_path = _db_path()
     if read_only and db_path != ":memory:":
         conn = sqlite3.connect(
-            Path(db_path).as_uri() + "?mode=ro",
+            Path(db_path).resolve().as_uri() + "?mode=ro",
             uri=True,
             timeout=NAS_BUSY_TIMEOUT_S,
         )
@@ -824,7 +824,7 @@ def consequences():
 def statistics():
     """Renders the House Dashboard: the Statistics tab's home.
 
-    Every figure derives live from stored data on each visit, so     re-imports
+    Every figure derives live from stored data on each visit, so re-imports
     and month deletions are reflected immediately.
     """
     with connect(read_only=True) as conn:

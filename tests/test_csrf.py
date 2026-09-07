@@ -54,8 +54,6 @@ class TestSessionCookieFlags:
 def _bare_csrf_client(tmp_path):
     """Isolated app + client over a bare store (unlike the shared fixture,
     which seeds a fixed Master List, the matrix tests own their seed)."""
-    import app as app_module
-
     db_path = tmp_path / "csrf.db"
     namelist = tmp_path / "namelist.csv"
     namelist.write_text("Bed,Name\n601A,ALICE\n", encoding="utf-8")
