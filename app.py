@@ -429,7 +429,7 @@ def home():
             month_label = request.form.get('report_month', '').strip()
 
             if not file or file.filename == '':
-                error = "Error: No file selected."
+                error = "Error: No Monthly Log selected."
             elif not month_label:
                 error = "Please enter a valid month label for this report. Example: '2026-03'."
             else:

@@ -988,6 +988,52 @@ class TestImportPostRedirectGet:
         assert len(months) == 1
 
 
+class TestImportCopyAlignment:
+    def test_file_picker_label_uses_monthly_log_term(self):
+        html = home_html()
+
+        assert "Select Monthly Log" in html
+        assert "Select Monthly Log CSV" not in html
+
+    def test_no_file_error_names_monthly_log(self, fresh_client):
+        resp = post_csrf(fresh_client,
+            "/",
+            data={
+                "report_month": "2026-07",
+                "log_file": (io.BytesIO(b""), ""),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "Error: No Monthly Log selected." in html
+        assert "No file selected" not in html
+
+    def test_empty_log_message_names_monthly_log(self, fresh_client):
+        resp = post_csrf(fresh_client,
+            "/",
+            data={
+                "report_month": "2026-07",
+                "log_file": (io.BytesIO(b"Name,Transaction Time\n"), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "The Monthly Log is empty or has no data rows." in html
+        assert "uploaded log file" not in html
+
+    def test_stable_surrounding_copy_unchanged(self):
+        html = home_html()
+
+        assert ">Punishments</a>" in html
+        assert "<h2>Punishments</h2>" in html
+        assert "<h3 class=\"upload-title\">Import Monthly Log</h3>" in html
+        assert "of 0 punishments" in html or "punishments</p>" in html
+
+
 class TestMonthApi:
     def test_api_returns_ordered_explicit_row_list(self, fresh_client):
         with app_module.connect() as conn:
@@ -1435,6 +1481,12 @@ class TestLegacyPunishmentsRedirect:
         assert response.status_code == 200
         html = response.get_data(as_text=True)
         assert 'id="punishments"' in html
+
+    def test_no_retired_consequences_wording_in_panel(self):
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = panel_html(html, "punishments")
+
+        assert "consequence" not in panel.lower()
 
 
 class TestPunishmentsRoute:

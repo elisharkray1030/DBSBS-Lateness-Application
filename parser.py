@@ -257,7 +257,7 @@ def _rejection_reason(diagnostics: ParseDiagnostics, master_list):
         return "The boarder master list is missing or empty. Add boarders in the Boarders tab."
 
     if diagnostics.rows_read == 0:
-        return "The uploaded log file is empty or has no data rows."
+        return "The Monthly Log is empty or has no data rows."
 
     if diagnostics.matched_rows == 0:
         if not diagnostics.unmatched_names:
