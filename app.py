@@ -113,12 +113,9 @@ def _request_csrf_token() -> str:
 
 def _csrf_failure():
     """Rejects a mutation with a clear error, leaving the database untouched."""
-    for prefix, payload in (
-        ("/api/", {"ok": False, "error": _CSRF_ERROR}),
-        ("/delete_month/", {"error": _CSRF_ERROR}),
-    ):
-        if request.path.startswith(prefix):
-            return jsonify(payload), 403
+    script = _script_error_response(_CSRF_ERROR, 403)
+    if script is not None:
+        return script
     flash(_CSRF_ERROR, "error")
     return render_template("403.html", **_page_context(error=_CSRF_ERROR)), 403
 
@@ -183,10 +180,10 @@ def _describe_limit(limit: int) -> str:
 def _script_error_response(message: str, status: int):
     """Answers script endpoints with JSON in the established shape family.
 
-    Mirrors the ``_csrf_failure`` prefix table: ``/api/`` payloads carry the
-    ``ok`` flag, ``/delete_month/`` ones match that route's existing
-    ``{"error": ...}`` shape. Returns None for page routes so the caller
-    falls through to its page rendering.
+    The shared prefix table: ``/api/`` payloads carry the ``ok`` flag,
+    ``/delete_month/`` ones match that route's existing ``{"error": ...}``
+    shape. Returns None for page routes so the caller falls through to its
+    page rendering.
     """
     for prefix, payload in (
         ("/api/", {"ok": False, "error": message}),

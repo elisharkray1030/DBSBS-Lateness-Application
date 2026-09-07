@@ -134,6 +134,8 @@ A month report is only saved when the uploaded log produced at least one row for
 
 The web upload and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
 
+Monthly Log and Master List Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, in bytes). An upload over the cap is rejected with a staff-readable error and nothing is stored.
+
 ## Persistence and deployment notes
 
 - The app stores month summaries in SQLite using the path from `DB_PATH`.
@@ -146,7 +148,7 @@ The web upload and the parser CLI run the exact same ingestion module, so the tw
 The deployment is multi-writer against a **shared SQLite database on a NAS share**:
 
 - Every staff member runs the app on their own PC (`python -m flask --app app run`) with `DB_PATH` pointing at the NAS share, e.g. `\\NAS\share\lateness_history.db`, prepared once beforehand with `python -m flask --app app init-db` against that share. The NAS is storage only — it does not run the app.
-- **Single-writer rule is essential.** SQLite is only safe when one process writes to it. Concurrent writers over SMB cause `database is locked` errors and corruption risk. The app must apply the shared-NAS mitigations in #130 (busy_timeout, read-only GET connections, lock retry) before this layout is used. **Do not use this layout until those land.**
+- **Single-writer rule is essential.** SQLite is only safe when one process writes to it. Concurrent writers over SMB cause `database is locked` errors and corruption risk. The app must apply the shared-NAS mitigations in #138 (busy_timeout, read-only GET connections, lock retry) before this layout is used. **Do not use this layout until #1 lands.**
 - **Seed once.** Run `python -m flask --app app init-db` on a single machine against the empty shared DB to seed the boarders table, then start the app normally on every PC. Only one person should perform the seeding.
 - **Back up the NAS share.** Add a scheduled snapshot (NAS-side or `robocopy` from one machine). The DB is the archive of record.
 - **Trust boundary:** office LAN only, plain HTTP, no auth, no `Secure` cookies. Do not expose it off-campus.
