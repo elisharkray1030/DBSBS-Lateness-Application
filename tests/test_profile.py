@@ -423,6 +423,41 @@ class TestProfileTrendChart:
         open_charted_profile(browser_page, html)
 
 
+class TestEscalationSection:
+    def test_merged_rows_join_history_with_live_punishment_chronologically(self, fresh_client):
+        seed_history(
+            "ALICE",
+            "Alice",
+            "601A",
+            [("2026-01", 1, 3, 4), ("2026-02", 2, 5, 9)],
+        )
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-01",
+                assigned_at="2026-02-01T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        months = re.findall(r"<td>(2026-\d{2})</td>", section.group(0))
+        assert months == ["2026-01", "2026-02"]
+        assert "No punishment assigned" in section.group(0)
+        assert "Assigned" in section.group(0)
+        # Joined figures ride along: January history, February history plus
+        # the live punishment's deadline and due marker.
+        assert "<td>1</td>" in section.group(0)
+        assert "<td>4</td>" in section.group(0)
+        assert "<td>2</td>" in section.group(0)
+        assert "<td>9</td>" in section.group(0)
+        assert "2026-03-01" in section.group(0)
+        assert '<span class="due-badge">due</span>' in section.group(0)
+
+
 class TestProfileChrome:
     def test_profile_extends_shared_layout(self, fresh_client):
         html = profile_html(fresh_client, "ALICE").get_data(as_text=True)

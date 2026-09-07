@@ -880,6 +880,36 @@ def statistics():
     ))
 
 
+def _escalation_rows(series, live_punishments):
+    """Joins one boarder's lateness series with live punishments by month.
+
+    One merged row per distinct month, chronological ascending. Months from
+    either read appear; a month holding more than one live punishment keeps
+    the first. Voided-only months stay out — their detail lives in the
+    Punishment Timeline so voided rows never inflate the escalation signal.
+    """
+    rows: dict[str, dict[str, Any]] = {}
+    for entry in series:
+        rows[entry.month] = {
+            "month": entry.month,
+            "frequency": entry.frequency,
+            "total_minutes": entry.total_minutes,
+            "total_points": entry.total_points,
+            "punishment": None,
+        }
+    for punishment in live_punishments:
+        row = rows.setdefault(punishment.month, {
+            "month": punishment.month,
+            "frequency": None,
+            "total_minutes": None,
+            "total_points": None,
+            "punishment": None,
+        })
+        if row["punishment"] is None:
+            row["punishment"] = punishment
+    return [rows[month] for month in sorted(rows)]
+
+
 @bp.route('/boarder/<path:key>')
 def boarder_profile(key):
     """Renders one boarder's profile, addressed by URL-encoded Match Key.
@@ -903,6 +933,7 @@ def boarder_profile(key):
             )
     live_punishments = [p for p in punishments if p.status != 'voided']
     voided_punishments = [p for p in punishments if p.status == 'voided']
+    escalation_rows = _escalation_rows(series, live_punishments)
 
     return render_template('boarder.html', **_page_context(
         identity=identity,
@@ -916,6 +947,7 @@ def boarder_profile(key):
         ),
         live_punishments=live_punishments,
         voided_punishments=voided_punishments,
+        escalation_rows=escalation_rows,
     ))
 
 
