@@ -3,6 +3,7 @@
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from helpers import record
@@ -383,7 +384,7 @@ class TestProfileTrendChart:
             "frequency": [1, 2],
             "minutes": [3, 5],
         }
-        table = re.search(r'<table class="boarder-history-table">.*?</table>', html, re.S)
+        table = re.search(r'<table class="boarder-history-table"[^>]*>.*?</table>', html, re.S)
         assert table is not None
         for figure in ("2026-01", "2026-02", "4", "9", "3", "5"):
             assert f"<td>{figure}</td>" in table.group(0)
@@ -551,6 +552,30 @@ class TestEscalationSection:
         )
         assert voided is not None
         assert "<td>2026-01</td>" in voided.group(0)
+
+    def test_second_live_punishment_in_a_month_warns_and_keeps_first(
+        self, caplog
+    ):
+        # The storage seam guarantees at most one live punishment per
+        # boarder-month, so a second live row signals corruption, not a
+        # legal state. The merge keeps rendering the first but must say
+        # so loudly instead of dropping the row silently.
+        series = [
+            SimpleNamespace(
+                month="2026-02", frequency=2, total_minutes=5, total_points=9
+            )
+        ]
+        first = SimpleNamespace(month="2026-02", status="assigned")
+        second = SimpleNamespace(month="2026-02", status="overdue")
+
+        with caplog.at_level("WARNING", logger="app"):
+            rows = app_module._escalation_rows(series, [first, second])
+
+        assert len(rows) == 1
+        assert rows[0]["punishment"] is first
+        assert any(
+            "2026-02" in record.message for record in caplog.records
+        ), "no warning logged for the duplicate live punishment"
 
 
 class TestProfileChrome:

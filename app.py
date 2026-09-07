@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import secrets
 import sqlite3
@@ -6,7 +7,7 @@ import time
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 from urllib.parse import quote, urlencode
 
 try:
@@ -53,6 +54,10 @@ from punishments import (
     transition,
 )
 from records import build_profile_summary, normalize_name
+
+# Module logger: stdlib, so pure helpers below stay callable without an
+# application context (request-scoped code uses current_app.logger).
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("lateness", __name__)
 
@@ -134,6 +139,15 @@ def _resolve_setting(name: str, default: str) -> str:
         return os.environ.get(name, default)
 
 
+def _env_setting(name: str) -> "str | None":
+    """Reads one environment setting; a blank or missing value is unset.
+
+    Shared by the typed resolvers below so "empty export means unset"
+    lives in exactly one place; each resolver keeps its own parsing.
+    """
+    return os.environ.get(name, "").strip() or None
+
+
 def _resolve_max_content_length(provided: "dict[str, Any]") -> int:
     """Resolves the upload cap in bytes: inline config beats environment.
 
@@ -143,8 +157,8 @@ def _resolve_max_content_length(provided: "dict[str, Any]") -> int:
     """
     if "MAX_CONTENT_LENGTH" in provided:
         return int(provided["MAX_CONTENT_LENGTH"])
-    raw = os.environ.get("MAX_CONTENT_LENGTH", "").strip()
-    if raw:
+    raw = _env_setting("MAX_CONTENT_LENGTH")
+    if raw is not None:
         try:
             return int(raw)
         except ValueError:
@@ -161,7 +175,7 @@ def _resolve_log_level(provided: "dict[str, Any]") -> str:
     if "LOG_LEVEL" in provided:
         raw = str(provided["LOG_LEVEL"])
     else:
-        raw = os.environ.get("LOG_LEVEL", _DEFAULT_LOG_LEVEL)
+        raw = _env_setting("LOG_LEVEL") or _DEFAULT_LOG_LEVEL
     normalized = raw.strip().upper()
     if normalized in ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"):
         return normalized
@@ -192,6 +206,30 @@ def _script_error_response(message: str, status: int):
         if request.path.startswith(prefix):
             return jsonify(payload), status
     return None
+
+
+def _oversize_message(path: str, limit: str) -> str:
+    """Words the over-cap rejection for the upload surface at ``path``.
+
+    Pure copy dispatch, extracted so the path → wording table is testable
+    without issuing a request. The render target still branches at the call
+    site: the Master List surface re-renders its own panel while every
+    other page surface re-renders the dashboard.
+    """
+    if path == "/boarders/import":
+        return (
+            f"Error: This Master List file exceeds the {limit} limit on "
+            "Imports. Nothing was imported."
+        )
+    if path == "/":
+        return (
+            f"Error: This Monthly Log exceeds the {limit} limit on "
+            "Imports. Nothing was imported."
+        )
+    return (
+        f"Error: This request exceeds the {limit} limit on Imports. "
+        "Nothing was changed."
+    )
 
 
 def _db_path() -> str:
@@ -270,6 +308,27 @@ def with_lock_retry(action: str, work):
                     raise DatabaseBusy(action) from exc
                 raise
             time.sleep(RETRY_DELAYS_S[attempt])
+
+
+def _mutate_with_retry(
+    action: str,
+    work: "Callable[[], Any]",
+    on_busy: "Callable[[DatabaseBusy], Any]",
+    log_message: str,
+    *log_args: Any,
+) -> Any:
+    """Runs ``work`` under lock retry, answering sustained contention once.
+
+    The ``try/except DatabaseBusy`` shape repeats at every mutation route
+    while only the log line and the busy response differ per route, so both
+    ride along as arguments. ``on_busy`` receives the exception so the
+    response can name the staff action via :func:`busy_message`.
+    """
+    try:
+        return with_lock_retry(action, work)
+    except DatabaseBusy as exc:
+        current_app.logger.warning(log_message, *log_args)
+        return on_busy(exc)
 
 
 def init_db(app: "Flask | None" = None) -> None:
@@ -483,21 +542,7 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
             "Rejected oversize %s to %s (%s cap)",
             request.method, request.path, limit,
         )
-        if request.path == "/boarders/import":
-            message = (
-                f"Error: This Master List file exceeds the {limit} limit on "
-                "Imports. Nothing was imported."
-            )
-        elif request.path == "/":
-            message = (
-                f"Error: This Monthly Log exceeds the {limit} limit on "
-                "Imports. Nothing was imported."
-            )
-        else:
-            message = (
-                f"Error: This request exceeds the {limit} limit on Imports. "
-                "Nothing was changed."
-            )
+        message = _oversize_message(request.path, limit)
         script = _script_error_response(message, 413)
         if script is not None:
             return script
@@ -596,6 +641,9 @@ def home():
                     query = urlencode({"month": month_label})
                     return redirect(f"/?{query}")
 
+                # Deliberately not _mutate_with_retry: the busy outcome feeds
+                # the shared error variable and falls through to the page
+                # render below instead of returning a response directly.
                 try:
                     result = with_lock_retry("import the Monthly Log", attempt)
                 except DatabaseBusy as exc:
@@ -683,11 +731,12 @@ def add_boarder():
         current_app.logger.info("Added boarder %s to Master List", display_name)
         return redirect('/boarders')
 
-    try:
-        return with_lock_retry("add the boarder", attempt)
-    except DatabaseBusy as exc:
-        current_app.logger.warning("Add-boarder hit sustained contention")
-        return _render_boarders(error=busy_message(exc.action))
+    return _mutate_with_retry(
+        "add the boarder",
+        attempt,
+        lambda exc: _render_boarders(error=busy_message(exc.action)),
+        "Add-boarder hit sustained contention",
+    )
 
 
 @bp.route('/api/boarders/<int:boarder_id>', methods=['PATCH'])
@@ -705,11 +754,12 @@ def api_edit_boarder(boarder_id):
         current_app.logger.info("Updated boarder %s on Master List", display_name)
         return jsonify({'ok': True})
 
-    try:
-        return with_lock_retry("update the boarder", attempt)
-    except DatabaseBusy as exc:
-        current_app.logger.warning("Boarder update hit sustained contention")
-        return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
+    return _mutate_with_retry(
+        "update the boarder",
+        attempt,
+        lambda exc: (jsonify({'ok': False, 'error': busy_message(exc.action)}), 503),
+        "Boarder update hit sustained contention",
+    )
 
 
 @bp.route('/api/boarders', methods=['PATCH'])
@@ -745,11 +795,12 @@ def api_edit_boarders():
         current_app.logger.info("Updated Master List (%d boarders)", len(updates))
         return jsonify({'ok': True})
 
-    try:
-        return with_lock_retry("update the Master List", attempt)
-    except DatabaseBusy as exc:
-        current_app.logger.warning("Master List update hit sustained contention")
-        return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
+    return _mutate_with_retry(
+        "update the Master List",
+        attempt,
+        lambda exc: (jsonify({'ok': False, 'error': busy_message(exc.action)}), 503),
+        "Master List update hit sustained contention",
+    )
 
 
 @bp.route('/api/boarders/<int:boarder_id>', methods=['DELETE'])
@@ -760,11 +811,12 @@ def api_delete_boarder(boarder_id):
         current_app.logger.info("Removed boarder id %d from Master List", boarder_id)
         return jsonify({'ok': True})
 
-    try:
-        return with_lock_retry("remove the boarder", attempt)
-    except DatabaseBusy as exc:
-        current_app.logger.warning("Boarder removal hit sustained contention")
-        return jsonify({'ok': False, 'error': busy_message(exc.action)}), 503
+    return _mutate_with_retry(
+        "remove the boarder",
+        attempt,
+        lambda exc: (jsonify({'ok': False, 'error': busy_message(exc.action)}), 503),
+        "Boarder removal hit sustained contention",
+    )
 
 
 @bp.route('/boarders/import', methods=['POST'])
@@ -796,11 +848,12 @@ def import_boarders():
         current_app.logger.info("Replaced Master List from %s", file.filename)
         return redirect('/boarders')
 
-    try:
-        return with_lock_retry("import the Master List", attempt)
-    except DatabaseBusy as exc:
-        current_app.logger.warning("Master List import hit sustained contention")
-        return _render_boarders(error=busy_message(exc.action))
+    return _mutate_with_retry(
+        "import the Master List",
+        attempt,
+        lambda exc: _render_boarders(error=busy_message(exc.action)),
+        "Master List import hit sustained contention",
+    )
 
 
 @bp.route('/boarders/export')
@@ -903,13 +956,13 @@ def delete_month(month):
         current_app.logger.info("Deleted Monthly Report for month %s", month)
         return jsonify({'success': True, 'deleted': deleted_count})
 
-    try:
-        return with_lock_retry("delete the month's report", attempt)
-    except DatabaseBusy as exc:
-        current_app.logger.warning(
-            "Monthly Report deletion for month %s hit sustained contention", month
-        )
-        return jsonify({'error': busy_message(exc.action)}), 503
+    return _mutate_with_retry(
+        "delete the month's report",
+        attempt,
+        lambda exc: (jsonify({'error': busy_message(exc.action)}), 503),
+        "Monthly Report deletion for month %s hit sustained contention",
+        month,
+    )
 
 
 @bp.route('/assign/<path:month>', methods=['POST'])
@@ -951,14 +1004,17 @@ def assign_month(month):
         query = urlencode({'month': month})
         return redirect(f"/?{query}")
 
-    try:
-        return with_lock_retry("assign punishments", attempt)
-    except DatabaseBusy as exc:
-        current_app.logger.warning(
-            "Punishment assignment for month %s hit sustained contention", month
-        )
+    def _busy_redirect(exc):
         flash(busy_message(exc.action), "error")
         return _punishments_redirect()
+
+    return _mutate_with_retry(
+        "assign punishments",
+        attempt,
+        _busy_redirect,
+        "Punishment assignment for month %s hit sustained contention",
+        month,
+    )
 
 
 @bp.route('/punishments')
@@ -1066,8 +1122,11 @@ def _escalation_rows(series, live_punishments):
     """Joins one boarder's lateness series with live punishments by month.
 
     One merged row per distinct month, chronological ascending. Months from
-    either read appear; a month holding more than one live punishment keeps
-    the first. Voided-only months stay out — their detail lives in the
+    either read appear. The storage seam guarantees at most one live
+    punishment per boarder-month (partial unique index), so a month holding
+    more than one is corruption, not a legal state: the first row still
+    renders, but the collision is logged loudly instead of passing
+    silently. Voided-only months stay out — their detail lives in the
     Punishment Timeline so voided rows never inflate the escalation signal.
     """
     rows: dict[str, dict[str, Any]] = {}
@@ -1089,6 +1148,12 @@ def _escalation_rows(series, live_punishments):
         })
         if row["punishment"] is None:
             row["punishment"] = punishment
+        else:
+            logger.warning(
+                "Multiple live punishments for month %s; "
+                "rendering the first",
+                punishment.month,
+            )
     return [rows[month] for month in sorted(rows)]
 
 
@@ -1173,14 +1238,17 @@ def transition_punishment(punishment_id):
 
         return _punishments_redirect()
 
-    try:
-        return with_lock_retry("update the punishment", attempt)
-    except DatabaseBusy as exc:
-        current_app.logger.warning(
-            "Punishment update %d hit sustained contention", punishment_id
-        )
+    def _busy_redirect(exc):
         flash(busy_message(exc.action), "error")
         return _punishments_redirect()
+
+    return _mutate_with_retry(
+        "update the punishment",
+        attempt,
+        _busy_redirect,
+        "Punishment update %d hit sustained contention",
+        punishment_id,
+    )
 
 
 # Module-level instance keeps the existing entrypoints working

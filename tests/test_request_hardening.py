@@ -172,6 +172,23 @@ class TestOversizeUpload:
         assert b"Nothing was imported." not in response.data
 
 
+class TestOversizeMessage:
+    def test_master_list_path_names_master_list(self):
+        message = app_module._oversize_message("/boarders/import", "4 KB")
+        assert "Master List" in message
+        assert "Nothing was imported." in message
+
+    def test_home_path_names_monthly_log(self):
+        message = app_module._oversize_message("/", "4 KB")
+        assert "Monthly Log" in message
+        assert "Nothing was imported." in message
+
+    def test_other_paths_use_generic_message(self):
+        message = app_module._oversize_message("/boarders/add", "4 KB")
+        assert "Nothing was changed." in message
+        assert "Nothing was imported." not in message
+
+
 class TestServerErrorPage:
     def test_unhandled_exception_renders_clean_page(
         self, hardening_client, monkeypatch, caplog

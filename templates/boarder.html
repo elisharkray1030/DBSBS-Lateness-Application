@@ -97,7 +97,7 @@
             <h2>Boarder History</h2>
             {% if series %}
                 <div class="table-scroll">
-                    <table class="boarder-history-table">
+                    <table class="boarder-history-table" aria-label="Boarder History by month">
                         <thead>
                             <tr>
                                 <th scope="col">Month</th>
@@ -138,7 +138,7 @@
             <h2>Escalation by Month</h2>
             {% if escalation_rows %}
                 <div class="table-scroll">
-                    <table class="escalation-table" id="escalation-table">
+                    <table class="escalation-table" id="escalation-table" aria-label="Escalation by Month">
                         <thead>
                             <tr>
                                 <th scope="col">Month</th>
@@ -175,7 +175,7 @@
             <h2>Punishment Timeline</h2>
             {% if live_punishments %}
                 <div class="table-scroll">
-                    <table class="punishment-timeline" id="punishment-timeline-live">
+                    <table class="punishment-timeline" id="punishment-timeline-live" aria-label="Punishment Timeline">
                         {{ timeline_table(live_punishments) }}
                     </table>
                 </div>
@@ -192,7 +192,7 @@
             {% if voided_punishments %}
                 <h3 class="timeline-voided-heading">Voided</h3>
                 <div class="table-scroll timeline-voided">
-                    <table class="punishment-timeline" id="punishment-timeline-voided">
+                    <table class="punishment-timeline" id="punishment-timeline-voided" aria-label="Voided punishments">
                         {{ timeline_table(voided_punishments) }}
                     </table>
                 </div>
