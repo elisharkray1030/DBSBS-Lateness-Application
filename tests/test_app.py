@@ -1160,6 +1160,60 @@ class TestServerOwnedReportRows:
         bed_header = page.locator("#month-detail-table thead th").nth(0)
         assert bed_header.get_attribute("aria-sort") == "none"
 
+    def test_month_detail_highlights_late_boarders_only(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [
+                    record("ALICE", "101", 2, 5, 7),
+                    record("DARA", "103"),
+                ],
+                "2026-07",
+            )
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [
+            month_row("ALICE", "101", 2, 5, 7),
+            month_row("DARA", "103"),
+        ]
+
+        page = browser_page
+        page.set_content(html)
+        open_month_detail(page, rows)
+
+        late_row = page.locator("#month-detail-body tr", has_text="Alice")
+        clean_row = page.locator("#month-detail-body tr", has_text="Dara")
+        assert "month-report-late" in (late_row.get_attribute("class") or "")
+        assert "month-report-late" not in (clean_row.get_attribute("class") or "")
+        assert late_row.locator("td:nth-child(2)").evaluate(
+            "el => getComputedStyle(el).fontWeight"
+        ) in ("700", "bold")
+
+    def test_month_detail_highlight_survives_resorting(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [
+                    record("BOB", "102", 1, 19, 20),
+                    record("DARA", "103"),
+                ],
+                "2026-07",
+            )
+        html = fresh_client.get("/").get_data(as_text=True)
+        rows = [
+            month_row("BOB", "102", 1, 19, 20),
+            month_row("DARA", "103"),
+        ]
+
+        page = browser_page
+        page.set_content(html)
+        open_month_detail(page, rows)
+
+        page.locator("#month-detail-table thead th").nth(1).locator("button.sort-btn").click()
+        page.wait_for_function(
+            "() => document.querySelector('#month-detail-body tr td:nth-child(2)').textContent.trim() === 'Bob'"
+        )
+        late_row = page.locator("#month-detail-body tr", has_text="Bob")
+        assert "month-report-late" in (late_row.get_attribute("class") or "")
 
     def test_report_sorting_keeps_server_fields_and_resets_for_each_month(self):
         html = home_html()
@@ -2483,6 +2537,21 @@ class TestPrintOutputsActiveView:
         assert "Search Boarder History" not in printed
         assert "Assign Punishments" not in printed
         assert "Import Monthly Log" not in printed
+
+    def test_printing_open_month_report_keeps_late_name_cue(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        self._open_report(page)
+        page.emulate_media(media="print")
+
+        weight = page.locator("#month-detail-body tr td:nth-child(2)").first.evaluate(
+            "el => getComputedStyle(el).fontWeight"
+        )
+        assert weight in ("700", "bold")
 
     def test_empty_month_detail_skeleton_never_prints(self, fresh_client, browser_page):
         with app_module.connect() as conn:

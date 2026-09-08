@@ -30,6 +30,10 @@
             /* Badge and disabled-control tokens meet WCAG AA at rendered sizes. */
             --due-badge-bg: #c81030;
             --late-badge-bg: #495057;
+            /* Soft wash tinting late rows of the Monthly Report table;
+               deliberately weaker than --error-bg so a late row reads as
+               highlighted, not erroneous. */
+            --late-row-bg: #fdeef1;
             --disabled-bg: #e9ecef;
             --disabled-text: #495057;
             /* TODO: dark mode — map these tokens to a dark palette on a later theme hook. */
@@ -694,6 +698,18 @@
         .month-report-table th.sort-asc .sort-up,
         .month-report-table th.sort-desc .sort-down {
             opacity: 1;
+        }
+
+        /* Monthly Report late-row treatment: tint plus bold name so
+           late Boarders stand out on screen and, via the bold cue, in print.
+           Deliberately separate from .late-badge, which means a Punishment
+           was submitted past its Deadline. */
+        .month-report-table tr.month-report-late {
+            background-color: var(--late-row-bg);
+        }
+
+        .month-report-table tr.month-report-late td:nth-child(2) {
+            font-weight: 700;
         }
 
         .months-list {

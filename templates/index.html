@@ -508,6 +508,9 @@
         tbody.innerHTML = '';
         rows.forEach(row => {
             const tr = document.createElement('tr');
+            if (row.frequency > 0) {
+                tr.classList.add('month-report-late');
+            }
             tr.innerHTML = `
                 <td><strong>${escapeHtml(row.bed)}</strong></td>
                 <td><a class="boarder-link" href="/boarder/${encodeURIComponent(row.name)}">${escapeHtml(row.display_name)}</a></td>
