@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -52,6 +53,27 @@ def fresh_client(tmp_path):
     pushed.pop()
 
 
+_APP_JS = Path(__file__).resolve().parent.parent / "static" / "app.js"
+_APP_JS_TAG = '<script src="/static/app.js"></script>'
+
+
+def _inline_app_js(html):
+    """Inline static/app.js into set_content HTML (#166, umbrella #131).
+
+    Browser tests feed Flask-rendered HTML to Chromium via
+    ``page.set_content``, whose document URL (about:blank) cannot resolve a
+    relative ``<script src>`` — the browser never even issues the request, so
+    ``page.route`` cannot help. Inlining the byte-identical file restores the
+    exact pre-#166 execution environment with zero per-test edits. Retire this
+    when tests migrate to routed page loads (#163).
+    """
+    if _APP_JS_TAG not in html:
+        return html
+    js = _APP_JS.read_bytes().decode("utf-8")
+    assert "</script" not in js.lower(), "app.js is no longer safe to inline"
+    return html.replace(_APP_JS_TAG, "<script>" + js + "</script>")
+
+
 @pytest.fixture
 def browser_page():
     """Yields a headless Chromium page; skips when Playwright is unavailable."""
@@ -59,6 +81,12 @@ def browser_page():
     with playwright_api.sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
+        set_content = page.set_content
+
+        def set_content_with_static(html, **kwargs):
+            return set_content(_inline_app_js(html), **kwargs)
+
+        page.set_content = set_content_with_static
         try:
             yield page
         finally:

@@ -5,6 +5,7 @@ import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from html import unescape
+from pathlib import Path
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -89,6 +90,14 @@ def home_html(test_client=None):
     response = (test_client or client).get("/")
     assert response.status_code == 200
     return response.get_data(as_text=True)
+
+
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+def static_app_js():
+    """Reads the extracted index-page script (static/app.js, see #166)."""
+    return (_STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
 
 def tab_button_class(html, tab_name):
@@ -926,7 +935,7 @@ class TestImportPostRedirectGet:
         assert page.status_code == 200
         assert "Monthly report saved for '2026-07'." in html
         assert "2 Boarders recorded, 1 with lateness." in html
-        assert 'const initialMonthToOpen = "2026-07";' in html
+        assert 'id="initial-month-data">"2026-07"' in html
 
     def test_mixed_import_redirect_shows_confirmation_only(self, fresh_client):
         resp = self._import(
@@ -965,7 +974,9 @@ class TestImportPostRedirectGet:
         resp = self._import(fresh_client, month="")
 
         assert resp.status_code == 200
-        assert "Error" in resp.get_data(as_text=True)
+        assert "Please enter a valid month label for this report." in resp.get_data(
+            as_text=True
+        )
         with app_module.connect() as conn:
             assert storage.list_months(conn) == []
 
@@ -974,7 +985,7 @@ class TestImportPostRedirectGet:
         html = page.get_data(as_text=True)
 
         assert page.status_code == 200
-        assert "const initialMonthToOpen = null;" in html
+        assert 'id="initial-month-data">null<' in html
 
     def test_browser_refresh_of_redirect_target_shows_no_import_form_resubmit(self, fresh_client):
         resp = self._import(fresh_client)
@@ -1110,11 +1121,11 @@ class TestServerOwnedReportRows:
     def test_sort_headers_are_keyboard_operable_buttons(self):
         html = home_html()
         assert html.count('<button type="button" class="sort-btn"') == 5
-        assert "aria-sort" in html
+        assert "aria-sort" in static_app_js()
 
     def test_server_and_client_tables_render_bare_numbers_units_in_headers(self):
         html = home_html()
-        assert "<td>${row.total_minutes}</td>" in html
+        assert "<td>${row.total_minutes}</td>" in static_app_js()
         assert " mins</td>" not in html
 
     def test_history_search_results_share_month_report_table_styling(self, fresh_client):
@@ -1217,15 +1228,15 @@ class TestServerOwnedReportRows:
         assert "month-report-late" in (late_row.get_attribute("class") or "")
 
     def test_report_sorting_keeps_server_fields_and_resets_for_each_month(self):
-        html = home_html()
-        assert "row.display_name" in html
-        assert "row.total_points" in html
-        assert "monthDetailSort = { field: 'bed', direction: 'asc' };" in html
+        app_js = static_app_js()
+        assert "row.display_name" in app_js
+        assert "row.total_points" in app_js
+        assert "monthDetailSort = { field: 'bed', direction: 'asc' };" in app_js
 
     def test_client_renders_server_rows_and_display_names(self):
-        html = home_html()
-        assert "monthDetailRows = data.boarders;" in html
-        assert "row.display_name" in html
+        app_js = static_app_js()
+        assert "monthDetailRows = data.boarders;" in app_js
+        assert "row.display_name" in app_js
 
     def test_report_headers_sort_rows_and_reset_for_a_new_month(self, fresh_client, browser_page):
         with app_module.connect() as conn:
@@ -1366,10 +1377,13 @@ class TestServerOwnedReportRows:
         def fulfill_from_server(route):
             parsed = urlparse(route.request.url)
             if parsed.path.startswith("/static"):
-                route.fulfill(
-                    body=fresh_client.get(parsed.path).get_data(),
-                    content_type="image/png",
+                body = fresh_client.get(parsed.path).get_data()
+                content_type = (
+                    "application/javascript"
+                    if parsed.path.endswith(".js")
+                    else "image/png"
                 )
+                route.fulfill(body=body, content_type=content_type)
                 return
             target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
             response = fresh_client.get(target)
