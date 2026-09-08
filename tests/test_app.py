@@ -1,3 +1,4 @@
+import csv
 import io
 import os
 import re
@@ -2660,6 +2661,177 @@ class TestPrintOutputsActiveView:
         # Printed output matches the pre-pass baseline: white header band,
         # not the on-screen page tint (print-color-adjust is forced exact).
         assert chrome["headerBackground"] == "rgb(255, 255, 255)"
+
+
+class TestMonthlyReportSinglePagePrint:
+    """Single-page Monthly Report print guarantee (spec #164, ticket #165).
+
+    All three tests render through the existing month-detail helpers and
+    assert externally observable print behaviour — never individual CSS
+    rules. The pinned roster is the capacity-bound real size (~71
+    Boarders); graceful overflow (repeating header, unsplit rows) covers
+    any hypothetical larger roster.
+    """
+
+    MONTH = "2026-07"
+    # Pinned roster size: the capacity-bound real roster the single-page
+    # guarantee holds at.
+    PINNED_ROSTER_SIZE = 71
+    # A4 portrait at 96 CSS px/in with the pinned 10mm top/bottom page
+    # margins: (297 - 2*10) / 25.4 * 96.
+    PRINTABLE_HEIGHT_PX = 1047
+    # Condensed print type never drops below this floor for the fit.
+    MIN_PRINT_TYPE_PX = 10
+
+    def _pinned_rows(self):
+        """Builds the deterministic pinned roster in shared bed order."""
+        rows = []
+        for i in range(self.PINNED_ROSTER_SIZE):
+            late = i % 2 == 0
+            rows.append(
+                month_row(
+                    f"S{i:02d}",
+                    f"{600 + i}A",
+                    1 if late else 0,
+                    10 if late else 0,
+                    5 if late else 0,
+                )
+            )
+        return rows
+
+    def _open_pinned_report(self, fresh_client, page, rows=None):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], self.MONTH)
+        html = fresh_client.get("/").get_data(as_text=True)
+        page.set_content(html)
+        open_month_detail(page, rows if rows is not None else self._pinned_rows(), month=self.MONTH)
+
+    def test_pinned_roster_fits_one_portrait_sheet(self, fresh_client, browser_page):
+        page = browser_page
+        self._open_pinned_report(fresh_client, page)
+        page.emulate_media(media="print")
+
+        printed = page.evaluate("() => document.body.innerText")
+        # The sheet carries the brand header and the report title, but
+        # no app chrome or toolbar tooling.
+        assert "DBS Boarding School" in printed
+        assert f"Report for {self.MONTH}" in printed
+        assert "Assign Punishments" not in printed
+        assert "Lateness Disciplinary Dashboard" not in printed
+
+        fit = page.evaluate(
+            """() => {
+                const detail = document.getElementById('month-detail');
+                const thead = document.querySelector('#month-detail thead');
+                const firstRow = document.querySelector('#month-detail-body tr');
+                const cell = document.querySelector('#month-detail td');
+                return {
+                    detailHeight: detail.getBoundingClientRect().height,
+                    bodyHeight: document.body.scrollHeight,
+                    rowCount: document.querySelectorAll('#month-detail-body tr').length,
+                    headerDisplay: getComputedStyle(thead).display,
+                    rowBreak: getComputedStyle(firstRow).breakInside,
+                    typePx: parseFloat(getComputedStyle(cell).fontSize),
+                };
+            }"""
+        )
+        assert fit["rowCount"] == self.PINNED_ROSTER_SIZE
+        assert fit["detailHeight"] <= self.PRINTABLE_HEIGHT_PX
+        assert fit["bodyHeight"] <= self.PRINTABLE_HEIGHT_PX
+        # Graceful-overflow guards: the header repeats and rows never
+        # split if a future roster ever flows past one page.
+        assert fit["headerDisplay"] == "table-header-group"
+        assert fit["rowBreak"] == "avoid"
+        # Legibility floor: the fit is never bought by shrinking type
+        # below readability.
+        assert fit["typePx"] >= self.MIN_PRINT_TYPE_PX
+
+    def test_printed_report_matches_month_csv_in_bed_order(self, fresh_client, browser_page):
+        specs = [
+            ("ALICE", "101", 2, 5, 7),
+            ("BOB", "102", 0, 0, 0),
+            ("CARA", "601A", 3, 12, 9),
+            ("DARA", "601B", 0, 0, 0),
+            ("EVAN", "602A", 1, 30, 15),
+            ("FIONA", "602B", 4, 8, 11),
+            ("GUS", "603A", 0, 0, 0),
+            ("HANA", "603B", 2, 22, 6),
+        ]
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [record(name, bed, frequency=f, total_minutes=m, total_points=p)
+                 for name, bed, f, m, p in specs],
+                self.MONTH,
+            )
+        resp = fresh_client.get(f"/download_month/{self.MONTH}")
+        assert resp.status_code == 200
+        csv_rows = list(csv.reader(io.StringIO(resp.get_data(as_text=True))))
+        assert csv_rows[0] == ["Bed", "Name", "Frequency", "Total Minutes Late", "Total Points"]
+        csv_body = csv_rows[1:]
+
+        # Feed the report rows shuffled: bed-then-name ordering is owned
+        # by the render path, so paper must still match the CSV order.
+        shuffled = [specs[i] for i in (5, 0, 7, 2, 4, 1, 6, 3)]
+        rows = [
+            month_row(name, bed, f, m, p) for name, bed, f, m, p in shuffled
+        ]
+        html = fresh_client.get("/").get_data(as_text=True)
+        page = browser_page
+        page.set_content(html)
+        open_month_detail(page, rows, month=self.MONTH)
+        page.emulate_media(media="print")
+
+        printed = page.evaluate(
+            """() => Array.from(document.querySelectorAll('#month-detail-body tr')).map(tr =>
+                Array.from(tr.querySelectorAll('td')).map(td => td.textContent.trim())
+            )"""
+        )
+        assert len(printed) == len(csv_body)
+        assert {row[1] for row in printed} == {row[1] for row in csv_body}
+        assert all(len(row) == 5 for row in printed)
+        # Same shared bed order on paper as in the file.
+        assert [row[0] for row in printed] == [row[0] for row in csv_body]
+        assert printed == csv_body
+
+    def test_print_media_keeps_condensed_late_cue(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], self.MONTH)
+        html = fresh_client.get("/").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        open_month_detail(
+            page,
+            [
+                month_row("ALICE", "101", 2, 5, 7),
+                month_row("DARA", "102", 0, 0, 0),
+            ],
+            month=self.MONTH,
+        )
+        page.emulate_media(media="print")
+
+        cue = page.evaluate(
+            """() => {
+                const rows = Array.from(document.querySelectorAll('#month-detail-body tr'));
+                return rows.map(tr => ({
+                    late: tr.classList.contains('month-report-late'),
+                    rowTint: getComputedStyle(tr).backgroundColor,
+                    nameWeight: getComputedStyle(tr.querySelector('td:nth-child(2)')).fontWeight,
+                    colorAdjust: getComputedStyle(tr.querySelector('td')).printColorAdjust,
+                    typePx: parseFloat(getComputedStyle(tr.querySelector('td')).fontSize),
+                }));
+            }"""
+        )
+        late, clean = cue
+        assert late["late"]
+        assert late["nameWeight"] in ("700", "bold")
+        # Tint survives through the existing exact color adjustment.
+        assert late["rowTint"] == "rgb(253, 238, 241)"
+        assert late["colorAdjust"] == "exact"
+        assert late["typePx"] >= self.MIN_PRINT_TYPE_PX
+        assert not clean["late"]
+        assert clean["rowTint"] != late["rowTint"]
 
 
 class TestAsyncActionsNeverFailSilently:

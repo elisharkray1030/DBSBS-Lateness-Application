@@ -1093,18 +1093,33 @@
             }
         }
 
+        /* Monthly Report single-page sheet (spec #164): pinned portrait
+           size and margins rather than browser/printer defaults. */
+        @page {
+            size: A4 portrait;
+            margin: 10mm 8mm;
+        }
+
         @media print {
             /* Print outputs exactly the active view's report region: chrome,
                tooling, inactive panels, transient banners, and the empty
                month-detail skeleton are all excluded. Printing an open month
-               report is an intentional feature (body.report-open). */
+               report is an intentional feature (body.report-open). The
+               month-detail toolbar keeps its report title on paper; only its
+               buttons (and the assign panel) are tooling and stay hidden. */
             .site-header,
             .tabs,
             .upload-panel,
             #history form,
             .reports-panel > :not(#month-detail),
             .month-actions,
-            .month-detail-toolbar,
+            /* The Boarders panel reuses .month-detail-toolbar for its
+               import/edit controls: that whole toolbar stays hidden on
+               paper. Inside the Monthly Report only the buttons are
+               tooling — the report title must keep printing. */
+            .boarders-panel .month-detail-toolbar,
+            #month-detail .month-detail-toolbar button,
+            #month-detail-assign,
             .punishments-toolbar,
             .punishments-count,
             .banner,
@@ -1125,22 +1140,68 @@
             .print-brand {
                 display: flex !important;
                 align-items: center;
-                gap: 8px;
-                margin-bottom: 16px;
+                gap: 6px;
+                margin-bottom: 2px;
             }
 
             .print-brand img {
-                height: 28px;
+                height: 16px;
             }
 
             .print-brand span {
-                font-size: 1.1rem;
+                font-size: 12px;
                 font-weight: 700;
                 color: var(--navy);
             }
 
+            /* The dashboard H1 is app chrome: the printed sheet carries
+               the brand header plus the report title instead. */
+            body.report-open .container > h1 {
+                display: none !important;
+            }
+
+            /* The reports panel's screen padding would waste printable
+               height; the sheet needs every millimetre for the table. */
+            body.report-open #reports {
+                margin: 0;
+                padding: 0;
+                background: none;
+            }
+
+            /* Report title stays on the printed sheet; the toolbar's
+               buttons are hidden above, so only this heading prints. */
+            #month-detail .month-detail-toolbar {
+                margin-bottom: 2px;
+            }
+
+            #month-detail-title {
+                font-size: 12px;
+                margin: 0;
+            }
+
             #month-detail .table-scroll {
                 margin-top: 0;
+            }
+
+            /* Single-page Monthly Report fit: condensed but legible print
+               type with a 10px floor (never shrunk below readability),
+               tighter rows for vertical economy, a repeating table header,
+               and rows that never split so future overflow degrades
+               gracefully instead of tearing a Boarder across sheets. */
+            #month-detail thead {
+                display: table-header-group;
+            }
+
+            #month-detail tr {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+
+            #month-detail th,
+            #month-detail td {
+                font-size: 10px;
+                line-height: 1.05;
+                padding: 1px 4px;
             }
 
             .table-scroll {
@@ -1177,6 +1238,7 @@
             .container {
                 box-shadow: none;
                 max-width: 100%;
+                margin: 0 auto;
                 padding: 0;
             }
         }
