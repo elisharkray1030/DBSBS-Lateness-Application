@@ -65,7 +65,9 @@ def _inline_app_js(html):
     relative ``<script src>`` — the browser never even issues the request, so
     ``page.route`` cannot help. Inlining the byte-identical file restores the
     exact pre-#166 execution environment with zero per-test edits. Retire this
-    when tests migrate to routed page loads (#163).
+    only when the suite stops feeding rendered HTML to ``set_content`` — the
+    #163 test-helper fold keeps ``set_content``, so that ticket does not retire
+    this shim.
     """
     if _APP_JS_TAG not in html:
         return html
