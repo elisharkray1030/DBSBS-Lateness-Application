@@ -27,19 +27,20 @@
         return numericStringCompare(matchA[1], matchB[1]) || lexicalCompare(matchA[2], matchB[2]);
     }
 
+    // Single sort-field map driving both the comparator and the header
+    // highlight. Unknown fields fall back to points, matching the old
+    // final-else branch.
+    const monthSortFields = {
+        bed: { compare: (a, b) => bedComparator(a.bed, b.bed), headerIndex: 0 },
+        name: { compare: (a, b) => a.display_name.localeCompare(b.display_name), headerIndex: 1 },
+        frequency: { compare: (a, b) => a.frequency - b.frequency, headerIndex: 2 },
+        minutes: { compare: (a, b) => a.total_minutes - b.total_minutes, headerIndex: 3 },
+        points: { compare: (a, b) => a.total_points - b.total_points, headerIndex: 4 },
+    };
+
     function compareMonthRows(a, b) {
-        let result;
-        if (monthDetailSort.field === 'bed') {
-            result = bedComparator(a.bed, b.bed);
-        } else if (monthDetailSort.field === 'name') {
-            result = a.display_name.localeCompare(b.display_name);
-        } else if (monthDetailSort.field === 'frequency') {
-            result = a.frequency - b.frequency;
-        } else if (monthDetailSort.field === 'minutes') {
-            result = a.total_minutes - b.total_minutes;
-        } else {
-            result = a.total_points - b.total_points;
-        }
+        const entry = monthSortFields[monthDetailSort.field] || monthSortFields.points;
+        let result = entry.compare(a, b);
 
         if (result === 0) {
             result = a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
@@ -65,7 +66,8 @@
             th.classList.remove('sort-asc', 'sort-desc');
             th.setAttribute('aria-sort', 'none');
         });
-        const sortIndex = ['bed', 'name', 'frequency', 'minutes', 'points'].indexOf(monthDetailSort.field);
+        const sortEntry = monthSortFields[monthDetailSort.field];
+        const sortIndex = sortEntry ? sortEntry.headerIndex : -1;
         if (sortIndex >= 0) {
             headers[sortIndex].classList.add(`sort-${monthDetailSort.direction}`);
             headers[sortIndex].setAttribute(
