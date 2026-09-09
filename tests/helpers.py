@@ -98,6 +98,15 @@ def assert_late_name_bold(cell):
     assert cell.evaluate("el => getComputedStyle(el).fontWeight") in ("700", "bold")
 
 
+def assert_late_bed_not_bold(cell):
+    """Asserts the bed cell on a late month-detail row is not bold (#169).
+
+    Only the Name cell carries the bold cue (via the month-report-late
+    stylesheet rule); the Bed cell must stay normal weight.
+    """
+    assert cell.evaluate("el => getComputedStyle(el).fontWeight") in ("400", "normal")
+
+
 def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10",
                      assigned_at="2026-04-01T09:00:00+00:00", include_report=True):
     """Assigns Punishments (optionally saving their Monthly Report first).

@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import pytest
 from helpers import (
+    assert_late_bed_not_bold,
     assert_late_name_bold,
     delete_csrf,
     history_panel_html,
@@ -1192,6 +1193,7 @@ class TestServerOwnedReportRows:
         assert "month-report-late" in (late_row.get_attribute("class") or "")
         assert "month-report-late" not in (clean_row.get_attribute("class") or "")
         assert_late_name_bold(late_row.locator("td:nth-child(2)"))
+        assert_late_bed_not_bold(late_row.locator("td:nth-child(1)"))
 
     def test_month_detail_highlight_survives_resorting(self, fresh_client, browser_page):
         rows = [
@@ -1227,6 +1229,13 @@ class TestServerOwnedReportRows:
         app_js = static_app_js()
         assert "monthDetailRows = data.boarders;" in app_js
         assert "row.display_name" in app_js
+
+    def test_client_bed_cell_carries_no_bold_cue(self):
+        # Only the Name cell carries the late bold cue (#169, #161): the
+        # month-report-late stylesheet rule bolds td:nth-child(2), so the
+        # Bed cell template must not add its own <strong>.
+        app_js = static_app_js()
+        assert "<strong>${escapeHtml(row.bed)}</strong>" not in app_js
 
     def test_report_headers_sort_rows_and_reset_for_a_new_month(self, fresh_client, browser_page):
         with app_module.connect() as conn:

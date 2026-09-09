@@ -83,7 +83,7 @@
                 tr.classList.add('month-report-late');
             }
             tr.innerHTML = `
-                <td><strong>${escapeHtml(row.bed)}</strong></td>
+                <td>${escapeHtml(row.bed)}</td>
                 <td><a class="boarder-link" href="/boarder/${encodeURIComponent(row.name)}">${escapeHtml(row.display_name)}</a></td>
                 <td>${row.frequency}</td>
                 <td>${row.total_minutes}</td>
