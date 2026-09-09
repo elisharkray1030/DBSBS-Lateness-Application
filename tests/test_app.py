@@ -5,20 +5,21 @@ import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from html import unescape
-from pathlib import Path
 from typing import ClassVar
 from urllib.parse import urlparse
 
 import pytest
 from helpers import (
+    assert_late_name_bold,
     delete_csrf,
     history_panel_html,
     month_row,
-    open_month_detail,
+    open_seeded_month_detail,
     patch_csrf,
     post_csrf,
     record,
     seed_punishments,
+    static_dir,
 )
 from records import Boarder
 
@@ -92,7 +93,7 @@ def home_html(test_client=None):
     return response.get_data(as_text=True)
 
 
-_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+_STATIC_DIR = static_dir()
 
 
 def static_app_js():
@@ -1136,24 +1137,21 @@ class TestServerOwnedReportRows:
         assert '<table class="boarders-table">' in history_panel
 
     def test_browser_sort_headers_reach_and_announce_direction(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("ALICE", "101", 2, 5, 7),
-                    record("BOB", "102", 4, 8, 12),
-                ],
-                "2026-07",
-            )
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [
             month_row("ALICE", "101", 2, 5, 7),
             month_row("BOB", "102", 4, 8, 12),
         ]
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [
+                record("ALICE", "101", 2, 5, 7),
+                record("BOB", "102", 4, 8, 12),
+            ],
+            rows,
+        )
 
         frequency_header = page.locator("#month-detail-table thead th").nth(2)
         assert frequency_header.get_attribute("aria-sort") == "none"
@@ -1173,52 +1171,44 @@ class TestServerOwnedReportRows:
         assert bed_header.get_attribute("aria-sort") == "none"
 
     def test_month_detail_highlights_late_boarders_only(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("ALICE", "101", 2, 5, 7),
-                    record("DARA", "103"),
-                ],
-                "2026-07",
-            )
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [
             month_row("ALICE", "101", 2, 5, 7),
             month_row("DARA", "103"),
         ]
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [
+                record("ALICE", "101", 2, 5, 7),
+                record("DARA", "103"),
+            ],
+            rows,
+        )
 
         late_row = page.locator("#month-detail-body tr", has_text="Alice")
         clean_row = page.locator("#month-detail-body tr", has_text="Dara")
         assert "month-report-late" in (late_row.get_attribute("class") or "")
         assert "month-report-late" not in (clean_row.get_attribute("class") or "")
-        assert late_row.locator("td:nth-child(2)").evaluate(
-            "el => getComputedStyle(el).fontWeight"
-        ) in ("700", "bold")
+        assert_late_name_bold(late_row.locator("td:nth-child(2)"))
 
     def test_month_detail_highlight_survives_resorting(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("BOB", "102", 1, 19, 20),
-                    record("DARA", "103"),
-                ],
-                "2026-07",
-            )
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [
             month_row("BOB", "102", 1, 19, 20),
             month_row("DARA", "103"),
         ]
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [
+                record("BOB", "102", 1, 19, 20),
+                record("DARA", "103"),
+            ],
+            rows,
+        )
 
         page.locator("#month-detail-table thead th").nth(1).locator("button.sort-btn").click()
         page.wait_for_function(
@@ -1955,14 +1945,12 @@ class TestDestructiveActionsNameTarget:
         assert submitted is not None
 
     def test_delete_report_confirmation_names_exact_month_and_punishment_impact(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 1, 1, 2)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [month_row("ALICE", "101", 1, 1, 2)]
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 1, 1, 2)], rows
+        )
         page.locator("#month-detail-delete").click()
 
         message = page.locator("#confirm-modal-message").text_content()
@@ -2529,21 +2517,18 @@ class TestPrintOutputsActiveView:
         month_row("BOB", "102", 1, 19, 20),
     ]
 
-    def _open_report(self, page):
-        open_month_detail(page, self.ROWS)
+    def _open_report(self, fresh_client, page):
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], self.ROWS
+        )
 
     def _printed_text(self, page):
         page.emulate_media(media="print")
         return page.evaluate("() => document.body.innerText")
 
     def test_printing_open_month_report_yields_only_that_report(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
-
         page = browser_page
-        page.set_content(html)
-        self._open_report(page)
+        self._open_report(fresh_client, page)
         printed = self._printed_text(page)
 
         assert "Alice" in printed
@@ -2554,19 +2539,13 @@ class TestPrintOutputsActiveView:
         assert "Import Monthly Log" not in printed
 
     def test_printing_open_month_report_keeps_late_name_cue(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
-
         page = browser_page
-        page.set_content(html)
-        self._open_report(page)
+        self._open_report(fresh_client, page)
         page.emulate_media(media="print")
 
-        weight = page.locator("#month-detail-body tr td:nth-child(2)").first.evaluate(
-            "el => getComputedStyle(el).fontWeight"
+        assert_late_name_bold(
+            page.locator("#month-detail-body tr td:nth-child(2)").first
         )
-        assert weight in ("700", "bold")
 
     def test_empty_month_detail_skeleton_never_prints(self, fresh_client, browser_page):
         with app_module.connect() as conn:
@@ -2634,14 +2613,12 @@ class TestPrintOutputsActiveView:
         assert "View Reports in Database" not in printed
 
     def test_print_strips_card_chrome_and_pre_scroll_header_shadow(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
         rows = [month_row(f"S{i:02d}", f"{600 + i}A", 1, 10, 10) for i in range(30)]
-        html = fresh_client.get("/").get_data(as_text=True)
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], rows
+        )
 
         # Scroll first so the sticky header carries its on-screen lift cue,
         # then confirm printing suppresses it along with the card chrome.
@@ -2714,11 +2691,13 @@ class TestMonthlyReportSinglePagePrint:
         return rows
 
     def _open_pinned_report(self, fresh_client, page, rows=None):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], self.MONTH)
-        html = fresh_client.get("/").get_data(as_text=True)
-        page.set_content(html)
-        open_month_detail(page, rows if rows is not None else self._pinned_rows(), month=self.MONTH)
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            rows if rows is not None else self._pinned_rows(),
+            month=self.MONTH,
+        )
 
     def test_pinned_roster_fits_one_portrait_sheet(self, fresh_client, browser_page):
         page = browser_page
@@ -2771,29 +2750,27 @@ class TestMonthlyReportSinglePagePrint:
             ("GUS", "603A", 0, 0, 0),
             ("HANA", "603B", 2, 22, 6),
         ]
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [record(name, bed, frequency=f, total_minutes=m, total_points=p)
-                 for name, bed, f, m, p in specs],
-                self.MONTH,
-            )
-        resp = fresh_client.get(f"/download_month/{self.MONTH}")
-        assert resp.status_code == 200
-        csv_rows = list(csv.reader(io.StringIO(resp.get_data(as_text=True))))
-        assert csv_rows[0] == ["Bed", "Name", "Frequency", "Total Minutes Late", "Total Points"]
-        csv_body = csv_rows[1:]
-
         # Feed the report rows shuffled: bed-then-name ordering is owned
         # by the render path, so paper must still match the CSV order.
         shuffled = [specs[i] for i in (5, 0, 7, 2, 4, 1, 6, 3)]
         rows = [
             month_row(name, bed, f, m, p) for name, bed, f, m, p in shuffled
         ]
-        html = fresh_client.get("/").get_data(as_text=True)
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows, month=self.MONTH)
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record(name, bed, frequency=f, total_minutes=m, total_points=p)
+             for name, bed, f, m, p in specs],
+            rows,
+            month=self.MONTH,
+        )
+        resp = fresh_client.get(f"/download_month/{self.MONTH}")
+        assert resp.status_code == 200
+        csv_rows = list(csv.reader(io.StringIO(resp.get_data(as_text=True))))
+        assert csv_rows[0] == ["Bed", "Name", "Frequency", "Total Minutes Late", "Total Points"]
+        csv_body = csv_rows[1:]
+
         page.emulate_media(media="print")
 
         printed = page.evaluate(
@@ -2809,14 +2786,11 @@ class TestMonthlyReportSinglePagePrint:
         assert printed == csv_body
 
     def test_print_media_keeps_condensed_late_cue(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], self.MONTH)
-        html = fresh_client.get("/").get_data(as_text=True)
-
         page = browser_page
-        page.set_content(html)
-        open_month_detail(
+        open_seeded_month_detail(
+            fresh_client,
             page,
+            [record("ALICE", "101", 2, 5, 7)],
             [
                 month_row("ALICE", "101", 2, 5, 7),
                 month_row("DARA", "102", 0, 0, 0),
@@ -2947,31 +2921,26 @@ class TestAsyncActionsNeverFailSilently:
 
 
 class TestAssignPanelPositiveConsent:
-    def _open_assign_panel(self, page, rows):
-        open_month_detail(page, rows)
+    def _open_assign_panel(self, fresh_client, page, seed_records, rows):
+        open_seeded_month_detail(fresh_client, page, seed_records, rows)
         page.locator("#month-detail-assign-btn").click()
 
     def test_panel_prechecks_eligible_boarders_with_positive_labels(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("ALICE", "101", 2, 5, 7, display_name="Alice"),
-                    record("BOB", "102", 1, 19, 20, display_name="Bob"),
-                    record("CAROL", "103", 0, 0, 0, display_name="Carol"),
-                ],
-                "2026-07",
-            )
-        html = fresh_client.get("/").get_data(as_text=True)
-        rows = [
-            month_row("ALICE", "101", 2, 5, 7),
-            month_row("BOB", "102", 1, 19, 20),
-            month_row("CAROL", "103", 0, 0, 0),
-        ]
-
         page = browser_page
-        page.set_content(html)
-        self._open_assign_panel(page, rows)
+        self._open_assign_panel(
+            fresh_client,
+            page,
+            [
+                record("ALICE", "101", 2, 5, 7, display_name="Alice"),
+                record("BOB", "102", 1, 19, 20, display_name="Bob"),
+                record("CAROL", "103", 0, 0, 0, display_name="Carol"),
+            ],
+            [
+                month_row("ALICE", "101", 2, 5, 7),
+                month_row("BOB", "102", 1, 19, 20),
+                month_row("CAROL", "103", 0, 0, 0),
+            ],
+        )
 
         checkboxes = page.locator('#assign-boarders input[type="checkbox"]')
         assert checkboxes.count() == 2
@@ -2991,24 +2960,19 @@ class TestAssignPanelPositiveConsent:
         assert counter.text_content().strip() == "1 punishment will be assigned."
 
     def test_submitting_sends_only_checked_boarders(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("ALICE", "101", 2, 5, 7, display_name="Alice"),
-                    record("BOB", "102", 1, 19, 20, display_name="Bob"),
-                ],
-                "2026-07",
-            )
-        html = fresh_client.get("/").get_data(as_text=True)
-        rows = [
-            month_row("ALICE", "101", 2, 5, 7),
-            month_row("BOB", "102", 1, 19, 20),
-        ]
-
         page = browser_page
-        page.set_content(html)
-        self._open_assign_panel(page, rows)
+        self._open_assign_panel(
+            fresh_client,
+            page,
+            [
+                record("ALICE", "101", 2, 5, 7, display_name="Alice"),
+                record("BOB", "102", 1, 19, 20, display_name="Bob"),
+            ],
+            [
+                month_row("ALICE", "101", 2, 5, 7),
+                month_row("BOB", "102", 1, 19, 20),
+            ],
+        )
         page.locator("#assign-deadline").fill("2026-08-10")
         page.evaluate(
             """() => {
@@ -3388,14 +3352,10 @@ class TestVisualConsistencyPass:
             page.set_viewport_size({"width": 1280, "height": 720})
 
     def test_checkboxes_render_as_navy_tiles_with_scale_in_checks(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
-        rows = [month_row("ALICE", "101", 2, 5, 7)]
-
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], [month_row("ALICE", "101", 2, 5, 7)]
+        )
         page.locator("#month-detail-assign-btn").click()
 
         checkbox = page.locator('#assign-boarders input[type="checkbox"]').first
@@ -3477,14 +3437,12 @@ class TestVisualConsistencyPass:
         assert card["headerBackground"] == "rgb(248, 249, 250)"  # --page-bg
 
     def test_sticky_header_lift_appears_only_while_rows_pass_beneath(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
         rows = [month_row(f"S{i:02d}", f"{600 + i}A", 1, 10, 10) for i in range(30)]
-        html = fresh_client.get("/").get_data(as_text=True)
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], rows
+        )
 
         def shadow_state():
             return page.evaluate(
@@ -3707,14 +3665,12 @@ class TestMonthReportToolbarOrdering:
         )
 
     def test_delete_is_rightmost_and_only_danger_control_when_report_open(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [month_row("ALICE", "101", 2, 5, 7)]
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], rows
+        )
 
         boxes = page.evaluate(
             """ids => ids.map(id => {
@@ -4080,15 +4036,13 @@ class TestUiTidinessHoldsEverywhere:
             assert len(sizes) == 1, typography[tier]
 
     def test_narrow_viewport_stacks_open_report_toolbar_without_overflow(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [month_row("ALICE", "101", 2, 5, 7)]
 
         page = browser_page
         page.set_viewport_size({"width": 360, "height": 800})
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], rows
+        )
 
         toolbar_direction = page.evaluate(
             """() => {

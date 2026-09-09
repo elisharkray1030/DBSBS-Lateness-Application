@@ -2,11 +2,10 @@
 
 import json
 import re
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from helpers import record
+from helpers import record, static_dir
 
 import app as app_module
 import storage
@@ -32,11 +31,11 @@ def seed_history(key, display_name, bed, months):
 def open_charted_profile(browser_page, html):
     """Fulfils /boarder/ with rendered HTML and local static files, then
     waits until Chart.js has drawn the profile chart on the canvas."""
-    static_dir = Path(__file__).resolve().parent.parent / "static"
+    static_dir_path = static_dir()
 
     def fulfill_static(route):
         filename = route.request.url.rsplit("/", 1)[-1]
-        local = static_dir / filename
+        local = static_dir_path / filename
         if local.is_file():
             route.fulfill(
                 body=local.read_bytes(),

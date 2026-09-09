@@ -1,8 +1,14 @@
 import re
+from pathlib import Path
 
 from records import BoarderRecord
 
 import storage
+
+
+def static_dir():
+    """Resolves the repo's static-assets directory for browser tests."""
+    return Path(__file__).resolve().parent.parent / "static"
 
 
 def history_panel_html(html):
@@ -63,6 +69,33 @@ def open_month_detail(page, rows, month="2026-07"):
         "count => document.querySelectorAll('#month-detail-body tr').length === count",
         arg=len(rows),
     )
+
+
+def open_seeded_month_detail(
+    fresh_client, page, seed_records, rows, month="2026-07", route="/", seed_month=None
+):
+    """Seeds a month, renders the page, and opens the month detail in one call.
+
+    Fold of the repeated browser month-detail scaffold (#163): seed the
+    month, fetch the page through the Flask client, set page content, then
+    open the month detail via :func:`open_month_detail`. Mock ``rows`` stay
+    separate from the seed — several sites mock rows that differ from it.
+    ``seed_month`` defaults to ``month``; only page content and ``fetch``
+    are touched, so caller-side viewport/print-media setup keeps its
+    ordering.
+    """
+    import app as app_module
+
+    with app_module.connect() as conn:
+        storage.save_month(conn, seed_records, seed_month or month)
+    html = fresh_client.get(route).get_data(as_text=True)
+    page.set_content(html)
+    open_month_detail(page, rows, month=month)
+
+
+def assert_late_name_bold(cell):
+    """Asserts the late-name cue (bold name cell) on a month-detail row."""
+    assert cell.evaluate("el => getComputedStyle(el).fontWeight") in ("700", "bold")
 
 
 def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10",
