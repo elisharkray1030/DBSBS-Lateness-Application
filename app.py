@@ -65,6 +65,7 @@ bp = Blueprint("lateness", __name__)
 # wins over environment. No database I/O happens at import time.
 _DEFAULT_DB_PATH = "lateness_history.db"
 _DEFAULT_NAMELIST_PATH = "namelist.csv"
+_DEFAULT_LOG_ARCHIVE_DIR = "data/logs"
 
 # Repeat-offender watchlist: a boarder reaching this many Points for this
 # many consecutive calendar months lands on the House Dashboard watchlist.
@@ -240,6 +241,23 @@ def _db_path() -> str:
 def _namelist_path() -> str:
     """Resolves the seed-list location, with the same precedence as above."""
     return _resolve_setting("NAMELIST_PATH", _DEFAULT_NAMELIST_PATH)
+
+
+def _log_archive_dir() -> str:
+    """Resolves the Monthly Log archive directory, same precedence."""
+    return _resolve_setting("LOG_ARCHIVE_DIR", _DEFAULT_LOG_ARCHIVE_DIR)
+
+
+def _archive_monthly_log(month_label: str, payload: bytes) -> None:
+    """Files the source Monthly Log CSV under its month for backup/rebuild.
+
+    Only called once an Import has committed, so ``month_label`` has already
+    passed ``MONTH_LABEL_PATTERN`` (canonical ``YYYY-MM``) — the filename is
+    safe by construction, and a re-Import overwrites that month's copy.
+    """
+    directory = Path(_log_archive_dir())
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{month_label}.csv").write_bytes(payload)
 
 
 def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
@@ -469,8 +487,9 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     """Builds the Flask application without touching the database.
 
     Precedence per key: inline ``config`` mapping beats environment beats
-    built-in defaults. ``DB_PATH``, ``NAMELIST_PATH``, and ``SECRET_KEY``
-    always land in ``app.config``; any extra keys (e.g. ``TESTING``) pass
+    built-in defaults. ``DB_PATH``, ``NAMELIST_PATH``, ``LOG_ARCHIVE_DIR``,
+    and ``SECRET_KEY`` always land in ``app.config``; any extra keys (e.g.
+    ``TESTING``) pass
     through untouched. Database preparation is explicit via the
     ``init-db`` command or :func:`init_db`, never an import side effect.
     ``SECRET_KEY`` has no default: startup aborts with a clear message
@@ -490,6 +509,9 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     settings = {
         "DB_PATH": os.environ.get("DB_PATH", _DEFAULT_DB_PATH),
         "NAMELIST_PATH": os.environ.get("NAMELIST_PATH", _DEFAULT_NAMELIST_PATH),
+        "LOG_ARCHIVE_DIR": os.environ.get(
+            "LOG_ARCHIVE_DIR", _DEFAULT_LOG_ARCHIVE_DIR
+        ),
         **provided,
         "SECRET_KEY": secret,
         # Resolved after the inline spread so the normalized value wins over
@@ -634,6 +656,15 @@ def home():
                             month_label, outcome.reason,
                         )
                         return f"Error: {outcome.reason}"
+                    try:
+                        _archive_monthly_log(month_label, payload)
+                    except OSError:
+                        # The Import is already committed; a failed archive
+                        # copy must not turn a successful save into an error.
+                        current_app.logger.exception(
+                            "Could not archive Monthly Log for month %s",
+                            month_label,
+                        )
                     current_app.logger.info(
                         "Imported Monthly Log for month %s", month_label
                     )

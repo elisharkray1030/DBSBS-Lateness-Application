@@ -5,7 +5,8 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DB_PATH=/data/lateness_history.db \
-    NAMELIST_PATH=/data/namelist.csv
+    NAMELIST_PATH=/data/namelist.csv \
+    LOG_ARCHIVE_DIR=/data/logs
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt

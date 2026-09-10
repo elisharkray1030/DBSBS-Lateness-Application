@@ -61,6 +61,29 @@ class TestFactoryConfig:
         assert app.config["NAMELIST_PATH"] == "namelist.csv"
         assert app.secret_key == "env-secret"
 
+    def test_log_archive_dir_defaults_and_precedence(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LOG_ARCHIVE_DIR", raising=False)
+        default_app = app_module.create_app(
+            {"DB_PATH": str(tmp_path / "d.db"), "SECRET_KEY": "test-secret-key"}
+        )
+        assert default_app.config["LOG_ARCHIVE_DIR"] == "data/logs"
+
+        monkeypatch.setenv("LOG_ARCHIVE_DIR", str(tmp_path / "env-logs"))
+        env_app = app_module.create_app(
+            {"DB_PATH": str(tmp_path / "e.db"), "SECRET_KEY": "test-secret-key"}
+        )
+        assert env_app.config["LOG_ARCHIVE_DIR"] == str(tmp_path / "env-logs")
+
+        inline = tmp_path / "inline-logs"
+        inline_app = app_module.create_app(
+            {
+                "DB_PATH": str(tmp_path / "i.db"),
+                "SECRET_KEY": "test-secret-key",
+                "LOG_ARCHIVE_DIR": str(inline),
+            }
+        )
+        assert inline_app.config["LOG_ARCHIVE_DIR"] == str(inline)
+
     def test_missing_secret_aborts_startup(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SECRET_KEY", raising=False)
         with pytest.raises(SystemExit, match="SECRET_KEY"):

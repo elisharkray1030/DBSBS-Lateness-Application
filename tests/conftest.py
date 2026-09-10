@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,12 @@ import storage
 # still refuses to boot without SECRET_KEY; every factory call below also
 # passes it inline.
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
+
+# Keep Monthly Log archives out of the repository worktree: ad-hoc
+# application factories that exercise an Import would otherwise write to the
+# default ``data/logs`` under the current directory. Assigned (not
+# setdefault) so a developer's real LOG_ARCHIVE_DIR can never leak into tests.
+os.environ["LOG_ARCHIVE_DIR"] = tempfile.mkdtemp(prefix="lateness-archive-")
 
 
 @pytest.fixture
