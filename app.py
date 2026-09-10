@@ -257,7 +257,11 @@ def _archive_monthly_log(month_label: str, payload: bytes) -> None:
     """
     directory = Path(_log_archive_dir())
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / f"{month_label}.csv").write_bytes(payload)
+    destination = directory / f"{month_label}.csv"
+    # Write-then-rename so a backup (or a crash) never sees a truncated file.
+    staging = directory / f"{month_label}.csv.tmp"
+    staging.write_bytes(payload)
+    os.replace(staging, destination)
 
 
 def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
@@ -656,19 +660,26 @@ def home():
                             month_label, outcome.reason,
                         )
                         return f"Error: {outcome.reason}"
-                    try:
-                        _archive_monthly_log(month_label, payload)
-                    except OSError:
-                        # The Import is already committed; a failed archive
-                        # copy must not turn a successful save into an error.
-                        current_app.logger.exception(
-                            "Could not archive Monthly Log for month %s",
-                            month_label,
-                        )
                     current_app.logger.info(
                         "Imported Monthly Log for month %s", month_label
                     )
                     flash(outcome.message, "success")
+                    try:
+                        _archive_monthly_log(month_label, payload)
+                    except OSError:
+                        # The Import is already committed, so a failed archive
+                        # copy must not turn a successful save into an error —
+                        # but it must not be silent either: without the source
+                        # CSV the Monthly Report cannot be rebuilt.
+                        current_app.logger.exception(
+                            "Could not archive Monthly Log for month %s",
+                            month_label,
+                        )
+                        flash(
+                            "Warning: the Monthly Log was saved but its source "
+                            "file could not be archived. Keep the original file.",
+                            "error",
+                        )
                     query = urlencode({"month": month_label})
                     return redirect(f"/?{query}")
 

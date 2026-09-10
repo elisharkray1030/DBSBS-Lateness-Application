@@ -33,7 +33,7 @@ From the host:
 
 ```powershell
 cd C:\lateness-app
-.\.venv\Scripts\python.exe backup_db.py --dest "\\NAS\share\lateness-backups"
+.\.venv\Scripts\python.exe backup_db.py --dest "\\NAS\lateness-backups"
 ```
 
 Confirm a `lateness-<timestamp>\` folder appears containing

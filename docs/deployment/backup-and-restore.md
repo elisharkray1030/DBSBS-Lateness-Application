@@ -5,7 +5,7 @@ NAS is storage only; it never holds the live database.
 
 ## What each backup contains
 
-Every run creates a timestamped folder `lateness-YYYYMMDD-HHMMSS` under the
+Every run creates a timestamped folder `lateness-YYYYMMDD-HHMMSSffffff` under the
 destination, holding:
 
 - `lateness_history.db` — a consistent copy taken with SQLite's **online backup
@@ -23,7 +23,7 @@ copies accordingly.
 
 ```powershell
 cd C:\lateness-app
-.\.venv\Scripts\python.exe backup_db.py --dest "\\NAS\share\lateness-backups"
+.\.venv\Scripts\python.exe backup_db.py --dest "\\NAS\lateness-backups"
 ```
 
 Defaults come from the host environment: `DB_PATH`, `LOG_ARCHIVE_DIR`,
@@ -39,7 +39,7 @@ runs whether or not the user is logged on has no drive mappings. Replace
 
 ```powershell
 schtasks /Create /TN "Lateness backup" /SC DAILY /ST 21:00 /RU SYSTEM ^
-  /TR "\"C:\lateness-app\.venv\Scripts\python.exe\" \"C:\lateness-app\backup_db.py\" --dest \"\\NAS\share\lateness-backups\""
+  /TR "\"C:\lateness-app\.venv\Scripts\python.exe\" \"C:\lateness-app\backup_db.py\" --dest \"\\NAS\lateness-backups\""
 ```
 
 SYSTEM must have write access to the share; grant it on the NAS, or run the
@@ -51,7 +51,7 @@ snapshotted without waiting for the next evening:
 
 ```powershell
 schtasks /Create /TN "Lateness backup (startup)" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\lateness-app\.venv\Scripts\python.exe\" \"C:\lateness-app\backup_db.py\" --dest \"\\NAS\share\lateness-backups\""
+  /TR "\"C:\lateness-app\.venv\Scripts\python.exe\" \"C:\lateness-app\backup_db.py\" --dest \"\\NAS\lateness-backups\""
 ```
 
 ## Restore (database)

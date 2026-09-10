@@ -29,6 +29,8 @@ def backup(
     Returns the folder. ``timestamp`` is injectable so callers (and tests)
     can name the folder deterministically.
     """
+    if keep < 1:
+        raise ValueError("keep must be at least 1")
     if timestamp is None:
         # Microsecond precision keeps two runs in the same second from
         # colliding on the folder name.
@@ -81,8 +83,6 @@ def _copy_namelist(namelist_path: str, folder: Path) -> None:
 
 def _prune(dest: Path, keep: int) -> None:
     """Deletes all but the newest ``keep`` backup folders under ``dest``."""
-    if keep < 1:
-        raise ValueError("keep must be at least 1")
     folders = sorted(
         (p for p in dest.iterdir() if p.is_dir() and p.name.startswith("lateness-")),
         key=lambda p: p.name,

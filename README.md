@@ -60,21 +60,19 @@ On Windows, `python3` may point to the Microsoft Store stub instead of a real in
 python -m flask --app app init-db
 ```
 
-5. Start the app:
+5. Start the app for local development:
 
 ```bash
 python -m flask --app app run
 ```
 
-If you are using the Windows launcher, `py -3 -m flask --app app run` is also a safe option.
+6. Open `http://127.0.0.1:5000/` in your browser.
 
-On Windows, you can also run the bundled launcher script from the project root (it prepares the database, then starts the app):
+The bundled Windows launcher is for a shared office-LAN host, not local development: it prepares the database and serves the app on **waitress** at `http://0.0.0.0:8000/` so other PCs can reach it. Set `SECRET_KEY` first and see [docs/deployment/windows-host.md](docs/deployment/windows-host.md):
 
 ```powershell
 ./start-windows.ps1
 ```
-
-6. Open `http://127.0.0.1:5000/` in your browser.
 
 ### Docker setup
 

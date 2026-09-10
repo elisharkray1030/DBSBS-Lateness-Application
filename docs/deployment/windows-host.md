@@ -28,22 +28,25 @@ python -m pip install -r requirements.txt
 
 ## 2. Configure the host
 
-Set these for the account that will run the app (System Properties → Environment
-Variables, or `setx`). They must be visible to the service account from step 7.
+Set these as **machine** environment variables (admin PowerShell, `setx /M`)
+so the service account inherits them. They can also be entered on NSSM's
+Environment tab in step 7, one `KEY=value` per line.
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `SECRET_KEY` | yes | Per-host session key. No default; startup aborts without one. |
+| `DB_PATH` | no | Database file. Defaults to `lateness_history.db` under the app directory. |
+| `NAMELIST_PATH` | no | Seed Master List. Defaults to `namelist.csv` under the app directory. |
 | `LOG_ARCHIVE_DIR` | no | Where imported Monthly Log CSVs are kept. Defaults to `data\logs` under the app directory. |
 | `PORT` | no | Listen port. Defaults to `8000`. |
 
 ```powershell
-setx SECRET_KEY "<the generated secret>"
+# /M sets a machine variable, which the service inherits.
+setx /M SECRET_KEY "<the generated secret>"
 ```
 
 > The repo's root `.env` file is read by **Docker Compose only**. The native
-> Windows host has no `.env` loader: use real environment variables (`setx`,
-> or NSSM's `AppEnvironmentExtra` in step 7).
+> Windows host has no `.env` loader: use real environment variables.
 
 ## 3. Smoke test before installing a service
 
@@ -92,11 +95,15 @@ starts at boot, survives logoff, and restarts on crash.
 # Edit the paths to match this host.
 nssm install LatenessApp "C:\lateness-app\.venv\Scripts\python.exe" "C:\lateness-app\serve.py"
 nssm set LatenessApp AppDirectory "C:\lateness-app"
-nssm set LatenessApp AppEnvironmentExtra SECRET_KEY=<the generated secret> PORT=8000
 nssm set LatenessApp Start SERVICE_AUTO_START
 nssm set LatenessApp AppExit Default Restart
 nssm start LatenessApp
 ```
+
+The service inherits the machine environment variables from step 2 (`SECRET_KEY`,
+and optionally `DB_PATH`, `NAMELIST_PATH`, `LOG_ARCHIVE_DIR`, `PORT`). To set
+them per-service instead, use the NSSM GUI **Environment** tab — one `KEY=value`
+per line — rather than a space-separated command line.
 
 Use a **UNC path** (`\\NAS\share\...`) anywhere the service must reach the NAS;
 a mapped drive letter is per-user and absent for a service. The backup task in

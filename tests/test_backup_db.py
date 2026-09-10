@@ -1,9 +1,4 @@
-"""Backup script: consistent SQLite copy plus the source Monthly Log CSVs.
-
-The designated host is the only writer, so backups run there and copy to the
-NAS. The database copy uses SQLite's online backup API (safe while the app is
-running), never a raw file copy that could capture a half-written page.
-"""
+"""Backup script: a run must capture the database and the archived Monthly Logs."""
 
 import sqlite3
 
@@ -153,6 +148,24 @@ def test_backup_is_a_point_in_time_copy(tmp_path):
 
     with sqlite3.connect(folder / "lateness_history.db") as conn:
         assert [b.normalized_name for b in storage.list_boarders(conn)] == ["ALICE"]
+
+
+def test_backup_rejects_non_positive_keep_before_writing(tmp_path):
+    db_path = tmp_path / "live.db"
+    _seed_db(db_path)
+    dest = tmp_path / "backups"
+
+    with pytest.raises(ValueError):
+        backup_db.backup(
+            dest,
+            db_path=str(db_path),
+            log_archive_dir=str(tmp_path / "logs"),
+            namelist_path=None,
+            keep=0,
+            timestamp="20260910-120000",
+        )
+
+    assert not dest.exists()
 
 
 def test_cli_runs_one_backup_into_the_destination(tmp_path):
