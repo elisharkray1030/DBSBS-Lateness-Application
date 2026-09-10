@@ -1,4 +1,4 @@
-"""Request/error hardening: upload cap, logging, 500 handler (#130).
+"""Request/error hardening: request size cap, logging, 500 handler (#130).
 
 Seam: HTTP via Flask test_client + application factory config.
 """
@@ -18,7 +18,7 @@ TEST_CAP_BYTES = 4096
 
 
 def _hardening_client(tmp_path, **overrides):
-    """Factory app with a tiny upload cap and visible (non-propagated) 500s."""
+    """Factory app with a tiny request size cap and visible (non-propagated) 500s."""
     db_path = tmp_path / "hardening.db"
     namelist = tmp_path / "namelist.csv"
     namelist.write_text("Bed,Name\n601A,ALICE\n", encoding="utf-8")
@@ -62,7 +62,7 @@ def _boom(*args, **kwargs):
     raise RuntimeError("boom")
 
 
-class TestUploadCapConfig:
+class TestRequestSizeCapConfig:
     def test_default_cap_is_16mb(self, tmp_path, monkeypatch):
         monkeypatch.delenv("MAX_CONTENT_LENGTH", raising=False)
         application = app_module.create_app({"DB_PATH": str(tmp_path / "x.db")})
@@ -110,7 +110,7 @@ class TestLogLevelConfig:
         assert application.logger.getEffectiveLevel() == logging.INFO
 
 
-class TestOversizeUpload:
+class TestOversizeRequest:
     def test_monthly_log_over_cap_is_rejected(self, hardening_client):
         _, client = hardening_client
         response = _post_big_log(client)
@@ -133,7 +133,7 @@ class TestOversizeUpload:
         assert response.status_code == 413
         assert b"Master List" in response.data
 
-    def test_under_cap_upload_still_imports(self, hardening_client):
+    def test_under_cap_import_succeeds(self, hardening_client):
         _, client = hardening_client
         csv_text = "Name,Transaction Time\nALICE,07:42\n"
         assert len(csv_text.encode("utf-8")) < TEST_CAP_BYTES
@@ -170,6 +170,7 @@ class TestOversizeUpload:
         assert response.status_code == 413
         assert b"Nothing was changed." in response.data
         assert b"Nothing was imported." not in response.data
+        assert b"limit on Imports" not in response.data
 
 
 class TestOversizeMessage:
@@ -187,6 +188,7 @@ class TestOversizeMessage:
         message = app_module._oversize_message("/boarders/add", "4 KB")
         assert "Nothing was changed." in message
         assert "Nothing was imported." not in message
+        assert "Imports" not in message
 
 
 class TestServerErrorPage:

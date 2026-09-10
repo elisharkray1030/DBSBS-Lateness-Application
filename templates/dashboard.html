@@ -50,7 +50,7 @@
 
         <section class="history-panel dashboard-widget">
             <h2>Top Boarders</h2>
-            <form action="/statistics" method="get" class="consequences-filters">
+            <form action="/statistics" method="get" class="panel-filters">
                 <label for="top-month"><strong>Range</strong></label>
                 <select id="top-month" name="top_month" onchange="this.form.submit()">
                     <option value="">All time</option>
@@ -99,7 +99,7 @@
         <section class="history-panel dashboard-widget">
             <h2>Points Distribution</h2>
             {% if distribution_month %}
-            <form action="/statistics" method="get" class="consequences-filters">
+            <form action="/statistics" method="get" class="panel-filters">
                 <label for="distribution-month"><strong>Month</strong></label>
                 <select id="distribution-month" name="distribution_month" onchange="this.form.submit()">
                     {% for month in stored_months %}

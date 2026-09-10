@@ -87,7 +87,7 @@ TOP_BOARDERS_DEFAULT_LIMIT = 10
 NAS_BUSY_TIMEOUT_S = 30.0
 
 
-# Request/error hardening: every upload body is bounded, operational events
+# Request/error hardening: every request body is bounded, operational events
 # go through the application logger, and unhandled failures answer cleanly.
 _DEFAULT_MAX_CONTENT_LENGTH = 16 * 1024 * 1024
 _DEFAULT_LOG_LEVEL = "INFO"
@@ -153,7 +153,7 @@ def _env_setting(name: str) -> "str | None":
 
 
 def _resolve_max_content_length(provided: "dict[str, Any]") -> int:
-    """Resolves the upload cap in bytes: inline config beats environment.
+    """Resolves the request size cap in bytes: inline config beats environment.
 
     An unreadable environment value falls back to the built-in default so a
     typo never silently removes the guard; an inline value is trusted as-is
@@ -213,7 +213,7 @@ def _script_error_response(message: str, status: int):
 
 
 def _oversize_message(path: str, limit: str) -> str:
-    """Words the over-cap rejection for the upload surface at ``path``.
+    """Words the over-cap rejection for the request surface at ``path``.
 
     Pure copy dispatch, extracted so the path → wording table is testable
     without issuing a request. The render target still branches at the call
@@ -231,7 +231,7 @@ def _oversize_message(path: str, limit: str) -> str:
             "Imports. Nothing was imported."
         )
     return (
-        f"Error: This request exceeds the {limit} limit on Imports. "
+        f"Error: This request exceeds the {limit} limit. "
         "Nothing was changed."
     )
 
@@ -589,8 +589,8 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
         return {"csrf_token": session.get(CSRF_SESSION_KEY, "")}
 
     @app.errorhandler(413)
-    def _upload_too_large(error):
-        """Rejects over-cap uploads with a staff-readable error.
+    def _oversize_request(error):
+        """Rejects over-cap requests with a staff-readable error.
 
         Registered at app level (not on the blueprint) because the 413 can
         surface inside the app-level CSRF guard while it reads the submitted
@@ -674,7 +674,7 @@ def home():
                 error = "Please enter a valid month label for this report. Example: '2026-03'."
                 current_app.logger.info("Monthly Log import with no month label")
             else:
-                # Buffer the upload before retrying: each attempt re-reads
+                # Buffer the request body before retrying: each attempt re-reads
                 # these bytes on a fresh connection.
                 payload = file.read()
 
@@ -900,7 +900,7 @@ def import_boarders():
     if not file or file.filename == '':
         current_app.logger.info("Master List import with no file selected")
         return _render_boarders(error="Error: No CSV file selected.")
-    # Buffer the upload before retrying: each attempt re-reads these bytes on
+    # Buffer the request body before retrying: each attempt re-reads these bytes on
     # a fresh connection, since the request stream is single-shot.
     payload = file.read()
 
@@ -1123,7 +1123,7 @@ def punishments():
 
 
 @bp.route('/consequences')
-def consequences_legacy_redirect():
+def punishments_legacy_redirect():
     """Legacy address for the Punishments view: temporary redirect.
 
     Preserves the full query string so bookmarked month/status/show-all

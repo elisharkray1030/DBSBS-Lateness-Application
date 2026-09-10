@@ -2,11 +2,11 @@
 
 Flask-based disciplinary reporting dashboard for tracking boarder lateness from CSV logs.
 
-The app matches uploaded monthly attendance logs against a boarder master list, calculates lateness frequency and minutes late, stores month summaries in SQLite, and lets you view, search, download, and delete saved reports.
+The app matches imported Monthly Logs against a boarder master list, calculates lateness frequency and minutes late, stores month summaries in SQLite, and lets you view, search, download, and delete saved reports.
 
 ## What it does
 
-- Upload monthly CSV attendance logs from the web UI
+- Import Monthly Log CSV files from the web UI
 - Match boarder names against a canonical master list
 - Calculate lateness frequency, total minutes late, and total points
 - Save month summaries in SQLite for later review
@@ -126,16 +126,16 @@ docker compose down
 
 ## Updating the boarder list
 
-The boarder master list lives in the SQLite database (`boarders` table). The **Boarders** tab lets staff view, add, edit, and remove boarders inline, replace the whole roster by uploading a CSV, and download the current roster as a CSV.
+The boarder master list lives in the SQLite database (`boarders` table). The **Boarders** tab lets staff view, add, edit, and remove boarders inline, replace the whole roster by importing a CSV, and download the current roster as a CSV.
 
-On first database preparation — `init-db`, which `serve.py` and the Docker image run automatically before serving and which local development runs manually — if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once, then sets a seed flag in a `meta` table. After that the file is no longer read — all changes happen through the Boarders tab or a CSV upload. If the roster is later emptied (every Boarder deleted), it stays empty across restarts; the seed never runs again. A fresh start with no `namelist.csv` forfeits the one-time seed — a `namelist.csv` appearing later never silently seeds a roster you did not ask for. (Deployments that emptied every Boarder before this change get one final seed on the first restart after upgrading, then stay stable thereafter.)
+On first database preparation — `init-db`, which `serve.py` and the Docker image run automatically before serving and which local development runs manually — if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once, then sets a seed flag in a `meta` table. After that the file is no longer read — all changes happen through the Boarders tab or a CSV import. If the roster is later emptied (every Boarder deleted), it stays empty across restarts; the seed never runs again. A fresh start with no `namelist.csv` forfeits the one-time seed — a `namelist.csv` appearing later never silently seeds a roster you did not ask for. (Deployments that emptied every Boarder before this change get one final seed on the first restart after upgrading, then stay stable thereafter.)
 
 If you are using Docker Compose, the root `namelist.csv` is only consulted for that initial seed; edits made in the app persist in the mounted database volume and survive restarts. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
 
 ## Using the application
 
 1. Go to the Reports tab.
-2. Upload a monthly CSV log file.
+2. Import a Monthly Log CSV file.
 3. Enter a month label such as `2026-03`.
 4. Save the report.
 5. Use the month cards to view, download, or delete saved reports.
@@ -161,15 +161,15 @@ python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]
 - `Transaction Time` values must be strict `HH:MM` or `HH:MM:SS` (24-hour) times. Anything else is rejected with the offending rows surfaced, never silently dropped.
 - The SQLite database file is created automatically on first run if it does not already exist.
 
-## Upload behaviour
+## Import behaviour
 
-A month report is only saved when the uploaded log produced at least one row for a known boarder with a parseable time. Uploads that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful Import reports how many Boarders were recorded and how many had lateness, plus counts of unmatched or unparseable rows when present, so staff can correct bad source data. The upload stream is consumed directly by the ingestion module - it is never written to a temp file on disk.
+A month report is only saved when the imported log produced at least one row for a known boarder with a parseable time. Imports that match nothing, or whose times can't be read, are rejected with a specific error (master list missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows still saves normally. A successful Import reports how many Boarders were recorded and how many had lateness, plus counts of unmatched or unparseable rows when present, so staff can correct bad source data. The request stream is consumed directly by the ingestion module - it is never written to a temp file on disk.
 
-The web upload and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
+The web Import and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
 
 A successful Import also files the Monthly Log and its Master List snapshot under `LOG_ARCHIVE_DIR` (default `data/logs`) so the Monthly Reports can be rebuilt from the archive; a rejected Import writes nothing.
 
-Monthly Log and Master List Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, in bytes). An upload over the cap is rejected with a staff-readable error and nothing is stored.
+Monthly Log and Master List Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, in bytes). An Import over the cap is rejected with a staff-readable error and nothing is stored.
 
 ## Persistence and deployment notes
 
@@ -184,7 +184,7 @@ Recognized environment variables:
 - `DB_PATH` — SQLite database file (default `lateness_history.db`).
 - `NAMELIST_PATH` — seed Master List read once by `init-db` (default `namelist.csv`).
 - `LOG_ARCHIVE_DIR` — Monthly Log Archive folder (default `data/logs`).
-- `MAX_CONTENT_LENGTH` — upload cap in bytes (default `16777216`, i.e. 16 MB).
+- `MAX_CONTENT_LENGTH` — request size cap for Imports, in bytes (default `16777216`, i.e. 16 MB).
 - `LOG_LEVEL` — application log level (default `INFO`).
 - `PORT` — listen port for `serve.py` only (default `8000`).
 
@@ -205,7 +205,7 @@ One designated, always-on PC runs the app; staff reach it over the office LAN. T
 - Install dev dependencies (pytest, mypy — pinned in `requirements-dev.txt` — playwright, and types-waitress) with `python -m pip install -r requirements-dev.txt`.
 - Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium — `python -m playwright install chromium` — and skip automatically when it is unavailable).
 - Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py serve.py backup_db.py defaults.py` for typechecking (config in `pyproject.toml`; CI runs both pytest and mypy on push/PR).
-- Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). Both files are local samples (`test_data.csv` is gitignored and not in the repo), so supply them first. The web route and the CLI share one ingestion path, so they can't drift.
+- Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web Import uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). Both files are local samples (`test_data.csv` is gitignored and not in the repo), so supply them first. The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.
 - Lateness frequency, total minutes late, and total points are computed once in the ingestion module and carried on the typed boarder record; the month view, the download, and the CSV export all use that one definition.
 - The CSV export, the month download, and `export_to_csv` all share the single CSV writer in `parser.py`, so their output is identical.
@@ -215,7 +215,7 @@ One designated, always-on PC runs the app; staff reach it over the office LAN. T
 
 ### `app.py` - Flask application and routes
 
-`app.py` exposes the web routes for uploading logs, searching history, rendering the dashboard, returning month JSON data, serving CSV downloads, and deleting month records. It is a thin adapter: each route opens a file-backed connection, delegates to the ingestion and storage modules, and renders the outcome. No storage or parsing logic lives here.
+`app.py` exposes the web routes for importing Monthly Logs, searching history, rendering the dashboard, returning month JSON data, serving CSV downloads, and deleting month records. It is a thin adapter: each route opens a file-backed connection, delegates to the ingestion and storage modules, and renders the outcome. No storage or parsing logic lives here.
 
 Important behavior:
 
