@@ -169,7 +169,7 @@
                 <a class="btn btn-sm {% if boarders_view == 'all-time' %}btn-primary{% else %}btn-neutral{% endif %}" href="/boarders?view=all-time">All-time</a>
             </div>
             {% if boarders_view == 'all-time' %}
-            <form action="/boarders" method="get" class="consequences-filters">
+            <form action="/boarders" method="get" class="panel-filters">
                 <input type="hidden" name="view" value="all-time">
                 <label for="alltime-filter"><strong>Name</strong></label>
                 <input type="text" id="alltime-filter" name="q" value="{{ all_time_query }}" placeholder="Filter by name">
@@ -235,7 +235,7 @@
             </form>
         </div>
         <div class="month-detail-toolbar">
-            <form action="/boarders/import" method="POST" enctype="multipart/form-data" class="consequences-filters">
+            <form action="/boarders/import" method="POST" enctype="multipart/form-data" class="panel-filters">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <label for="boarder_csv"><strong>Replace Master List from CSV</strong></label>
                 <input type="file" id="boarder_csv" name="boarder_csv" accept=".csv" required>
