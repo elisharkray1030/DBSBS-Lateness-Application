@@ -11,7 +11,8 @@ drop a Secure cookie over HTTP. The LAN itself is the trust boundary; the
 Secure flag returns with HTTPS termination later. Tokens are hand-rolled
 (random URL-safe value in the session, hidden field on forms, custom header
 on fetch mutations) rather than a CSRF extension, keeping dependencies at
-Flask plus gunicorn. Rejection leaves the Report Archive, Master List, and
+Flask plus the WSGI server (see ADR 0004 for the per-OS entrypoints). Rejection
+leaves the Report Archive, Master List, and
 Punishments untouched: page forms answer forbidden with a staff-visible
 error, script endpoints answer forbidden with a structured error in the
 existing shape.
