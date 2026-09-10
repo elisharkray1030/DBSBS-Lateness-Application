@@ -20,6 +20,9 @@ data/raw/
 /namelist.csv
 /data/namelist.csv
 
+# Monthly Log archive (source CSVs kept for backup / rebuild)
+data/logs/
+
 # Temp / test
 test_data.csv
 
@@ -37,3 +40,8 @@ test_data.csv
 # OS
 .DS_Store
 Thumbs.db
+
+# AI / agent tooling (miscellaneous, not part of the application)
+.agents/
+skills-lock.json
+.opencode/
