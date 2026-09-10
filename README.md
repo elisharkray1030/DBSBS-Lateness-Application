@@ -30,7 +30,10 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 - [templates/dashboard.html](templates/dashboard.html) - Statistics / House Dashboard view
 - [templates/boarder.html](templates/boarder.html) - individual boarder profile with all-time history and charts
 - [templates/macros.html](templates/macros.html) - shared Jinja macros (Current/Former badge, etc.)
-- [compose.yaml](compose.yaml) - Docker Compose service definition
+- [compose.yaml](compose.yaml) - Docker Compose service definition (single-host deployment)
+- [serve.py](serve.py) - Windows host entry point (waitress)
+- [backup_db.py](backup_db.py) - host backup script (SQLite online copy + archived logs)
+- [docs/deployment/](docs/deployment/) - Windows host, backup/restore, and NAS runbooks
 - [tests/](tests/) - pytest suite covering the ingestion and storage seams, plus Flask test-client route tests and Playwright browser tests for UI behavior (browser tests skip automatically when Playwright is not installed)
 - [namelist.csv](namelist.csv) - master boarder list used for matching (local-only: gitignored for privacy, not in the repo)
 - [requirements.txt](requirements.txt) - runtime dependencies
@@ -134,6 +137,8 @@ A month report is only saved when the uploaded log produced at least one row for
 
 The web upload and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
 
+A successful Import also files the source CSV under `LOG_ARCHIVE_DIR` (default `data/logs`) so the Monthly Reports can be rebuilt from the backed-up logs; a rejected Import writes nothing.
+
 Monthly Log and Master List Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, in bytes). An upload over the cap is rejected with a staff-readable error and nothing is stored.
 
 ## Persistence and deployment notes
@@ -141,16 +146,15 @@ Monthly Log and Master List Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, i
 - The app stores month summaries in SQLite using the path from `DB_PATH`.
 - The boarder master list is stored in the same SQLite database and managed through the Boarders tab; `namelist.csv` seeds an empty boarders table when `python -m flask --app app init-db` is run (once; later runs are a no-op).
 - For Docker, keep the database file in a mounted folder so reports and the boarder list survive container restarts.
-- Monthly uploads are consumed directly from the request stream and are never written to disk or stored permanently by the app.
+- Each successful Import archives its source CSV under `LOG_ARCHIVE_DIR` (default `data/logs`); the upload is read straight from the request stream and never written to a temp file.
 
-### Shared office-LAN deployment (each staff PC runs the app)
+### Deployment
 
-The deployment is multi-writer against a **shared SQLite database on a NAS share**:
+One designated, always-on PC runs the app; staff reach it over the office LAN. The SQLite database and the Monthly Log archive live on that PC's **local disk** — a single writer, so there is no SQLite-over-SMB corruption risk. The NAS is a **backup target only**. ADR 0004 records the decision and the rejected alternatives.
 
-- Every staff member runs the app on their own PC (`python -m flask --app app run`) with `DB_PATH` pointing at the NAS share, e.g. `\\NAS\share\lateness_history.db`, prepared once beforehand with `python -m flask --app app init-db` against that share. The NAS is storage only — it does not run the app.
-- **Single-writer rule is essential.** SQLite is only safe when one process writes to it. Concurrent writers over SMB cause `database is locked` errors and corruption risk. The app must apply the shared-NAS mitigations in #138 (busy_timeout, read-only GET connections, lock retry) before this layout is used. **Do not use this layout until #1 lands.**
-- **Seed once.** Run `python -m flask --app app init-db` on a single machine against the empty shared DB to seed the boarders table, then start the app normally on every PC. Only one person should perform the seeding.
-- **Back up the NAS share.** Add a scheduled snapshot (NAS-side or `robocopy` from one machine). The DB is the archive of record.
+- **Windows host (native):** run `serve.py` (waitress) as a service, bound to the LAN. Follow [docs/deployment/windows-host.md](docs/deployment/windows-host.md).
+- **Backups:** `backup_db.py` copies the database plus the archived Monthly Logs and Master List to the NAS. Follow [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md) and [docs/deployment/nas-share.md](docs/deployment/nas-share.md).
+- **Docker:** `compose.yaml` is an equivalent single-host deployment (gunicorn) with the database and archive in the mounted `data` volume.
 - **Trust boundary:** office LAN only, plain HTTP, no auth, no `Secure` cookies. Do not expose it off-campus.
 
 ## Development notes

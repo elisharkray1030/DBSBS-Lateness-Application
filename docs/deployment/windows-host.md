@@ -3,7 +3,7 @@
 One designated, always-on Windows PC runs the app; every other staff PC just
 opens a browser to it. The SQLite database and the Monthly Log archive live on
 **this PC's local disk** — one writer, no SQLite over SMB. The NAS is used only
-as a backup target (see `backup-and-restore.md`).
+as a backup target (see `backup-and-restore.md` and `nas-share.md`).
 
 The app is served with **waitress** (`serve.py`), not `flask run`, because the
 dev server is single-threaded and not meant for shared use. `serve.py` runs the
@@ -122,7 +122,7 @@ new code is live.
 
 The host is the only writer, so backups run on the host and copy to the NAS.
 See `backup-and-restore.md` for the script, the Task Scheduler registration,
-and the restore drill.
+and the restore drill, and `nas-share.md` for preparing the share.
 
 ## Trust boundary
 
