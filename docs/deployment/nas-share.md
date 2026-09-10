@@ -1,6 +1,6 @@
 # NAS share runbook
 
-The NAS holds **backups only**; the live database and Monthly Log archive stay
+The NAS holds **backups only**; the live database and Monthly Log Archive stay
 on the designated host's local disk. This runbook prepares the share the host
 writes backups into.
 
@@ -37,8 +37,9 @@ cd C:\lateness-app
 ```
 
 Confirm a `lateness-<timestamp>\` folder appears containing
-`lateness_history.db`, `logs\`, and (when present) `namelist.csv`. Then check
-again after the scheduled task has fired at least once.
+`lateness_history.db` and `logs\` (the archived Monthly Logs paired with their
+`namelist-<YYYY-MM>.csv` Master List snapshots). Then check again after the
+scheduled task has fired at least once.
 
 ## 5. Retention and capacity
 

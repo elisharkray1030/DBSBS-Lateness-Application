@@ -1,18 +1,22 @@
-"""Monthly Log archive: every successful Import keeps the source CSV.
+"""Monthly Log Archive: every successful Import keeps its Monthly Log and snapshot.
 
 The archive makes the Monthly Reports rebuildable if the database is lost:
-the backed-up CSVs re-import through the same ingestion path. Rejected
-imports must leave nothing behind, matching the "database untouched"
+the archived Monthly Logs re-import through the same ingestion path, and the
+per-month Master List snapshot records the roster that produced each report.
+Rejected imports must leave nothing behind, matching the "database untouched"
 guarantee.
 """
 
 import io
+import os
+import threading
 
 import pytest
 
 import app as app_module
 import storage
 from helpers import post_csrf
+from records import Boarder
 
 
 @pytest.fixture
@@ -76,6 +80,62 @@ def test_reimport_overwrites_the_archived_log(archive_client):
     _import(client, "2026-05", second)
 
     assert (archive_dir / "2026-05.csv").read_bytes() == second
+
+
+def test_successful_import_archives_a_master_list_snapshot(archive_client):
+    client, archive_dir = archive_client
+    body = b"Name,Transaction Time\nALICE,07:42\n"
+
+    _import(client, "2026-03", body)
+
+    snapshot = (archive_dir / "namelist-2026-03.csv").read_bytes()
+    assert snapshot == b"Name,Bed\r\nALICE,601A\r\nBOB,601B\r\n"
+
+
+def test_reimport_overwrites_the_master_list_snapshot(archive_client):
+    client, archive_dir = archive_client
+    body = b"Name,Transaction Time\nALICE,07:42\n"
+
+    _import(client, "2026-05", body)
+    with app_module.connect() as conn:
+        storage.replace_boarders(conn, [Boarder("ALICE", "ALICE", "699Z")])
+    _import(client, "2026-05", body)
+
+    assert (archive_dir / "namelist-2026-05.csv").read_bytes() == (
+        b"Name,Bed\r\nALICE,699Z\r\n"
+    )
+
+
+def test_concurrent_atomic_writes_do_not_collide(tmp_path, monkeypatch):
+    destination = tmp_path / "2026-03.csv"
+    payloads = [b"a" * 4096, b"b" * 4096]
+    barrier = threading.Barrier(2)
+    real_replace = os.replace
+
+    def synchronized_replace(source, target):
+        # Both writers reach their write-then-rename only after the other has
+        # staged its bytes, so a shared staging path would be clobbered here.
+        barrier.wait()
+        real_replace(source, target)
+
+    monkeypatch.setattr(app_module.os, "replace", synchronized_replace)
+    errors = []
+
+    def write(payload):
+        try:
+            app_module._write_bytes_atomically(destination, payload)
+        except BaseException as exc:  # noqa: BLE001 - surfaced through `errors`
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(payload,)) for payload in payloads]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert destination.read_bytes() in payloads
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_import_saves_and_warns_when_archive_fails(tmp_path):

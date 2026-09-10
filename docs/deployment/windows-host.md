@@ -1,7 +1,7 @@
 # Windows host runbook
 
 One designated, always-on Windows PC runs the app; every other staff PC just
-opens a browser to it. The SQLite database and the Monthly Log archive live on
+opens a browser to it. The SQLite database and the Monthly Log Archive live on
 **this PC's local disk** — one writer, no SQLite over SMB. The NAS is used only
 as a backup target (see `backup-and-restore.md` and `nas-share.md`).
 

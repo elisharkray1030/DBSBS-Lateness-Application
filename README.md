@@ -32,7 +32,8 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 - [templates/macros.html](templates/macros.html) - shared Jinja macros (Current/Former badge, etc.)
 - [compose.yaml](compose.yaml) - Docker Compose service definition (single-host deployment)
 - [serve.py](serve.py) - Windows host entry point (waitress)
-- [backup_db.py](backup_db.py) - host backup script (SQLite online copy + archived logs)
+- [backup_db.py](backup_db.py) - host backup script (SQLite online copy + archived Monthly Logs and Master List snapshots)
+- [defaults.py](defaults.py) - built-in configuration defaults shared by the app and host tooling
 - [docs/deployment/](docs/deployment/) - Windows host, backup/restore, and NAS runbooks
 - [tests/](tests/) - pytest suite covering the ingestion and storage seams, plus Flask test-client route tests and Playwright browser tests for UI behavior (browser tests skip automatically when Playwright is not installed)
 - [namelist.csv](namelist.csv) - master boarder list used for matching (local-only: gitignored for privacy, not in the repo)
@@ -135,7 +136,7 @@ A month report is only saved when the uploaded log produced at least one row for
 
 The web upload and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
 
-A successful Import also files the source CSV under `LOG_ARCHIVE_DIR` (default `data/logs`) so the Monthly Reports can be rebuilt from the backed-up logs; a rejected Import writes nothing.
+A successful Import also files the Monthly Log and its Master List snapshot under `LOG_ARCHIVE_DIR` (default `data/logs`) so the Monthly Reports can be rebuilt from the archive; a rejected Import writes nothing.
 
 Monthly Log and Master List Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, in bytes). An upload over the cap is rejected with a staff-readable error and nothing is stored.
 
@@ -144,14 +145,14 @@ Monthly Log and Master List Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, i
 - The app stores month summaries in SQLite using the path from `DB_PATH`.
 - The boarder master list is stored in the same SQLite database and managed through the Boarders tab; `namelist.csv` seeds an empty boarders table when `python -m flask --app app init-db` is run (once; later runs are a no-op).
 - For Docker, keep the database file in a mounted folder so reports and the boarder list survive container restarts.
-- Each successful Import archives its source CSV under `LOG_ARCHIVE_DIR` (default `data/logs`); the upload is read straight from the request stream and never written to a temp file.
+- Each successful Import archives two files under `LOG_ARCHIVE_DIR` (default `data/logs`): the Monthly Log as `<YYYY-MM>.csv` and a `namelist-<YYYY-MM>.csv` Master List snapshot of the roster that produced the report. Both are written atomically and a re-Import overwrites that month. A rejected Import writes nothing.
 
 ### Deployment
 
-One designated, always-on PC runs the app; staff reach it over the office LAN. The SQLite database and the Monthly Log archive live on that PC's **local disk** — a single writer, so there is no SQLite-over-SMB corruption risk. The NAS is a **backup target only**. ADR 0004 records the decision and the rejected alternatives.
+One designated, always-on PC runs the app; staff reach it over the office LAN. The SQLite database and the Monthly Log Archive live on that PC's **local disk** — a single writer, so there is no SQLite-over-SMB corruption risk. The NAS is a **backup target only**. ADR 0004 records the decision and the rejected alternatives.
 
 - **Windows host (native):** run `serve.py` (waitress) as a service, bound to the LAN. Follow [docs/deployment/windows-host.md](docs/deployment/windows-host.md).
-- **Backups:** `backup_db.py` copies the database plus the archived Monthly Logs and Master List to the NAS. Follow [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md) and [docs/deployment/nas-share.md](docs/deployment/nas-share.md).
+- **Backups:** `backup_db.py` copies the database plus the archived Monthly Logs and their per-month Master List snapshots to the NAS. Follow [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md) and [docs/deployment/nas-share.md](docs/deployment/nas-share.md).
 - **Docker:** `compose.yaml` is an equivalent single-host deployment (gunicorn) with the database and archive in the mounted `data` volume.
 - **Trust boundary:** office LAN only, plain HTTP, no auth, no `Secure` cookies. Do not expose it off-campus.
 
@@ -160,7 +161,7 @@ One designated, always-on PC runs the app; staff reach it over the office LAN. T
 - Install Python 3.11+ (CI tests 3.11 and 3.12; Docker uses 3.12-slim).
 - Install dev dependencies (pytest, mypy, playwright) with `python -m pip install -r requirements-dev.txt`.
 - Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium — `python -m playwright install chromium` — and skip automatically when it is unavailable).
-- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py serve.py backup_db.py` for typechecking (config in `pyproject.toml`; CI runs both pytest and mypy on push/PR).
+- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py serve.py backup_db.py defaults.py` for typechecking (config in `pyproject.toml`; CI runs both pytest and mypy on push/PR).
 - Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.
 - Lateness frequency, total minutes late, and total points are computed once in the ingestion module and carried on the typed boarder record; the month view, the download, and the CSV export all use that one definition.

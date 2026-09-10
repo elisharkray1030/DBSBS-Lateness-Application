@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py parser.py punishments.py storage.py records.py ./
+COPY app.py parser.py punishments.py storage.py records.py defaults.py ./
 COPY templates ./templates
 COPY static ./static
 

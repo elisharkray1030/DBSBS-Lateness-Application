@@ -1,8 +1,10 @@
-"""Backups for the designated host: SQLite online copy plus source CSVs.
+"""Backups for the designated host: SQLite online copy plus archived Monthly Logs.
 
 The designated host is the only writer, so backups run there and copy to the
 NAS. The database copy uses SQLite's online backup API (safe while the app is
-running), never a raw file copy that could capture a half-written page.
+running), never a raw file copy that could capture a half-written page. The
+Monthly Log Archive holds each imported Monthly Log and a matching
+``namelist-<month>.csv`` Master List snapshot, so the whole archive is copied.
 """
 
 import argparse
@@ -14,20 +16,22 @@ from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
+import defaults
+
 
 def backup(
     dest: "str | Path",
     *,
     db_path: str,
     log_archive_dir: str,
-    namelist_path: "str | None",
     keep: int,
     timestamp: "str | None" = None,
 ) -> Path:
     """Runs one backup into a fresh timestamped folder under ``dest``.
 
     Returns the folder. ``timestamp`` is injectable so callers (and tests)
-    can name the folder deterministically.
+    can name the folder deterministically. A failure part-way through removes
+    the folder, so only a complete backup is ever left behind.
     """
     if keep < 1:
         raise ValueError("keep must be at least 1")
@@ -41,27 +45,31 @@ def backup(
     dest.mkdir(parents=True, exist_ok=True)
     folder = dest / f"lateness-{timestamp}"
     folder.mkdir()
-    with closing(sqlite3.connect(db_path)) as src, closing(
-        sqlite3.connect(folder / "lateness_history.db")
-    ) as dst:
-        src.backup(dst)
-    _copy_monthly_logs(log_archive_dir, folder)
-    if namelist_path is not None:
-        _copy_namelist(namelist_path, folder)
+    try:
+        with closing(sqlite3.connect(db_path)) as src, closing(
+            sqlite3.connect(folder / "lateness_history.db")
+        ) as dst:
+            src.backup(dst)
+        _copy_monthly_log_archive(log_archive_dir, folder)
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
     _prune(dest, keep)
     return folder
 
 
-def _copy_monthly_logs(log_archive_dir: str, folder: Path) -> None:
-    """Copies the source Monthly Log CSVs into ``folder/logs``.
+def _copy_monthly_log_archive(log_archive_dir: str, folder: Path) -> None:
+    """Copies the Monthly Log Archive CSVs into ``folder/logs``.
 
-    A missing directory is warned about, not fatal: a fresh deployment has no
-    archive until the first Import. Only ``*.csv`` is copied.
+    The archive holds each imported Monthly Log plus its ``namelist-<month>.csv``
+    Master List snapshot. A missing directory is warned about, not fatal: a
+    fresh deployment has no archive until the first Import. Only ``*.csv`` is
+    copied.
     """
     logs_src = Path(log_archive_dir)
     if not logs_src.is_dir():
         print(
-            f"warning: Monthly Log archive not found: {log_archive_dir}",
+            f"warning: Monthly Log Archive not found: {log_archive_dir}",
             file=sys.stderr,
         )
         return
@@ -69,16 +77,6 @@ def _copy_monthly_logs(log_archive_dir: str, folder: Path) -> None:
     logs_dst.mkdir()
     for csv_file in sorted(logs_src.glob("*.csv")):
         shutil.copy2(csv_file, logs_dst / csv_file.name)
-
-
-def _copy_namelist(namelist_path: str, folder: Path) -> None:
-    """Copies the Master List CSV, warning when the configured path is absent."""
-    if Path(namelist_path).is_file():
-        shutil.copy2(namelist_path, folder / "namelist.csv")
-    else:
-        print(
-            f"warning: Master List not found: {namelist_path}", file=sys.stderr
-        )
 
 
 def _prune(dest: Path, keep: int) -> None:
@@ -94,19 +92,19 @@ def _prune(dest: Path, keep: int) -> None:
 def main(argv: "list[str] | None" = None) -> int:
     """CLI entry point: runs one backup, honouring the host's env defaults."""
     parser = argparse.ArgumentParser(
-        description="Back up the SQLite database and Monthly Log archive."
+        description="Back up the SQLite database and Monthly Log Archive."
     )
     parser.add_argument(
         "--dest", required=True, help="Destination directory (the NAS share)."
     )
     parser.add_argument(
-        "--db", default=os.environ.get("DB_PATH", "lateness_history.db")
+        "--db", default=os.environ.get("DB_PATH", defaults.DEFAULT_DB_PATH)
     )
     parser.add_argument(
-        "--logs", default=os.environ.get("LOG_ARCHIVE_DIR", "data/logs")
-    )
-    parser.add_argument(
-        "--namelist", default=os.environ.get("NAMELIST_PATH", "namelist.csv")
+        "--logs",
+        default=os.environ.get(
+            "LOG_ARCHIVE_DIR", defaults.DEFAULT_LOG_ARCHIVE_DIR
+        ),
     )
     parser.add_argument(
         "--keep", type=int, default=7, help="Timestamped backups to keep."
@@ -116,7 +114,6 @@ def main(argv: "list[str] | None" = None) -> int:
         args.dest,
         db_path=args.db,
         log_archive_dir=args.logs,
-        namelist_path=args.namelist,
         keep=args.keep,
     )
     print(f"Backed up to {folder}")

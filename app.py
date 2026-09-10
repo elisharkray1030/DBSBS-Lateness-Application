@@ -3,6 +3,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import tempfile
 import time
 from contextlib import closing
 from datetime import datetime
@@ -34,6 +35,7 @@ except ModuleNotFoundError as exc:
         'Then start the app with: python -m flask --app app run'
     ) from exc
 
+import defaults
 import storage
 from parser import (
     RejectedOutcome,
@@ -62,10 +64,11 @@ logger = logging.getLogger(__name__)
 bp = Blueprint("lateness", __name__)
 
 # Built-in defaults; environment wins over these and inline factory config
-# wins over environment. No database I/O happens at import time.
-_DEFAULT_DB_PATH = "lateness_history.db"
-_DEFAULT_NAMELIST_PATH = "namelist.csv"
-_DEFAULT_LOG_ARCHIVE_DIR = "data/logs"
+# wins over environment. No database I/O happens at import time. The literals
+# live in ``defaults`` so host tooling cannot drift from the app.
+_DEFAULT_DB_PATH = defaults.DEFAULT_DB_PATH
+_DEFAULT_NAMELIST_PATH = defaults.DEFAULT_NAMELIST_PATH
+_DEFAULT_LOG_ARCHIVE_DIR = defaults.DEFAULT_LOG_ARCHIVE_DIR
 
 # Repeat-offender watchlist: a boarder reaching this many Points for this
 # many consecutive calendar months lands on the House Dashboard watchlist.
@@ -244,24 +247,54 @@ def _namelist_path() -> str:
 
 
 def _log_archive_dir() -> str:
-    """Resolves the Monthly Log archive directory, same precedence."""
+    """Resolves the Monthly Log Archive directory, same precedence."""
     return _resolve_setting("LOG_ARCHIVE_DIR", _DEFAULT_LOG_ARCHIVE_DIR)
 
 
-def _archive_monthly_log(month_label: str, payload: bytes) -> None:
-    """Files the source Monthly Log CSV under its month for backup/rebuild.
+def _write_bytes_atomically(destination: Path, payload: bytes) -> None:
+    """Writes bytes so readers only ever see the complete file.
+
+    A unique staging file per call means concurrent writers (waitress serves
+    requests threaded) never share a path and clobber each other's bytes;
+    ``os.replace`` then swaps it in atomically on the same filesystem.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        mode="wb",
+        dir=destination.parent,
+        prefix=f"{destination.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    try:
+        with handle:
+            handle.write(payload)
+        os.replace(handle.name, destination)
+    except BaseException:
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
+
+
+def _archive_import(month_label: str, payload: bytes) -> None:
+    """Files an Import's source Monthly Log and Master List snapshot by month.
 
     Only called once an Import has committed, so ``month_label`` has already
-    passed ``MONTH_LABEL_PATTERN`` (canonical ``YYYY-MM``) — the filename is
-    safe by construction, and a re-Import overwrites that month's copy.
+    passed ``MONTH_LABEL_PATTERN`` (canonical ``YYYY-MM``) — the filenames are
+    safe by construction, and a re-Import overwrites that month's copies.
+    ``namelist-<month>.csv`` records the Master List as it stood for this
+    Import, so a restore can re-seed the roster that produced the report.
     """
     directory = Path(_log_archive_dir())
-    directory.mkdir(parents=True, exist_ok=True)
-    destination = directory / f"{month_label}.csv"
-    # Write-then-rename so a backup (or a crash) never sees a truncated file.
-    staging = directory / f"{month_label}.csv.tmp"
-    staging.write_bytes(payload)
-    os.replace(staging, destination)
+    _write_bytes_atomically(directory / f"{month_label}.csv", payload)
+    with connect(read_only=True) as conn:
+        boarders = storage.list_boarders(conn)
+    _write_bytes_atomically(
+        directory / f"namelist-{month_label}.csv",
+        master_list_to_csv(boarders).encode("utf-8"),
+    )
 
 
 def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
@@ -665,12 +698,12 @@ def home():
                     )
                     flash(outcome.message, "success")
                     try:
-                        _archive_monthly_log(month_label, payload)
-                    except OSError:
+                        _archive_import(month_label, payload)
+                    except (OSError, sqlite3.Error):
                         # The Import is already committed, so a failed archive
                         # copy must not turn a successful save into an error —
-                        # but it must not be silent either: without the source
-                        # CSV the Monthly Report cannot be rebuilt.
+                        # but it must not be silent either: without the archived
+                        # Monthly Log the report cannot be rebuilt.
                         current_app.logger.exception(
                             "Could not archive Monthly Log for month %s",
                             month_label,

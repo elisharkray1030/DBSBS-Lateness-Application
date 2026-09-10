@@ -12,9 +12,14 @@ destination, holding:
   API**. A raw file copy of a live database can capture a half-written page and
   corrupt the backup; the backup API copies under the database lock instead, so
   it is safe while staff use the app.
-- `logs/` — every imported Monthly Log CSV. These are the source data: the
-  Monthly Reports can be rebuilt by re-importing them.
-- `namelist.csv` — the Master List, when present.
+- `logs/` — every CSV in the Monthly Log Archive: each imported Monthly Log
+  (`<YYYY-MM>.csv`), paired with a `namelist-<YYYY-MM>.csv` Master List
+  snapshot of the roster as it stood for that Import. The Monthly Reports can be
+  rebuilt by re-importing the Monthly Logs; the snapshots record which Boarders
+  each report was built against.
+
+A backup is all-or-nothing: if any copy fails, the partial folder is removed so
+only complete backups are ever left on the share.
 
 Punishments live **only** in the database, not in the CSVs. Protect the database
 copies accordingly.
@@ -26,10 +31,10 @@ cd C:\lateness-app
 .\.venv\Scripts\python.exe backup_db.py --dest "\\NAS\lateness-backups"
 ```
 
-Defaults come from the host environment: `DB_PATH`, `LOG_ARCHIVE_DIR`,
-`NAMELIST_PATH`. `--keep` sets how many timestamped folders to retain (default
-7); older folders are deleted after a successful run. The script refuses to run
-if the database is missing.
+Defaults come from the host environment: `DB_PATH` and `LOG_ARCHIVE_DIR`.
+`--keep` sets how many timestamped folders to retain (default 7); older folders
+are deleted after a successful run. The script refuses to run if the database is
+missing.
 
 ## Schedule it (Task Scheduler)
 
@@ -60,16 +65,19 @@ schtasks /Create /TN "Lateness backup (startup)" /SC ONSTART /RU SYSTEM ^
 2. Copy the chosen `lateness_history.db` from the backup folder over the live
    database file (`DB_PATH`, default `C:\lateness-app\lateness_history.db`).
 3. Copy the backup's `logs\` folder over `LOG_ARCHIVE_DIR` so future backups
-   keep the source CSVs.
+   keep the archived Monthly Logs and Master List snapshots.
 4. Start the service: `nssm start LatenessApp`. Open the app and confirm a known
    month and its totals.
 
-## Rebuild (database lost, CSVs kept)
+## Rebuild (database lost, archive kept)
 
-1. Stop the service and start from a fresh database (`serve.py` re-runs
-   `init-db`, which seeds the Master List from `namelist.csv`).
+1. Stop the service and start from a fresh database. `serve.py` re-runs
+   `init-db`, which seeds the Master List from `NAMELIST_PATH`. Copy the newest
+   `logs\namelist-<YYYY-MM>.csv` over that path first, so the rebuild starts
+   from the roster of the latest month you hold.
 2. Re-import each `logs\<YYYY-MM>.csv` on the Import page, using the month in
-   the filename.
+   the filename. Each Import also rewrites its `namelist-<YYYY-MM>.csv`
+   snapshot.
 3. Punishments are not recoverable this way and must be re-issued.
 
 ## Restore drill

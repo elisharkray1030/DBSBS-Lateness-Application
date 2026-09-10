@@ -25,7 +25,7 @@ The CSV of lateness incidents for one month, imported to create or refresh that 
 _Avoid_: CSV, file, timesheet
 
 **Monthly Log Archive**:
-The on-disk copy of each imported Monthly Log, filed by month under `LOG_ARCHIVE_DIR`. It is the source data that can rebuild the Monthly Reports; distinct from the Report Archive, which holds the reports themselves.
+The on-disk copy of each imported Monthly Log, filed by month under `LOG_ARCHIVE_DIR` as `<YYYY-MM>.csv`, alongside a per-month Master List snapshot (`namelist-<YYYY-MM>.csv`) of the roster the report was built against. It is the source data that can rebuild the Monthly Reports; distinct from the Report Archive, which holds the reports themselves.
 _Avoid_: source CSVs, logs, backup
 
 **Expected Non-Boarder**:

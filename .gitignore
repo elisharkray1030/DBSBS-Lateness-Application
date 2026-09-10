@@ -20,7 +20,8 @@ data/raw/
 /namelist.csv
 /data/namelist.csv
 
-# Monthly Log archive (source CSVs kept for backup / rebuild)
+# Monthly Log Archive (imported Monthly Logs and per-month Master List
+# snapshots kept for backup / rebuild)
 data/logs/
 
 # Temp / test

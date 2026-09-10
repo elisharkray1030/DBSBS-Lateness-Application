@@ -1,7 +1,7 @@
 # Single-host deployment with local SQLite
 
 One designated, always-on host runs the application. The SQLite database and
-the Monthly Log archive live on **that host's local disk**; staff on other PCs
+the Monthly Log Archive live on **that host's local disk**; staff on other PCs
 reach the app over the office LAN through a browser. On Windows the app is
 served by waitress (`serve.py`); in Docker it is served by gunicorn. The NAS is
 a **backup target only** — it never holds the live database.
