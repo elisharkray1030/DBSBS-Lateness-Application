@@ -231,7 +231,7 @@ def _oversize_message(path: str, limit: str) -> str:
             "Imports. Nothing was imported."
         )
     return (
-        f"Error: This request exceeds the {limit} limit on Imports. "
+        f"Error: This request exceeds the {limit} limit. "
         "Nothing was changed."
     )
 

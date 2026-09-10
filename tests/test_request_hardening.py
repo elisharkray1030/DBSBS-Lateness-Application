@@ -170,6 +170,7 @@ class TestOversizeRequest:
         assert response.status_code == 413
         assert b"Nothing was changed." in response.data
         assert b"Nothing was imported." not in response.data
+        assert b"limit on Imports" not in response.data
 
 
 class TestOversizeMessage:
@@ -187,6 +188,7 @@ class TestOversizeMessage:
         message = app_module._oversize_message("/boarders/add", "4 KB")
         assert "Nothing was changed." in message
         assert "Nothing was imported." not in message
+        assert "Imports" not in message
 
 
 class TestServerErrorPage:
