@@ -1,3 +1,4 @@
+import csv
 import io
 import os
 import re
@@ -8,7 +9,19 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import pytest
-from helpers import history_panel_html, month_row, open_month_detail, record, seed_punishments
+from helpers import (
+    assert_late_bed_not_bold,
+    assert_late_name_bold,
+    delete_csrf,
+    history_panel_html,
+    month_row,
+    open_seeded_month_detail,
+    patch_csrf,
+    post_csrf,
+    record,
+    seed_punishments,
+    static_dir,
+)
 from records import Boarder
 
 import app as app_module
@@ -16,9 +29,55 @@ import storage
 
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
-os.environ["DB_PATH"] = _db_path
 
-client = app_module.app.test_client()
+# The module-level client must never touch the developer's real database.
+# Built through the application factory with inline config: importing the
+# application module performs no database I/O, so the old
+# environment-before-import workaround is gone. Seed one synthetic month:
+# without any month the home page renders its empty state
+# (index.html `{% if all_months %}`), leaving every report-row assertion to
+# depend on whatever months happen to sit in the gitignored
+# lateness_history.db — which is also why CI (fresh clone, no private
+# artifacts) went red. The Master List path points at a guaranteed-missing
+# file so init_db never seeds real Boarders here; Master List tests use
+# fresh_client instead. Setup runs inside a bounded context that is popped
+# before any test runs; the autouse fixture below re-pushes it per test so
+# direct app_module.connect() calls resolve to this database.
+_module_app = app_module.create_app(
+    {
+        "DB_PATH": _db_path,
+        "NAMELIST_PATH": _db_path + ".namelist-missing.csv",
+        "SECRET_KEY": "test-secret-key",
+        "TESTING": True,
+    }
+)
+with _module_app.app_context():
+    app_module.init_db()
+    with app_module.connect() as _seed_conn:
+        storage.save_month(
+            _seed_conn,
+            [
+                record("ALICE", "101", frequency=2, total_minutes=5, total_points=7),
+                record("BOB", "102", frequency=4, total_minutes=8, total_points=12),
+            ],
+            "2026-03",
+        )
+
+client = _module_app.test_client()
+
+
+@pytest.fixture(autouse=True)
+def _module_app_context():
+    """Pushes the module application's context for each test in this module.
+
+    Route tests through the module-level client run inside their request
+    contexts already; this covers the direct app_module.connect() calls in
+    the punishment-route test classes. Fixture-built clients (fresh_client
+    and friends) push their own contexts on top, so they keep resolving to
+    their own databases.
+    """
+    with _module_app.app_context():
+        yield
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -26,13 +85,21 @@ def _cleanup_temp_db():
     yield
     if os.path.exists(_db_path):
         os.unlink(_db_path)
-    os.environ.pop("DB_PATH", None)
 
 
-def home_html():
-    response = client.get("/")
+def home_html(test_client=None):
+    """Renders home through the module client, or a given test client."""
+    response = (test_client or client).get("/")
     assert response.status_code == 200
     return response.get_data(as_text=True)
+
+
+_STATIC_DIR = static_dir()
+
+
+def static_app_js():
+    """Reads the extracted index-page script (static/app.js, see #166)."""
+    return (_STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
 
 def tab_button_class(html, tab_name):
@@ -44,7 +111,7 @@ def tab_button_class(html, tab_name):
 TAB_LABELS = {
     "reports": "View Reports in Database",
     "history": "Search Boarder History",
-    "consequences": "Punishments",
+    "punishments": "Punishments",
     "boarders": "Boarders",
 }
 
@@ -153,7 +220,7 @@ class TestImportMonthPicker:
             "report_month": "March 2026",
             "log_file": (io.BytesIO(b"Name,Transaction Time\nALICE,07:42\n"), "log.csv"),
         }
-        response = client.post("/", data=data, content_type="multipart/form-data")
+        response = post_csrf(client, "/", data=data, content_type="multipart/form-data")
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
@@ -205,76 +272,78 @@ class TestBoardersTab:
 
 
 class TestBoarderSeeding:
-    def test_startup_seeds_boarders_from_namelist(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
+    def _app_over(self, tmp_path, namelist_text=None):
+        """Factory application over a throwaway database for seeding tests."""
         namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
+        if namelist_text is None:
+            if namelist.exists():
+                namelist.unlink()
+        else:
+            namelist.write_text(namelist_text, encoding="utf-8")
+        return app_module.create_app(
+            {
+                "DB_PATH": str(tmp_path / "seed.db"),
+                "NAMELIST_PATH": str(namelist),
+                "TESTING": True,
+            }
+        )
 
-    def test_seeding_is_skipped_when_boarders_exist(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
-        namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
+    def test_startup_seeds_boarders_from_namelist(self, tmp_path):
+        app = self._app_over(tmp_path, "Bed,Name\n601A,Alice\n")
+        with app.app_context():
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
-    def test_no_namelist_leaves_boarders_empty(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {}
+    def test_seeding_is_skipped_when_boarders_exist(self, tmp_path):
+        app = self._app_over(tmp_path)
+        with app.app_context():
+            app_module.init_db()
+            with app_module.connect() as conn:
+                storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+            (tmp_path / "namelist.csv").write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
-    def test_seed_does_not_resurrect_after_emptying_roster(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
-            conn.execute("DELETE FROM boarders")
-            conn.commit()
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {}
+    def test_no_namelist_leaves_boarders_empty(self, tmp_path):
+        app = self._app_over(tmp_path)
+        with app.app_context():
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {}
 
-    def test_no_namelist_forfeits_seed_forever(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
-        app_module.init_db()
-        namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {}
+    def test_seed_does_not_resurrect_after_emptying_roster(self, tmp_path):
+        app = self._app_over(tmp_path, "Bed,Name\n601A,Alice\n")
+        with app.app_context():
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
+                conn.execute("DELETE FROM boarders")
+                conn.commit()
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {}
 
-    def test_populated_deployment_marks_seeded_without_wipe(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "seed.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        with app_module.connect() as conn:
-            storage.create_schema(conn)
-            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
-        namelist = tmp_path / "namelist.csv"
-        namelist.write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(namelist))
-        app_module.init_db()
-        with app_module.connect() as conn:
-            assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
+    def test_no_namelist_forfeits_seed_forever(self, tmp_path):
+        app = self._app_over(tmp_path)
+        with app.app_context():
+            app_module.init_db()
+            (tmp_path / "namelist.csv").write_text("Bed,Name\n601A,Alice\n", encoding="utf-8")
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {}
+
+    def test_populated_deployment_marks_seeded_without_wipe(self, tmp_path):
+        app = self._app_over(tmp_path)
+        with app.app_context():
+            with app_module.connect() as conn:
+                storage.create_schema(conn)
+                storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+            (tmp_path / "namelist.csv").write_text("Bed,Name\n601A,BOB\n", encoding="utf-8")
+            app_module.init_db()
+            with app_module.connect() as conn:
+                assert storage.boarder_master_list(conn) == {"ALICE": Boarder("ALICE", "Alice", "601A")}
 
 
 class TestMigrationCollisionBanner:
@@ -282,29 +351,34 @@ class TestMigrationCollisionBanner:
     the home tab surfaces that count as a one-shot banner per session, and
     databases with nothing to report never see it."""
 
-    def _client_over_seeded_db(self, tmp_path, monkeypatch, collide):
-        db_path = tmp_path / "banner.db"
-        monkeypatch.setattr(app_module, "DB_PATH", str(db_path))
-        monkeypatch.setattr(app_module, "NAMELIST_PATH", str(tmp_path / "missing.csv"))
-        with app_module.connect() as conn:
-            storage.create_schema(conn)
-            if collide:
-                colliding_boarder_rows = [
-                    ("CHEN, WEI", "Chen Wei A", "701A"),
-                    ("CHEN  WEI", "Chen Wei B", "701B"),
-                ]
-                conn.executemany(
-                    "INSERT INTO boarders (normalized_name, display_name, bed) VALUES (?, ?, ?)",
-                    colliding_boarder_rows,
-                )
-            else:
-                storage.add_boarder(conn, "ALICE", "Alice", "601A")
-            conn.commit()
-        app_module.init_db()
-        return app_module.app.test_client()
+    def _client_over_seeded_db(self, tmp_path, collide):
+        app = app_module.create_app(
+            {
+                "DB_PATH": str(tmp_path / "banner.db"),
+                "NAMELIST_PATH": str(tmp_path / "missing.csv"),
+                "TESTING": True,
+            }
+        )
+        with app.app_context():
+            with app_module.connect() as conn:
+                storage.create_schema(conn)
+                if collide:
+                    colliding_boarder_rows = [
+                        ("CHEN, WEI", "Chen Wei A", "701A"),
+                        ("CHEN  WEI", "Chen Wei B", "701B"),
+                    ]
+                    conn.executemany(
+                        "INSERT INTO boarders (normalized_name, display_name, bed) VALUES (?, ?, ?)",
+                        colliding_boarder_rows,
+                    )
+                else:
+                    storage.add_boarder(conn, "ALICE", "Alice", "601A")
+                conn.commit()
+            app_module.init_db()
+            return app.test_client()
 
-    def test_nonzero_skips_flash_banner_once_per_session(self, tmp_path, monkeypatch):
-        client = self._client_over_seeded_db(tmp_path, monkeypatch, collide=True)
+    def test_nonzero_skips_flash_banner_once_per_session(self, tmp_path):
+        client = self._client_over_seeded_db(tmp_path, collide=True)
 
         first = unescape(client.get("/").get_data(as_text=True))
         assert "legacy Match Key" in first
@@ -313,8 +387,8 @@ class TestMigrationCollisionBanner:
         again = client.get("/").get_data(as_text=True)
         assert "legacy Match Key" not in again
 
-    def test_zero_skips_never_flash_banner(self, tmp_path, monkeypatch):
-        client = self._client_over_seeded_db(tmp_path, monkeypatch, collide=False)
+    def test_zero_skips_never_flash_banner(self, tmp_path):
+        client = self._client_over_seeded_db(tmp_path, collide=False)
 
         for _ in range(2):
             html = client.get("/").get_data(as_text=True)
@@ -328,7 +402,7 @@ class TestImportUsesDbBoarders:
                 conn,
                 [Boarder("ALICE", "Alice", "601A"), Boarder("GHOST", "Ghost", "999")],
             )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -344,7 +418,7 @@ class TestImportUsesDbBoarders:
     def test_import_does_not_match_csv_only_boarder(self, fresh_client):
         with app_module.connect() as conn:
             storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -359,32 +433,32 @@ class TestImportUsesDbBoarders:
 
 class TestBoarderAdd:
     def test_add_boarder_appears_in_list(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": "601C"})
         assert resp.status_code == 302
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert "Carol" in html
         assert "601C" in html
 
     def test_add_empty_name_is_rejected_inline(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "", "bed": "601C"})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "", "bed": "601C"})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "name is required" in html.lower()
 
     def test_add_empty_bed_is_rejected_inline(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": ""})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": ""})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "bed is required" in html.lower()
 
     def test_add_duplicate_name_is_rejected_inline(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "alice", "bed": "601C"})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "alice", "bed": "601C"})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "already" in html.lower()
 
     def test_add_duplicate_bed_is_rejected_inline(self, fresh_client):
-        resp = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601A"})
+        resp = post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": "601A"})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "601A" in html
@@ -404,7 +478,7 @@ class TestBoarderEditApi:
 
     def test_patch_updates_name_and_bed(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "602A"}
         )
         assert resp.status_code == 200
@@ -415,9 +489,9 @@ class TestBoarderEditApi:
         assert "ALICE" not in html
 
     def test_patch_rejects_name_taken_by_another(self, fresh_client):
-        fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
+        post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": "601C"})
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "carol", "bed": "601A"}
         )
         assert resp.status_code == 400
@@ -426,9 +500,9 @@ class TestBoarderEditApi:
         assert self._boarder(fresh_client, "ALICE").bed == "601A"
 
     def test_patch_rejects_bed_taken_by_another(self, fresh_client):
-        fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "601C"})
+        post_csrf(fresh_client, "/boarders/add", data={"name": "Carol", "bed": "601C"})
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alice", "bed": "601C"}
         )
         assert resp.status_code == 400
@@ -438,7 +512,7 @@ class TestBoarderEditApi:
 
     def test_patch_keeping_own_bed_is_not_a_conflict(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "601A"}
         )
         assert resp.status_code == 200
@@ -446,7 +520,7 @@ class TestBoarderEditApi:
 
     def test_patch_rejects_empty_name(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "", "bed": "601A"}
         )
         assert resp.status_code == 400
@@ -457,7 +531,7 @@ class TestBoarderEditApi:
 
     def test_patch_rejects_empty_bed(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alice", "bed": ""}
         )
         assert resp.status_code == 400
@@ -471,7 +545,7 @@ class TestBoarderEditApi:
             boarders = storage.list_boarders(conn)
         by_name = {boarder.normalized_name: boarder for boarder in boarders}
 
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             "/api/boarders",
             json={
                 "boarders": [
@@ -495,7 +569,7 @@ class TestBoarderEditApi:
             boarders = storage.list_boarders(conn)
         by_name = {boarder.normalized_name: boarder for boarder in boarders}
 
-        resp = fresh_client.patch(
+        resp = patch_csrf(fresh_client, 
             "/api/boarders",
             json={
                 "boarders": [
@@ -522,7 +596,7 @@ class TestBoarderDeleteApi:
 
     def test_delete_removes_from_list(self, fresh_client):
         boarder_id = self._alice_id(fresh_client)
-        resp = fresh_client.delete(f"/api/boarders/{boarder_id}")
+        resp = delete_csrf(fresh_client, f"/api/boarders/{boarder_id}")
         assert resp.status_code == 200
         assert resp.get_json() == {"ok": True}
         html = fresh_client.get("/boarders").get_data(as_text=True)
@@ -533,7 +607,7 @@ class TestBoarderDeleteApi:
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
             seed_punishments(conn, boarders=[record("ALICE", "601A", 2, 5, 7)])
-        resp = fresh_client.delete(f"/api/boarders/{boarder_id}")
+        resp = delete_csrf(fresh_client, f"/api/boarders/{boarder_id}")
         assert resp.status_code == 200
         with app_module.connect() as conn:
             saved = storage.get_month_report(conn, "2026-03")
@@ -544,7 +618,7 @@ class TestBoarderDeleteApi:
         assert puns[0].display_name == "Alice"
 
     def test_delete_unknown_boarder_is_noop(self, fresh_client):
-        resp = fresh_client.delete("/api/boarders/999")
+        resp = delete_csrf(fresh_client, "/api/boarders/999")
         assert resp.status_code == 200
         with app_module.connect() as conn:
             assert len(storage.list_boarders(conn)) == 2
@@ -552,10 +626,10 @@ class TestBoarderDeleteApi:
     def test_import_matches_after_edit(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
-        fresh_client.patch(
+        patch_csrf(fresh_client, 
             f"/api/boarders/{boarder_id}", json={"name": "Alicia", "bed": "602A"}
         )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -573,7 +647,7 @@ class TestRemovedPostRoutes:
     def test_old_edit_post_route_404s(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             f"/boarders/{boarder_id}/edit", data={"name": "Alicia", "bed": "602A"}
         )
         assert resp.status_code == 404
@@ -581,13 +655,13 @@ class TestRemovedPostRoutes:
     def test_old_delete_post_route_404s(self, fresh_client):
         with app_module.connect() as conn:
             boarder_id = storage.list_boarders(conn)[0].id
-        resp = fresh_client.post(f"/boarders/{boarder_id}/delete")
+        resp = post_csrf(fresh_client, f"/boarders/{boarder_id}/delete")
         assert resp.status_code == 404
 
 
 class TestBoarderBulkImport:
     def test_import_csv_replaces_roster(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "roster.csv"),
@@ -601,7 +675,7 @@ class TestBoarderBulkImport:
         assert "ALICE" not in html
 
     def test_import_empty_csv_replaces_roster_with_empty(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
@@ -613,7 +687,7 @@ class TestBoarderBulkImport:
             assert storage.list_boarders(conn) == []
 
     def test_import_all_skipped_rows_replaces_roster_with_empty(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n,bad\nNoBed,\n"), "skipped.csv"),
@@ -625,7 +699,7 @@ class TestBoarderBulkImport:
             assert storage.list_boarders(conn) == []
 
     def test_import_exact_duplicate_names_collapse_last_wins(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (
@@ -641,7 +715,7 @@ class TestBoarderBulkImport:
         assert [(b.display_name, b.bed) for b in boarders] == [("Carol", "602C")]
 
     def test_import_case_variant_duplicate_names_collapse_last_wins(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (
@@ -657,13 +731,13 @@ class TestBoarderBulkImport:
         assert [(b.display_name, b.bed) for b in boarders] == [("carol", "602C")]
 
     def test_import_rejects_missing_file(self, fresh_client):
-        resp = fresh_client.post("/boarders/import", data={})
+        resp = post_csrf(fresh_client, "/boarders/import", data={})
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "file" in html.lower()
 
     def test_empty_roster_empty_state_points_at_tab(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
@@ -675,7 +749,7 @@ class TestBoarderBulkImport:
         assert "namelist.csv" not in html
 
     def test_empty_roster_empty_state_names_the_master_list(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
@@ -688,14 +762,14 @@ class TestBoarderBulkImport:
         assert "Add a boarder here, or import a CSV to replace it." in html
 
     def test_empty_roster_rejects_monthly_log_import(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
             },
             content_type="multipart/form-data",
         )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -708,14 +782,14 @@ class TestBoarderBulkImport:
         assert "master list is missing or empty" in html
 
     def test_import_roster_used_by_ingestion(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nZed,999\n"), "roster.csv"),
             },
             content_type="multipart/form-data",
         )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/",
             data={
                 "report_month": "2026-08",
@@ -731,7 +805,7 @@ class TestBoarderBulkImport:
 
 class TestBoarderBulkImportDuplicateBed:
     def test_duplicate_bed_import_shows_inline_error_and_keeps_roster(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601A\nDana,601A\n"), "roster.csv"),
@@ -751,7 +825,7 @@ class TestBoarderBulkImportDuplicateBed:
         ]
 
     def test_duplicate_bed_import_does_not_partially_replace(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (
@@ -771,14 +845,14 @@ class TestBoarderBulkImportDuplicateBed:
         ]
 
     def test_duplicate_bed_import_after_prior_import_keeps_prior_roster(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "roster.csv"),
             },
             content_type="multipart/form-data",
         )
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nZed,601C\nWye,601C\n"), "roster.csv"),
@@ -795,7 +869,7 @@ class TestBoarderBulkImportDuplicateBed:
         ]
 
     def test_import_matching_existing_bed_is_still_valid(self, fresh_client):
-        resp = fresh_client.post(
+        resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601A\n"), "roster.csv"),
@@ -821,7 +895,7 @@ class TestBoarderExport:
         assert ["BOB", "601B"] in rows
 
     def test_export_matches_import_roundtrip(self, fresh_client):
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\n"), "roster.csv"),
@@ -839,7 +913,7 @@ LOG_CSV = "Name,Transaction Time\nALICE,07:45\n"
 
 class TestImportPostRedirectGet:
     def _import(self, client, month="2026-07", body=LOG_CSV, filename="log.csv"):
-        return client.post(
+        return post_csrf(client, 
             "/",
             data={
                 "report_month": month,
@@ -863,7 +937,7 @@ class TestImportPostRedirectGet:
         assert page.status_code == 200
         assert "Monthly report saved for '2026-07'." in html
         assert "2 Boarders recorded, 1 with lateness." in html
-        assert 'const initialMonthToOpen = "2026-07";' in html
+        assert 'id="initial-month-data">"2026-07"' in html
 
     def test_mixed_import_redirect_shows_confirmation_only(self, fresh_client):
         resp = self._import(
@@ -902,7 +976,9 @@ class TestImportPostRedirectGet:
         resp = self._import(fresh_client, month="")
 
         assert resp.status_code == 200
-        assert "Error" in resp.get_data(as_text=True)
+        assert "Please enter a valid month label for this report." in resp.get_data(
+            as_text=True
+        )
         with app_module.connect() as conn:
             assert storage.list_months(conn) == []
 
@@ -911,7 +987,7 @@ class TestImportPostRedirectGet:
         html = page.get_data(as_text=True)
 
         assert page.status_code == 200
-        assert "const initialMonthToOpen = null;" in html
+        assert 'id="initial-month-data">null<' in html
 
     def test_browser_refresh_of_redirect_target_shows_no_import_form_resubmit(self, fresh_client):
         resp = self._import(fresh_client)
@@ -924,6 +1000,52 @@ class TestImportPostRedirectGet:
         with app_module.connect() as conn:
             months = storage.list_months(conn)
         assert len(months) == 1
+
+
+class TestImportCopyAlignment:
+    def test_file_picker_label_uses_monthly_log_term(self):
+        html = home_html()
+
+        assert "Select Monthly Log" in html
+        assert "Select Monthly Log CSV" not in html
+
+    def test_no_file_error_names_monthly_log(self, fresh_client):
+        resp = post_csrf(fresh_client,
+            "/",
+            data={
+                "report_month": "2026-07",
+                "log_file": (io.BytesIO(b""), ""),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "Error: No Monthly Log selected." in html
+        assert "No file selected" not in html
+
+    def test_empty_log_message_names_monthly_log(self, fresh_client):
+        resp = post_csrf(fresh_client,
+            "/",
+            data={
+                "report_month": "2026-07",
+                "log_file": (io.BytesIO(b"Name,Transaction Time\n"), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "The Monthly Log is empty or has no data rows." in html
+        assert "uploaded log file" not in html
+
+    def test_stable_surrounding_copy_unchanged(self):
+        html = home_html()
+
+        assert ">Punishments</a>" in html
+        assert "<h2>Punishments</h2>" in html
+        assert "<h3 class=\"upload-title\">Import Monthly Log</h3>" in html
+        assert "of 0 punishments" in html or "punishments</p>" in html
 
 
 class TestMonthApi:
@@ -1001,11 +1123,11 @@ class TestServerOwnedReportRows:
     def test_sort_headers_are_keyboard_operable_buttons(self):
         html = home_html()
         assert html.count('<button type="button" class="sort-btn"') == 5
-        assert "aria-sort" in html
+        assert "aria-sort" in static_app_js()
 
     def test_server_and_client_tables_render_bare_numbers_units_in_headers(self):
         html = home_html()
-        assert "<td>${row.total_minutes}</td>" in html
+        assert "<td>${row.total_minutes}</td>" in static_app_js()
         assert " mins</td>" not in html
 
     def test_history_search_results_share_month_report_table_styling(self, fresh_client):
@@ -1016,24 +1138,21 @@ class TestServerOwnedReportRows:
         assert '<table class="boarders-table">' in history_panel
 
     def test_browser_sort_headers_reach_and_announce_direction(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("ALICE", "101", 2, 5, 7),
-                    record("BOB", "102", 4, 8, 12),
-                ],
-                "2026-07",
-            )
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [
             month_row("ALICE", "101", 2, 5, 7),
             month_row("BOB", "102", 4, 8, 12),
         ]
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [
+                record("ALICE", "101", 2, 5, 7),
+                record("BOB", "102", 4, 8, 12),
+            ],
+            rows,
+        )
 
         frequency_header = page.locator("#month-detail-table thead th").nth(2)
         assert frequency_header.get_attribute("aria-sort") == "none"
@@ -1052,17 +1171,71 @@ class TestServerOwnedReportRows:
         bed_header = page.locator("#month-detail-table thead th").nth(0)
         assert bed_header.get_attribute("aria-sort") == "none"
 
+    def test_month_detail_highlights_late_boarders_only(self, fresh_client, browser_page):
+        rows = [
+            month_row("ALICE", "101", 2, 5, 7),
+            month_row("DARA", "103"),
+        ]
+
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [
+                record("ALICE", "101", 2, 5, 7),
+                record("DARA", "103"),
+            ],
+            rows,
+        )
+
+        late_row = page.locator("#month-detail-body tr", has_text="Alice")
+        clean_row = page.locator("#month-detail-body tr", has_text="Dara")
+        assert "month-report-late" in (late_row.get_attribute("class") or "")
+        assert "month-report-late" not in (clean_row.get_attribute("class") or "")
+        assert_late_name_bold(late_row.locator("td:nth-child(2)"))
+        assert_late_bed_not_bold(late_row.locator("td:nth-child(1)"))
+
+    def test_month_detail_highlight_survives_resorting(self, fresh_client, browser_page):
+        rows = [
+            month_row("BOB", "102", 1, 19, 20),
+            month_row("DARA", "103"),
+        ]
+
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [
+                record("BOB", "102", 1, 19, 20),
+                record("DARA", "103"),
+            ],
+            rows,
+        )
+
+        page.locator("#month-detail-table thead th").nth(1).locator("button.sort-btn").click()
+        page.wait_for_function(
+            "() => document.querySelector('#month-detail-body tr td:nth-child(2)').textContent.trim() === 'Bob'"
+        )
+        late_row = page.locator("#month-detail-body tr", has_text="Bob")
+        assert "month-report-late" in (late_row.get_attribute("class") or "")
 
     def test_report_sorting_keeps_server_fields_and_resets_for_each_month(self):
-        html = home_html()
-        assert "row.display_name" in html
-        assert "row.total_points" in html
-        assert "monthDetailSort = { field: 'bed', direction: 'asc' };" in html
+        app_js = static_app_js()
+        assert "row.display_name" in app_js
+        assert "row.total_points" in app_js
+        assert "monthDetailSort = { field: 'bed', direction: 'asc' };" in app_js
 
     def test_client_renders_server_rows_and_display_names(self):
-        html = home_html()
-        assert "monthDetailRows = data.boarders;" in html
-        assert "row.display_name" in html
+        app_js = static_app_js()
+        assert "monthDetailRows = data.boarders;" in app_js
+        assert "row.display_name" in app_js
+
+    def test_client_bed_cell_carries_no_bold_cue(self):
+        # Only the Name cell carries the late bold cue (#169, #161): the
+        # month-report-late stylesheet rule bolds td:nth-child(2), so the
+        # Bed cell template must not add its own <strong>.
+        app_js = static_app_js()
+        assert "<strong>${escapeHtml(row.bed)}</strong>" not in app_js
 
     def test_report_headers_sort_rows_and_reset_for_a_new_month(self, fresh_client, browser_page):
         with app_module.connect() as conn:
@@ -1203,10 +1376,13 @@ class TestServerOwnedReportRows:
         def fulfill_from_server(route):
             parsed = urlparse(route.request.url)
             if parsed.path.startswith("/static"):
-                route.fulfill(
-                    body=fresh_client.get(parsed.path).get_data(),
-                    content_type="image/png",
+                body = fresh_client.get(parsed.path).get_data()
+                content_type = (
+                    "application/javascript"
+                    if parsed.path.endswith(".js")
+                    else "image/png"
                 )
+                route.fulfill(body=body, content_type=content_type)
                 return
             target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
             response = fresh_client.get(target)
@@ -1253,7 +1429,7 @@ class TestAssignRoute:
             )
 
     def test_assign_creates_punishments_for_late_boarders(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
         )
@@ -1264,7 +1440,7 @@ class TestAssignRoute:
             assert {r.normalized_name for r in rows} == {"ALICE", "BOB"}
 
     def test_unchecked_boarders_are_not_assigned(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE"]},
         )
@@ -1275,7 +1451,7 @@ class TestAssignRoute:
             assert {r.normalized_name for r in rows} == {"ALICE"}
 
     def test_checked_boarders_are_assigned(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
         )
@@ -1286,7 +1462,7 @@ class TestAssignRoute:
             assert {r.normalized_name for r in rows} == {"ALICE", "BOB"}
 
     def test_confirmation_names_boarders_by_display_name(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE"]},
             follow_redirects=True,
@@ -1296,18 +1472,18 @@ class TestAssignRoute:
         assert "Alice" in html
         assert "ALICE" not in html
 
-    def test_missing_deadline_redirects_to_consequences_with_error(self):
-        response = client.post("/assign/2026-03", data={})
+    def test_missing_deadline_redirects_to_punishments_with_error(self):
+        response = post_csrf(client, "/assign/2026-03", data={})
 
         assert response.status_code == 302
-        assert response.headers["Location"].endswith("/consequences")
+        assert response.headers["Location"].endswith("/punishments")
         page = client.get(response.headers["Location"])
         html = page.get_data(as_text=True)
         assert "banner-error" in html
         assert "deadline" in html.lower()
 
-    def test_rejected_assignment_preserves_consequences_filters(self):
-        response = client.post(
+    def test_rejected_assignment_preserves_punishments_filters(self):
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={
                 "deadline": "",
@@ -1319,13 +1495,13 @@ class TestAssignRoute:
 
         assert response.status_code == 302
         location = response.headers["Location"]
-        assert location.startswith("/consequences")
+        assert location.startswith("/punishments")
         assert "month=2026-03" in location
         assert "status=assigned" in location
         assert "show_all=1" in location
 
     def test_assign_redirect_shows_message_and_opens_month(self):
-        response = client.post(
+        response = post_csrf(client, 
             "/assign/2026-03",
             data={"deadline": "2026-04-10", "assign": ["ALICE", "BOB"]},
             follow_redirects=True,
@@ -1337,18 +1513,51 @@ class TestAssignRoute:
         assert "report_month" in html
 
     def test_assign_success_url_carries_no_message_payload(self):
-        response = client.post("/assign/2026-03", data={"deadline": "2026-04-10"})
+        response = post_csrf(client, "/assign/2026-03", data={"deadline": "2026-04-10"})
 
         assert response.status_code == 302
         assert "message=" not in response.headers["Location"]
 
     def test_month_with_no_report_is_an_error(self):
-        response = client.post("/assign/2026-99", data={"deadline": "2026-04-10"})
+        response = post_csrf(client, "/assign/2026-99", data={"deadline": "2026-04-10"})
 
         assert response.status_code == 404
 
 
-class TestConsequencesRoute:
+class TestLegacyPunishmentsRedirect:
+    def test_legacy_address_redirects_to_canonical(self):
+        response = client.get("/consequences")
+
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/punishments")
+
+    def test_legacy_redirect_preserves_query_string(self):
+        response = client.get(
+            "/consequences?show_all=1&month=2026-03&status=submitted"
+        )
+
+        assert response.status_code == 302
+        location = response.headers["Location"]
+        assert location.startswith("/punishments")
+        assert "show_all=1" in location
+        assert "month=2026-03" in location
+        assert "status=submitted" in location
+
+    def test_legacy_redirect_lands_on_canonical_view(self):
+        response = client.get("/consequences", follow_redirects=True)
+
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'id="punishments"' in html
+
+    def test_no_retired_consequences_wording_in_panel(self):
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = panel_html(html, "punishments")
+
+        assert "consequence" not in panel.lower()
+
+
+class TestPunishmentsRoute:
     @pytest.fixture(autouse=True)
     def _seed_punishment(self):
         with app_module.connect() as conn:
@@ -1363,8 +1572,8 @@ class TestConsequencesRoute:
                 ],
             )
 
-    def test_consequences_page_lists_in_flight_punishments(self):
-        response = client.get("/consequences")
+    def test_punishments_page_lists_in_flight_punishments(self):
+        response = client.get("/punishments")
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
@@ -1372,14 +1581,14 @@ class TestConsequencesRoute:
         assert "Bob" in html
         assert "2026-04-10" in html
 
-    def test_consequences_tab_is_rendered(self):
+    def test_punishments_tab_is_rendered(self):
         html = client.get("/").get_data(as_text=True)
-        assert "data-tab=\"consequences\"" in html
+        assert "data-tab=\"punishments\"" in html
 
-    def test_consequences_tab_links_to_server_view(self):
+    def test_punishments_tab_links_to_server_view(self):
         html = client.get("/").get_data(as_text=True)
         assert re.search(
-            r'<a class="tab-link [^"]*" data-tab="consequences" href="/consequences">',
+            r'<a class="tab-link [^"]*" data-tab="punishments" href="/punishments">',
             html,
         )
 
@@ -1390,14 +1599,14 @@ class TestConsequencesRoute:
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        response = client.get("/consequences?show_all=1")
+        response = client.get("/punishments?show_all=1")
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
         assert "submitted" in html
 
     def test_month_filter_dropdown_lists_saved_months(self):
-        html = client.get("/consequences").get_data(as_text=True)
+        html = client.get("/punishments").get_data(as_text=True)
 
         assert 'value="2026-03"' in html
 
@@ -1411,7 +1620,7 @@ class TestConsequencesRoute:
                 assigned_at="2026-04-01T09:00:00+00:00",
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
+        html = client.get("/punishments").get_data(as_text=True)
 
         assert 'value="2026-04"' in html
 
@@ -1422,7 +1631,7 @@ class TestConsequencesRoute:
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        response = client.get("/consequences?status=submitted")
+        response = client.get("/punishments?status=submitted")
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
@@ -1436,8 +1645,8 @@ class TestConsequencesRoute:
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Alice" not in panel
         assert "Bob" in panel
 
@@ -1449,12 +1658,12 @@ class TestConsequencesRoute:
             )
 
         response = client.get(
-            "/consequences?show_all=1&month=2026-03&status=submitted"
+            "/punishments?show_all=1&month=2026-03&status=submitted"
         )
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Alice" in panel
         assert "Bob" not in panel
         assert re.search(r'<option value="2026-03" selected>', panel)
@@ -1467,7 +1676,7 @@ class TestConsequencesRoute:
             conn.execute("DELETE FROM punishments")
             conn.commit()
 
-        html = client.get("/consequences").get_data(as_text=True)
+        html = client.get("/punishments").get_data(as_text=True)
         assert "No punishments to show." in html
 
     def test_overdue_action_is_hidden_before_deadline(self):
@@ -1475,14 +1684,14 @@ class TestConsequencesRoute:
             conn.execute("DELETE FROM punishments")
             seed_punishments(conn, deadline="2099-01-01", include_report=False)
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Alice" in panel
         assert "Mark overdue" not in panel
 
     def test_filter_options_use_humanized_labels(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert re.search(r'<option value="phone_held" ?(selected)?>Phone held</option>', panel)
         assert re.search(r'<option value="voided" ?(selected)?>Voided</option>', panel)
         assert "<option>phone_held</option>" not in panel
@@ -1494,52 +1703,52 @@ class TestConsequencesRoute:
                 conn, row.id, "phone_held", timestamp="2026-04-11T09:00:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert '>Phone held</h4>' in panel
         assert "<td>Phone held</td>" in panel
         assert "<td>phone_held</td>" not in panel
 
-    def test_consequences_table_has_last_action_column_with_timestamp(self):
+    def test_punishments_table_has_last_action_column_with_timestamp(self):
         with app_module.connect() as conn:
             row = storage.list_punishments(conn, statuses=("assigned",))[0]
             storage.transition_punishment(
                 conn, row.id, "overdue", timestamp="2026-04-11T10:30:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert '<th scope="col">Last action</th>' in panel
         assert "2026-04-11 10:30" in panel
 
     def test_toolbar_has_no_punishments_subheading(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "<h3>Punishments</h3>" not in panel
 
     def test_filter_button_is_gone_and_selects_auto_submit(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
 
         assert ">Filter</button>" not in panel
 
-        month_select = re.search(r'<select id="consequences-month"[^>]*>', panel)
-        status_select = re.search(r'<select id="consequences-status"[^>]*>', panel)
+        month_select = re.search(r'<select id="punishments-month"[^>]*>', panel)
+        status_select = re.search(r'<select id="punishments-status"[^>]*>', panel)
         assert month_select is not None and status_select is not None
         assert 'onchange="this.form.submit()"' in month_select.group(0)
         assert 'onchange="this.form.submit()"' in status_select.group(0)
 
-    def test_toolbar_uses_dedicated_consequences_class(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
-        assert '<div class="consequences-toolbar">' in panel
+    def test_toolbar_uses_dedicated_punishments_class(self):
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
+        assert '<div class="punishments-toolbar">' in panel
         assert "month-detail-toolbar" not in panel
 
     def test_result_count_reads_showing_x_of_y(self):
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert re.search(
-            r'<p class="consequences-count" aria-live="polite">Showing 2 of 2 punishments</p>',
+            r'<p class="punishments-count" aria-live="polite">Showing 2 of 2 punishments</p>',
             panel,
         )
 
@@ -1550,8 +1759,8 @@ class TestConsequencesRoute:
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Showing 1 of 2 punishments" in panel
 
     def test_empty_view_counts_zero_of_zero(self):
@@ -1559,8 +1768,8 @@ class TestConsequencesRoute:
             conn.execute("DELETE FROM punishments")
             conn.commit()
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Showing 0 of 0 punishments" in panel
 
     def test_voided_punishments_do_not_count_in_the_total(self):
@@ -1570,8 +1779,8 @@ class TestConsequencesRoute:
                 conn, row.id, "voided", timestamp="2026-04-05T09:00:00+00:00"
             )
 
-        html = client.get("/consequences").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         assert "Showing 1 of 1 punishment</p>" in panel
 
 
@@ -1589,7 +1798,7 @@ class TestTransitionRoute:
             return storage.list_punishments(conn)[0].id
 
     def test_mark_overdue(self):
-        response = client.post(f"/punishment/{self._alice_id()}/transition", data={"to": "overdue"})
+        response = post_csrf(client, f"/punishment/{self._alice_id()}/transition", data={"to": "overdue"})
 
         assert response.status_code == 302
         with app_module.connect() as conn:
@@ -1598,7 +1807,7 @@ class TestTransitionRoute:
             assert row.overdue_at is not None
 
     def test_void_with_reason(self):
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{self._alice_id()}/transition",
             data={"to": "voided", "void_reason": "exempt"},
         )
@@ -1616,15 +1825,15 @@ class TestTransitionRoute:
                 conn, punishment_id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
 
-        html = client.get("/consequences?show_all=1").get_data(as_text=True)
-        panel = re.search(r'<section id="consequences".*?</section>', html, re.S).group(0)
+        html = client.get("/punishments?show_all=1").get_data(as_text=True)
+        panel = re.search(r'<section id="punishments".*?</section>', html, re.S).group(0)
         row = re.search(
             rf'<tr data-punishment-id="{punishment_id}">.*?</tr>', panel, re.S
         )
         assert row is not None
         assert 'name="to" value="voided"' in row.group(0)
 
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition",
             data={"to": "voided", "void_reason": "later exempted"},
         )
@@ -1642,7 +1851,7 @@ class TestTransitionRoute:
             seed_punishments(conn, deadline="2099-01-01", include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
         )
 
@@ -1659,7 +1868,7 @@ class TestTransitionRoute:
             seed_punishments(conn, deadline=deadline, include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
         )
 
@@ -1674,7 +1883,7 @@ class TestTransitionRoute:
             seed_punishments(conn, deadline=deadline, include_report=False)
             punishment_id = storage.list_punishments(conn)[0].id
 
-        response = client.post(
+        response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition", data={"to": "overdue"}
         )
 
@@ -1688,10 +1897,10 @@ class TestTransitionRoute:
             storage.transition_punishment(
                 conn, row.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
             )
-        response = client.post(f"/punishment/{self._alice_id()}/transition", data={"to": "phone_held"})
+        response = post_csrf(client, f"/punishment/{self._alice_id()}/transition", data={"to": "phone_held"})
 
         assert response.status_code == 302
-        assert response.headers["Location"].endswith("/consequences")
+        assert response.headers["Location"].endswith("/punishments")
         page = client.get(response.headers["Location"])
         assert b"not allowed" in page.data.lower()
 
@@ -1712,7 +1921,7 @@ class TestDestructiveActionsNameTarget:
     def test_void_opens_confirm_dialog_naming_boarder_and_month(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -1732,7 +1941,7 @@ class TestDestructiveActionsNameTarget:
     def test_void_reason_stays_in_form_after_confirm(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -1745,14 +1954,12 @@ class TestDestructiveActionsNameTarget:
         assert submitted is not None
 
     def test_delete_report_confirmation_names_exact_month_and_punishment_impact(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 1, 1, 2)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [month_row("ALICE", "101", 1, 1, 2)]
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 1, 1, 2)], rows
+        )
         page.locator("#month-detail-delete").click()
 
         message = page.locator("#confirm-modal-message").text_content()
@@ -1781,10 +1988,10 @@ def _parse_rgb(text):
 
 
 class TestConfirmModalDialogSemantics:
-    def _consequences_html(self, fresh_client):
+    def _punishments_html(self, fresh_client):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        return fresh_client.get("/consequences").get_data(as_text=True)
+        return fresh_client.get("/punishments").get_data(as_text=True)
 
     def _open_modal(self, page):
         stub_form_submit(page)
@@ -1792,7 +1999,7 @@ class TestConfirmModalDialogSemantics:
         page.wait_for_selector("#confirmModal.show")
 
     def test_modal_has_dialog_role_accessible_name_and_initial_focus(self, fresh_client, browser_page):
-        html = self._consequences_html(fresh_client)
+        html = self._punishments_html(fresh_client)
 
         page = browser_page
         page.set_content(html)
@@ -1809,7 +2016,7 @@ class TestConfirmModalDialogSemantics:
         assert "btn-danger" in focused
 
     def test_tab_is_trapped_esc_cancels_and_focus_is_restored(self, fresh_client, browser_page):
-        html = self._consequences_html(fresh_client)
+        html = self._punishments_html(fresh_client)
 
         page = browser_page
         page.set_content(html)
@@ -1907,14 +2114,14 @@ class TestAccessibilityPolish:
 
     def test_void_reason_input_has_programmatic_label(self, fresh_client):
         self._seed_punishments(fresh_client)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
         assert re.search(
             r'<input type="text" name="void_reason"[^>]*aria-label=', html
         )
 
     def test_data_table_headers_carry_scope(self, fresh_client):
         self._seed_punishments(fresh_client)
-        home = home_html()
+        home = home_html(fresh_client)
         for table_id in ("boarders-table", "month-detail-table"):
             table = re.search(rf'<table[^>]*id="{table_id}".*?</table>', home, re.S)
             assert table is not None
@@ -1923,11 +2130,11 @@ class TestAccessibilityPolish:
         history_html = fresh_client.get("/?search_name=ALICE").get_data(as_text=True)
         assert '<th scope="col">' in history_panel_html(history_html)
 
-        consequences_html = fresh_client.get("/consequences").get_data(as_text=True)
-        consequences_section = re.search(
-            r'<section id="consequences".*?</section>', consequences_html, re.S
+        punishments_html = fresh_client.get("/punishments").get_data(as_text=True)
+        punishments_section = re.search(
+            r'<section id="punishments".*?</section>', punishments_html, re.S
         ).group(0)
-        assert '<th scope="col">' in consequences_section
+        assert '<th scope="col">' in punishments_section
 
     def test_tab_bar_wraps_at_narrow_width(self, browser_page):
         html = home_html()
@@ -1965,11 +2172,11 @@ class TestAccessibilityPolish:
 
     def test_badge_and_disabled_styles_meet_aa_contrast(self, fresh_client, browser_page):
         self._seed_punishments(fresh_client)
-        consequences_html = fresh_client.get("/consequences?show_all=1").get_data(as_text=True)
+        punishments_html = fresh_client.get("/punishments?show_all=1").get_data(as_text=True)
         boarders_html = fresh_client.get("/boarders").get_data(as_text=True)
 
         page = browser_page
-        page.set_content(consequences_html)
+        page.set_content(punishments_html)
 
         def computed_colors(selector):
             return page.locator(selector).first.evaluate(
@@ -2319,21 +2526,18 @@ class TestPrintOutputsActiveView:
         month_row("BOB", "102", 1, 19, 20),
     ]
 
-    def _open_report(self, page):
-        open_month_detail(page, self.ROWS)
+    def _open_report(self, fresh_client, page):
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], self.ROWS
+        )
 
     def _printed_text(self, page):
         page.emulate_media(media="print")
         return page.evaluate("() => document.body.innerText")
 
     def test_printing_open_month_report_yields_only_that_report(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
-
         page = browser_page
-        page.set_content(html)
-        self._open_report(page)
+        self._open_report(fresh_client, page)
         printed = self._printed_text(page)
 
         assert "Alice" in printed
@@ -2342,6 +2546,15 @@ class TestPrintOutputsActiveView:
         assert "Search Boarder History" not in printed
         assert "Assign Punishments" not in printed
         assert "Import Monthly Log" not in printed
+
+    def test_printing_open_month_report_keeps_late_name_cue(self, fresh_client, browser_page):
+        page = browser_page
+        self._open_report(fresh_client, page)
+        page.emulate_media(media="print")
+
+        assert_late_name_bold(
+            page.locator("#month-detail-body tr td:nth-child(2)").first
+        )
 
     def test_empty_month_detail_skeleton_never_prints(self, fresh_client, browser_page):
         with app_module.connect() as conn:
@@ -2358,10 +2571,10 @@ class TestPrintOutputsActiveView:
         )
         assert display == "none"
 
-    def test_printing_consequences_tab_excludes_other_views_and_skeleton(self, fresh_client, browser_page):
+    def test_printing_punishments_tab_excludes_other_views_and_skeleton(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -2409,14 +2622,12 @@ class TestPrintOutputsActiveView:
         assert "View Reports in Database" not in printed
 
     def test_print_strips_card_chrome_and_pre_scroll_header_shadow(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
         rows = [month_row(f"S{i:02d}", f"{600 + i}A", 1, 10, 10) for i in range(30)]
-        html = fresh_client.get("/").get_data(as_text=True)
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], rows
+        )
 
         # Scroll first so the sticky header carries its on-screen lift cue,
         # then confirm printing suppresses it along with the card chrome.
@@ -2450,6 +2661,174 @@ class TestPrintOutputsActiveView:
         # Printed output matches the pre-pass baseline: white header band,
         # not the on-screen page tint (print-color-adjust is forced exact).
         assert chrome["headerBackground"] == "rgb(255, 255, 255)"
+
+
+class TestMonthlyReportSinglePagePrint:
+    """Single-page Monthly Report print guarantee (spec #164, ticket #165).
+
+    All three tests render through the existing month-detail helpers and
+    assert externally observable print behaviour — never individual CSS
+    rules. The pinned roster is the capacity-bound real size (~71
+    Boarders); graceful overflow (repeating header, unsplit rows) covers
+    any hypothetical larger roster.
+    """
+
+    MONTH = "2026-07"
+    # Pinned roster size: the capacity-bound real roster the single-page
+    # guarantee holds at.
+    PINNED_ROSTER_SIZE = 71
+    # A4 portrait at 96 CSS px/in with the pinned 10mm top/bottom page
+    # margins: (297 - 2*10) / 25.4 * 96.
+    PRINTABLE_HEIGHT_PX = 1047
+    # Condensed print type never drops below this floor for the fit.
+    MIN_PRINT_TYPE_PX = 10
+
+    def _pinned_rows(self):
+        """Builds the deterministic pinned roster in shared bed order."""
+        rows = []
+        for i in range(self.PINNED_ROSTER_SIZE):
+            late = i % 2 == 0
+            rows.append(
+                month_row(
+                    f"S{i:02d}",
+                    f"{600 + i}A",
+                    1 if late else 0,
+                    10 if late else 0,
+                    5 if late else 0,
+                )
+            )
+        return rows
+
+    def _open_pinned_report(self, fresh_client, page, rows=None):
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            rows if rows is not None else self._pinned_rows(),
+            month=self.MONTH,
+        )
+
+    def test_pinned_roster_fits_one_portrait_sheet(self, fresh_client, browser_page):
+        page = browser_page
+        self._open_pinned_report(fresh_client, page)
+        page.emulate_media(media="print")
+
+        printed = page.evaluate("() => document.body.innerText")
+        # The sheet carries the brand header and the report title, but
+        # no app chrome or toolbar tooling.
+        assert "DBS Boarding School" in printed
+        assert f"Report for {self.MONTH}" in printed
+        assert "Assign Punishments" not in printed
+        assert "Lateness Disciplinary Dashboard" not in printed
+
+        fit = page.evaluate(
+            """() => {
+                const detail = document.getElementById('month-detail');
+                const thead = document.querySelector('#month-detail thead');
+                const firstRow = document.querySelector('#month-detail-body tr');
+                const cell = document.querySelector('#month-detail td');
+                return {
+                    detailHeight: detail.getBoundingClientRect().height,
+                    bodyHeight: document.body.scrollHeight,
+                    rowCount: document.querySelectorAll('#month-detail-body tr').length,
+                    headerDisplay: getComputedStyle(thead).display,
+                    rowBreak: getComputedStyle(firstRow).breakInside,
+                    typePx: parseFloat(getComputedStyle(cell).fontSize),
+                };
+            }"""
+        )
+        assert fit["rowCount"] == self.PINNED_ROSTER_SIZE
+        assert fit["detailHeight"] <= self.PRINTABLE_HEIGHT_PX
+        assert fit["bodyHeight"] <= self.PRINTABLE_HEIGHT_PX
+        # Graceful-overflow guards: the header repeats and rows never
+        # split if a future roster ever flows past one page.
+        assert fit["headerDisplay"] == "table-header-group"
+        assert fit["rowBreak"] == "avoid"
+        # Legibility floor: the fit is never bought by shrinking type
+        # below readability.
+        assert fit["typePx"] >= self.MIN_PRINT_TYPE_PX
+
+    def test_printed_report_matches_month_csv_in_bed_order(self, fresh_client, browser_page):
+        specs = [
+            ("ALICE", "101", 2, 5, 7),
+            ("BOB", "102", 0, 0, 0),
+            ("CARA", "601A", 3, 12, 9),
+            ("DARA", "601B", 0, 0, 0),
+            ("EVAN", "602A", 1, 30, 15),
+            ("FIONA", "602B", 4, 8, 11),
+            ("GUS", "603A", 0, 0, 0),
+            ("HANA", "603B", 2, 22, 6),
+        ]
+        # Feed the report rows shuffled: bed-then-name ordering is owned
+        # by the render path, so paper must still match the CSV order.
+        shuffled = [specs[i] for i in (5, 0, 7, 2, 4, 1, 6, 3)]
+        rows = [
+            month_row(name, bed, f, m, p) for name, bed, f, m, p in shuffled
+        ]
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record(name, bed, frequency=f, total_minutes=m, total_points=p)
+             for name, bed, f, m, p in specs],
+            rows,
+            month=self.MONTH,
+        )
+        resp = fresh_client.get(f"/download_month/{self.MONTH}")
+        assert resp.status_code == 200
+        csv_rows = list(csv.reader(io.StringIO(resp.get_data(as_text=True))))
+        assert csv_rows[0] == ["Bed", "Name", "Frequency", "Total Minutes Late", "Total Points"]
+        csv_body = csv_rows[1:]
+
+        page.emulate_media(media="print")
+
+        printed = page.evaluate(
+            """() => Array.from(document.querySelectorAll('#month-detail-body tr')).map(tr =>
+                Array.from(tr.querySelectorAll('td')).map(td => td.textContent.trim())
+            )"""
+        )
+        assert len(printed) == len(csv_body)
+        assert {row[1] for row in printed} == {row[1] for row in csv_body}
+        assert all(len(row) == 5 for row in printed)
+        # Same shared bed order on paper as in the file.
+        assert [row[0] for row in printed] == [row[0] for row in csv_body]
+        assert printed == csv_body
+
+    def test_print_media_keeps_condensed_late_cue(self, fresh_client, browser_page):
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            [
+                month_row("ALICE", "101", 2, 5, 7),
+                month_row("DARA", "102", 0, 0, 0),
+            ],
+            month=self.MONTH,
+        )
+        page.emulate_media(media="print")
+
+        cue = page.evaluate(
+            """() => {
+                const rows = Array.from(document.querySelectorAll('#month-detail-body tr'));
+                return rows.map(tr => ({
+                    late: tr.classList.contains('month-report-late'),
+                    rowTint: getComputedStyle(tr).backgroundColor,
+                    nameWeight: getComputedStyle(tr.querySelector('td:nth-child(2)')).fontWeight,
+                    colorAdjust: getComputedStyle(tr.querySelector('td')).printColorAdjust,
+                    typePx: parseFloat(getComputedStyle(tr.querySelector('td')).fontSize),
+                }));
+            }"""
+        )
+        late, clean = cue
+        assert late["late"]
+        assert late["nameWeight"] in ("700", "bold")
+        # Tint survives through the existing exact color adjustment.
+        assert late["rowTint"] == "rgb(253, 238, 241)"
+        assert late["colorAdjust"] == "exact"
+        assert late["typePx"] >= self.MIN_PRINT_TYPE_PX
+        assert not clean["late"]
+        assert clean["rowTint"] != late["rowTint"]
 
 
 class TestAsyncActionsNeverFailSilently:
@@ -2551,31 +2930,26 @@ class TestAsyncActionsNeverFailSilently:
 
 
 class TestAssignPanelPositiveConsent:
-    def _open_assign_panel(self, page, rows):
-        open_month_detail(page, rows)
+    def _open_assign_panel(self, fresh_client, page, seed_records, rows):
+        open_seeded_month_detail(fresh_client, page, seed_records, rows)
         page.locator("#month-detail-assign-btn").click()
 
     def test_panel_prechecks_eligible_boarders_with_positive_labels(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("ALICE", "101", 2, 5, 7, display_name="Alice"),
-                    record("BOB", "102", 1, 19, 20, display_name="Bob"),
-                    record("CAROL", "103", 0, 0, 0, display_name="Carol"),
-                ],
-                "2026-07",
-            )
-        html = fresh_client.get("/").get_data(as_text=True)
-        rows = [
-            month_row("ALICE", "101", 2, 5, 7),
-            month_row("BOB", "102", 1, 19, 20),
-            month_row("CAROL", "103", 0, 0, 0),
-        ]
-
         page = browser_page
-        page.set_content(html)
-        self._open_assign_panel(page, rows)
+        self._open_assign_panel(
+            fresh_client,
+            page,
+            [
+                record("ALICE", "101", 2, 5, 7, display_name="Alice"),
+                record("BOB", "102", 1, 19, 20, display_name="Bob"),
+                record("CAROL", "103", 0, 0, 0, display_name="Carol"),
+            ],
+            [
+                month_row("ALICE", "101", 2, 5, 7),
+                month_row("BOB", "102", 1, 19, 20),
+                month_row("CAROL", "103", 0, 0, 0),
+            ],
+        )
 
         checkboxes = page.locator('#assign-boarders input[type="checkbox"]')
         assert checkboxes.count() == 2
@@ -2595,24 +2969,19 @@ class TestAssignPanelPositiveConsent:
         assert counter.text_content().strip() == "1 punishment will be assigned."
 
     def test_submitting_sends_only_checked_boarders(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("ALICE", "101", 2, 5, 7, display_name="Alice"),
-                    record("BOB", "102", 1, 19, 20, display_name="Bob"),
-                ],
-                "2026-07",
-            )
-        html = fresh_client.get("/").get_data(as_text=True)
-        rows = [
-            month_row("ALICE", "101", 2, 5, 7),
-            month_row("BOB", "102", 1, 19, 20),
-        ]
-
         page = browser_page
-        page.set_content(html)
-        self._open_assign_panel(page, rows)
+        self._open_assign_panel(
+            fresh_client,
+            page,
+            [
+                record("ALICE", "101", 2, 5, 7, display_name="Alice"),
+                record("BOB", "102", 1, 19, 20, display_name="Bob"),
+            ],
+            [
+                month_row("ALICE", "101", 2, 5, 7),
+                month_row("BOB", "102", 1, 19, 20),
+            ],
+        )
         page.locator("#assign-deadline").fill("2026-08-10")
         page.evaluate(
             """() => {
@@ -2648,9 +3017,9 @@ class TestTransitionFeedbackLivesOnPage:
             return storage.list_punishments(conn)[0].id
 
     def _post_transition(self, data):
-        return client.post(f"/punishment/{self._alice_id()}/transition", data=data)
+        return post_csrf(client, f"/punishment/{self._alice_id()}/transition", data=data)
 
-    def test_rejected_transition_redirects_to_consequences_preserving_filters(self):
+    def test_rejected_transition_redirects_to_punishments_preserving_filters(self):
         response = self._post_transition(
             {
                 "to": "phone_held",
@@ -2662,13 +3031,13 @@ class TestTransitionFeedbackLivesOnPage:
 
         assert response.status_code == 302
         location = response.headers["Location"]
-        assert location.startswith("/consequences")
+        assert location.startswith("/punishments")
         assert "month=2026-03" in location
         assert "status=assigned" in location
         assert "show_all=1" in location
         assert "message=" not in location
 
-    def test_rejected_transition_renders_inline_error_on_consequences(self):
+    def test_rejected_transition_renders_inline_error_on_punishments(self):
         response = self._post_transition({"to": "phone_held"})
 
         page = client.get(response.headers["Location"])
@@ -2723,9 +3092,9 @@ class TestChromeConsistency:
                 f"{panel_id} panel lost its {subheading!r} section sub-heading"
             )
 
-    def test_consequences_panel_has_no_section_subheading(self):
+    def test_punishments_panel_has_no_section_subheading(self):
         html = home_html()
-        panel = panel_html(html, "consequences")
+        panel = panel_html(html, "punishments")
         assert "<h3" not in panel
 
     def test_history_results_subheading_nests_beneath_panel_title(self, fresh_client):
@@ -2833,14 +3202,14 @@ class TestVisualConsistencyPass:
         assert abs(fill["leftGap"]) < 1 and abs(fill["rightGap"]) < 1
 
     def test_selects_drop_os_chrome_for_house_style(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
 
         style = page.evaluate(
             """() => {
-                const s = getComputedStyle(document.querySelector('#consequences-status'));
+                const s = getComputedStyle(document.querySelector('#punishments-status'));
                 return {
                     appearance: s.appearance,
                     image: s.backgroundImage,
@@ -2853,8 +3222,8 @@ class TestVisualConsistencyPass:
         assert "%231d2b53" in style["image"] or "#1d2b53" in style["image"], style
         assert style["radius"] == "6px"
 
-    def test_consequences_toolbar_sits_left_with_toggle_on_select_baseline(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+    def test_punishments_toolbar_sits_left_with_toggle_on_select_baseline(self, fresh_client, browser_page):
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -2862,10 +3231,10 @@ class TestVisualConsistencyPass:
         edges = page.evaluate(
             """() => {
                 const rect = el => el.getBoundingClientRect();
-                const heading = rect(document.querySelector('#consequences h2'));
-                const monthLabel = rect(document.querySelector('label[for="consequences-month"]'));
-                const statusSelect = rect(document.querySelector('#consequences-status'));
-                const toggle = rect(document.querySelector('.consequences-toolbar .btn-neutral'));
+                const heading = rect(document.querySelector('#punishments h2'));
+                const monthLabel = rect(document.querySelector('label[for="punishments-month"]'));
+                const statusSelect = rect(document.querySelector('#punishments-status'));
+                const toggle = rect(document.querySelector('.punishments-toolbar .btn-neutral'));
                 return {
                     leftDrift: monthLabel.left - heading.left,
                     baselineDelta: toggle.bottom - statusSelect.bottom,
@@ -2878,7 +3247,7 @@ class TestVisualConsistencyPass:
     def test_count_sits_clear_of_the_group_heading_it_follows(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -2886,15 +3255,15 @@ class TestVisualConsistencyPass:
         gap = page.evaluate(
             """() => {
                 const rect = el => el.getBoundingClientRect();
-                const title = rect(document.querySelector('.consequences-group-title'));
-                const count = rect(document.querySelector('.consequences-group .consequences-count'));
+                const title = rect(document.querySelector('.punishments-group-title'));
+                const count = rect(document.querySelector('.punishments-group .punishments-count'));
                 return count.top - title.bottom;
             }"""
         )
         assert gap >= 0, gap
 
     def test_empty_view_count_keeps_its_toolbar_coupling(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
@@ -2902,8 +3271,8 @@ class TestVisualConsistencyPass:
         gap = page.evaluate(
             """() => {
                 const rect = el => el.getBoundingClientRect();
-                const toolbar = rect(document.querySelector('.consequences-toolbar'));
-                const count = rect(document.querySelector('.consequences-toolbar + .consequences-count'));
+                const toolbar = rect(document.querySelector('.punishments-toolbar'));
+                const count = rect(document.querySelector('.punishments-toolbar + .punishments-count'));
                 return count.top - toolbar.bottom;
             }"""
         )
@@ -2947,23 +3316,23 @@ class TestVisualConsistencyPass:
         assert metrics["centerDelta"] <= 4, metrics
         assert metrics["gap"] > 0, metrics
 
-    def test_consequences_toolbar_controls_share_one_height(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+    def test_punishments_toolbar_controls_share_one_height(self, fresh_client, browser_page):
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_content(html)
 
         heights = page.evaluate(
             """() => [
-                document.querySelector('#consequences-month'),
-                document.querySelector('#consequences-status'),
-                document.querySelector('.consequences-toolbar .btn-neutral'),
+                document.querySelector('#punishments-month'),
+                document.querySelector('#punishments-status'),
+                document.querySelector('.punishments-toolbar .btn-neutral'),
             ].map(el => el.getBoundingClientRect().height)"""
         )
         assert max(heights) - min(heights) < 1, heights
 
-    def test_consequences_toolbar_stacks_on_mobile_with_shared_heights(self, fresh_client, browser_page):
-        html = fresh_client.get("/consequences").get_data(as_text=True)
+    def test_punishments_toolbar_stacks_on_mobile_with_shared_heights(self, fresh_client, browser_page):
+        html = fresh_client.get("/punishments").get_data(as_text=True)
 
         page = browser_page
         page.set_viewport_size({"width": 375, "height": 800})
@@ -2972,10 +3341,10 @@ class TestVisualConsistencyPass:
 
             layout = page.evaluate(
                 """() => {
-                    const toolbar = document.querySelector('.consequences-toolbar');
+                    const toolbar = document.querySelector('.punishments-toolbar');
                     const els = [
-                        document.querySelector('#consequences-month'),
-                        document.querySelector('#consequences-status'),
+                        document.querySelector('#punishments-month'),
+                        document.querySelector('#punishments-status'),
                         toolbar.querySelector('.btn-neutral'),
                     ];
                     const rects = els.map(el => el.getBoundingClientRect());
@@ -2992,14 +3361,10 @@ class TestVisualConsistencyPass:
             page.set_viewport_size({"width": 1280, "height": 720})
 
     def test_checkboxes_render_as_navy_tiles_with_scale_in_checks(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
-        rows = [month_row("ALICE", "101", 2, 5, 7)]
-
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], [month_row("ALICE", "101", 2, 5, 7)]
+        )
         page.locator("#month-detail-assign-btn").click()
 
         checkbox = page.locator('#assign-boarders input[type="checkbox"]').first
@@ -3081,14 +3446,12 @@ class TestVisualConsistencyPass:
         assert card["headerBackground"] == "rgb(248, 249, 250)"  # --page-bg
 
     def test_sticky_header_lift_appears_only_while_rows_pass_beneath(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
         rows = [month_row(f"S{i:02d}", f"{600 + i}A", 1, 10, 10) for i in range(30)]
-        html = fresh_client.get("/").get_data(as_text=True)
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], rows
+        )
 
         def shadow_state():
             return page.evaluate(
@@ -3311,14 +3674,12 @@ class TestMonthReportToolbarOrdering:
         )
 
     def test_delete_is_rightmost_and_only_danger_control_when_report_open(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [month_row("ALICE", "101", 2, 5, 7)]
 
         page = browser_page
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], rows
+        )
 
         boxes = page.evaluate(
             """ids => ids.map(id => {
@@ -3340,8 +3701,8 @@ class TestMonthReportToolbarOrdering:
         assert danger_controls == ["month-detail-delete"]
 
 
-class TestConsequencesRowActionContract:
-    """Pins exactly what /consequences renders as row actions per status.
+class TestPunishmentsRowActionContract:
+    """Pins exactly what /punishments renders as row actions per status.
 
     Characterization safety net for the row-action decomposition: every
     assertion here must keep passing unmodified when the duplicated form
@@ -3368,8 +3729,8 @@ class TestConsequencesRowActionContract:
             )
 
     def _row(self, fresh_client, punishment_id, query=""):
-        html = fresh_client.get(f"/consequences{query}").get_data(as_text=True)
-        panel = panel_html(html, "consequences")
+        html = fresh_client.get(f"/punishments{query}").get_data(as_text=True)
+        panel = panel_html(html, "punishments")
         match = re.search(
             rf'<tr data-punishment-id="{punishment_id}">.*?</tr>', panel, re.S
         )
@@ -3530,8 +3891,8 @@ class TestConsequencesRowActionContract:
         self._move(ids["ELLE"], "submitted", timestamp="2026-04-09T09:00:00+00:00")
         self._move(ids["FRAN"], "voided", timestamp="2026-04-12T09:00:00+00:00")
 
-        html = fresh_client.get("/consequences?show_all=1").get_data(as_text=True)
-        panel = panel_html(html, "consequences")
+        html = fresh_client.get("/punishments?show_all=1").get_data(as_text=True)
+        panel = panel_html(html, "punishments")
         rows = {}
         for match in re.finditer(r'<tr data-punishment-id="(\d+)">.*?</tr>', panel, re.S):
             rows[int(match.group(1))] = match.group(0)
@@ -3561,15 +3922,15 @@ class TestConsequencesRowActionContract:
         assert {pid: self._contracts(row) for pid, row in rows.items()} == expected
 
 
-class TestConsequencesRowActionTidiness:
-    def _consequences_html_with_punishment(self, fresh_client):
+class TestPunishmentsRowActionTidiness:
+    def _punishments_html_with_punishment(self, fresh_client):
         with app_module.connect() as conn:
             seed_punishments(conn)
-        return fresh_client.get("/consequences").get_data(as_text=True)
+        return fresh_client.get("/punishments").get_data(as_text=True)
 
     def test_action_forms_sit_in_one_row_actions_wrapper_without_inline_styles(self, fresh_client):
-        html = self._consequences_html_with_punishment(fresh_client)
-        panel = panel_html(html, "consequences")
+        html = self._punishments_html_with_punishment(fresh_client)
+        panel = panel_html(html, "punishments")
 
         assert 'style="display:inline"' not in panel
         rows = re.findall(r'<tr data-punishment-id="\d+">.*?</tr>', panel, re.S)
@@ -3580,7 +3941,7 @@ class TestConsequencesRowActionTidiness:
             assert "<form" not in before_wrapper
 
     def test_row_actions_container_is_wrapping_evenly_gapped_and_centred(self, fresh_client, browser_page):
-        html = self._consequences_html_with_punishment(fresh_client)
+        html = self._punishments_html_with_punishment(fresh_client)
 
         page = browser_page
         page.set_content(html)
@@ -3601,7 +3962,7 @@ class TestConsequencesRowActionTidiness:
         assert style["gap"] > 0
 
     def test_void_reason_input_is_compact_like_neighbouring_buttons(self, fresh_client, browser_page):
-        html = self._consequences_html_with_punishment(fresh_client)
+        html = self._punishments_html_with_punishment(fresh_client)
 
         page = browser_page
         page.set_content(html)
@@ -3684,15 +4045,13 @@ class TestUiTidinessHoldsEverywhere:
             assert len(sizes) == 1, typography[tier]
 
     def test_narrow_viewport_stacks_open_report_toolbar_without_overflow(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
-        html = fresh_client.get("/").get_data(as_text=True)
         rows = [month_row("ALICE", "101", 2, 5, 7)]
 
         page = browser_page
         page.set_viewport_size({"width": 360, "height": 800})
-        page.set_content(html)
-        open_month_detail(page, rows)
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 5, 7)], rows
+        )
 
         toolbar_direction = page.evaluate(
             """() => {
@@ -3707,7 +4066,7 @@ class TestUiTidinessHoldsEverywhere:
         assert not overflow
 
     def test_no_rendered_copy_uses_the_master_list_avoid_term(self, fresh_client):
-        for route in ("/", "/boarders", "/consequences", "/statistics", "/boarder/ALICE"):
+        for route in ("/", "/boarders", "/punishments", "/statistics", "/boarder/ALICE"):
             html = fresh_client.get(route).get_data(as_text=True)
             assert "roster" not in html.lower(), (
                 f"{route} renders the Master List avoid-term"
@@ -3720,14 +4079,14 @@ class TestUiTidinessHoldsEverywhere:
         icon = '<use href="#icon-inbox"/>'
         # The app auto-seeds the Master List, so clear it to reach the
         # boarders empty state.
-        fresh_client.post(
+        post_csrf(fresh_client, 
             "/boarders/import",
             data={"boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv")},
             content_type="multipart/form-data",
         )
         boarders = panel_html(fresh_client.get("/boarders").get_data(as_text=True), "boarders")
-        consequences = panel_html(
-            fresh_client.get("/consequences").get_data(as_text=True), "consequences"
+        punishments = panel_html(
+            fresh_client.get("/punishments").get_data(as_text=True), "punishments"
         )
         reports = panel_html(fresh_client.get("/").get_data(as_text=True), "reports")
         history = panel_html(
@@ -3735,7 +4094,7 @@ class TestUiTidinessHoldsEverywhere:
         )
         for name, panel in (
             ("boarders", boarders),
-            ("consequences", consequences),
+            ("punishments", punishments),
             ("reports", reports),
             ("history", history),
         ):

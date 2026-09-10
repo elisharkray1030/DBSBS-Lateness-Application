@@ -30,18 +30,29 @@ The app matches uploaded monthly attendance logs against a boarder master list, 
 - [templates/dashboard.html](templates/dashboard.html) - Statistics / House Dashboard view
 - [templates/boarder.html](templates/boarder.html) - individual boarder profile with all-time history and charts
 - [templates/macros.html](templates/macros.html) - shared Jinja macros (Current/Former badge, etc.)
-- [compose.yaml](compose.yaml) - Docker Compose service definition
+- [templates/403.html](templates/403.html) / [templates/500.html](templates/500.html) - CSRF-rejection and server-error pages
+- [static/app.js](static/app.js) - browser-side behavior (table sorting, charts, punishment actions)
+- [compose.yaml](compose.yaml) - Docker Compose service definition (single-host deployment)
+- [.env.example](.env.example) - Docker Compose environment template; copy to `.env` and set `SECRET_KEY`
+- [serve.py](serve.py) - Windows host entry point (waitress)
+- [start-windows.ps1](start-windows.ps1) - PowerShell launcher for the Windows host (run after setting `SECRET_KEY`)
+- [backup_db.py](backup_db.py) - host backup script (SQLite online copy + archived Monthly Logs and Master List snapshots)
+- [defaults.py](defaults.py) - built-in configuration defaults shared by the app and host tooling
+- [pyproject.toml](pyproject.toml) - mypy and pytest configuration
+- [CONTEXT.md](CONTEXT.md) - domain glossary and language
+- [docs/deployment/](docs/deployment/) - Windows host, backup/restore, and NAS runbooks
+- [docs/adr/](docs/adr/) - architecture decision records
 - [tests/](tests/) - pytest suite covering the ingestion and storage seams, plus Flask test-client route tests and Playwright browser tests for UI behavior (browser tests skip automatically when Playwright is not installed)
 - [namelist.csv](namelist.csv) - master boarder list used for matching (local-only: gitignored for privacy, not in the repo)
 - [requirements.txt](requirements.txt) - runtime dependencies
-- [requirements-dev.txt](requirements-dev.txt) - development dependencies (pytest), includes runtime deps
+- [requirements-dev.txt](requirements-dev.txt) - development dependencies (pytest, mypy, playwright, types-waitress), includes runtime deps
 - [Dockerfile](Dockerfile) - container image definition
 
 ## Setup From Scratch
 
 ### Local Python setup
 
-1. Install Python 3.9+.
+1. Install Python 3.11+.
 2. Open a terminal in the project folder.
 3. Install dependencies in the Python environment you will use to run the app:
 
@@ -51,35 +62,63 @@ python -m pip install -r requirements.txt
 
 On Windows, `python3` may point to the Microsoft Store stub instead of a real interpreter. If that happens, use `py -3 -m pip install -r requirements.txt` instead.
 
-4. Start the app:
+4. Set `SECRET_KEY` before both `init-db` and `run` (required: the app aborts at startup without one). Generate a per-host secret, then set it in your shell:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+```bash
+# macOS / Linux
+export SECRET_KEY="<the generated secret>"
+```
+
+```powershell
+# Windows PowerShell
+$env:SECRET_KEY = "<the generated secret>"
+```
+
+`flask run` does not read `.env` (python-dotenv is not installed), so set the variable directly as above.
+
+5. Prepare the database (first start only; a safe no-op afterwards):
+
+```bash
+python -m flask --app app init-db
+```
+
+6. Start the app for local development:
 
 ```bash
 python -m flask --app app run
 ```
 
-If you are using the Windows launcher, `py -3 -m flask --app app run` is also a safe option.
+7. Open `http://127.0.0.1:5000/` in your browser.
 
-On Windows, you can also run the bundled launcher script from the project root:
+The bundled Windows launcher is for a shared office-LAN host, not local development: it prepares the database and serves the app on **waitress** at `http://0.0.0.0:8000/` so other PCs can reach it. Set `SECRET_KEY` first and see [docs/deployment/windows-host.md](docs/deployment/windows-host.md):
 
 ```powershell
 ./start-windows.ps1
 ```
 
-5. Open `http://127.0.0.1:5000/` in your browser.
-
 ### Docker setup
 
 1. Install and start Docker Desktop.
-2. Keep `namelist.csv` in the project root.
-3. Start the stack:
+2. Keep `namelist.csv` in the project root. It must exist before the first start: Compose bind-mounts it, so a missing file becomes a directory.
+3. Set `SECRET_KEY` before starting. Compose reads it from a root `.env` file, so copy the template and fill it in:
+
+```bash
+cp .env.example .env   # then set SECRET_KEY=<the generated secret>
+```
+
+4. Start the stack:
 
 ```bash
 docker compose up -d --build
 ```
 
-4. Open `http://127.0.0.1:8000/` in your browser.
+5. Open `http://127.0.0.1:8000/` in your browser.
 
-5. Stop the stack when you are done:
+6. Stop the stack when you are done:
 
 ```bash
 docker compose down
@@ -89,7 +128,7 @@ docker compose down
 
 The boarder master list lives in the SQLite database (`boarders` table). The **Boarders** tab lets staff view, add, edit, and remove boarders inline, replace the whole roster by uploading a CSV, and download the current roster as a CSV.
 
-On first startup, if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once, then sets a seed flag in a `meta` table. After that the file is no longer read — all changes happen through the Boarders tab or a CSV upload. If the roster is later emptied (every Boarder deleted), it stays empty across restarts; the seed never runs again. A fresh start with no `namelist.csv` forfeits the one-time seed — a `namelist.csv` appearing later never silently seeds a roster you did not ask for. (Deployments that emptied every Boarder before this change get one final seed on the first restart after upgrading, then stay stable thereafter.)
+On first database preparation — `init-db`, which `serve.py` and the Docker image run automatically before serving and which local development runs manually — if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once, then sets a seed flag in a `meta` table. After that the file is no longer read — all changes happen through the Boarders tab or a CSV upload. If the roster is later emptied (every Boarder deleted), it stays empty across restarts; the seed never runs again. A fresh start with no `namelist.csv` forfeits the one-time seed — a `namelist.csv` appearing later never silently seeds a roster you did not ask for. (Deployments that emptied every Boarder before this change get one final seed on the first restart after upgrading, then stay stable thereafter.)
 
 If you are using Docker Compose, the root `namelist.csv` is only consulted for that initial seed; edits made in the app persist in the mounted database volume and survive restarts. You do not need to rebuild the image because the app reads the path from `NAMELIST_PATH`.
 
@@ -117,7 +156,7 @@ python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]
 
 ## Data expectations
 
-- `namelist.csv` should contain at least `Name` and `Bed` columns. It is read once at first startup to seed an empty boarders table; after that, manage the boarder list through the Boarders tab.
+- `namelist.csv` should contain at least `Name` and `Bed` columns. It seeds an empty boarders table on the first `init-db`; after that, manage the boarder list through the Boarders tab.
 - Monthly log CSV files should contain at least `Name` and `Transaction Time` columns.
 - `Transaction Time` values must be strict `HH:MM` or `HH:MM:SS` (24-hour) times. Anything else is rejected with the offending rows surfaced, never silently dropped.
 - The SQLite database file is created automatically on first run if it does not already exist.
@@ -128,19 +167,45 @@ A month report is only saved when the uploaded log produced at least one row for
 
 The web upload and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
 
+A successful Import also files the Monthly Log and its Master List snapshot under `LOG_ARCHIVE_DIR` (default `data/logs`) so the Monthly Reports can be rebuilt from the archive; a rejected Import writes nothing.
+
+Monthly Log and Master List Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, in bytes). An upload over the cap is rejected with a staff-readable error and nothing is stored.
+
 ## Persistence and deployment notes
 
 - The app stores month summaries in SQLite using the path from `DB_PATH`.
-- The boarder master list is stored in the same SQLite database and managed through the Boarders tab; `namelist.csv` is read once at first startup to seed an empty boarders table.
+- The boarder master list is stored in the same SQLite database and managed through the Boarders tab; `namelist.csv` seeds an empty boarders table when `python -m flask --app app init-db` is run (once; later runs are a no-op).
 - For Docker, keep the database file in a mounted folder so reports and the boarder list survive container restarts.
-- Monthly uploads are consumed directly from the request stream and are never written to disk or stored permanently by the app.
+- Each successful Import archives two files under `LOG_ARCHIVE_DIR` (default `data/logs`): the Monthly Log as `<YYYY-MM>.csv` and a `namelist-<YYYY-MM>.csv` Master List snapshot of the roster that produced the report. Both are written atomically and a re-Import overwrites that month. A rejected Import writes nothing.
+
+Recognized environment variables:
+
+- `SECRET_KEY` — required; the app aborts at startup without one.
+- `DB_PATH` — SQLite database file (default `lateness_history.db`).
+- `NAMELIST_PATH` — seed Master List read once by `init-db` (default `namelist.csv`).
+- `LOG_ARCHIVE_DIR` — Monthly Log Archive folder (default `data/logs`).
+- `MAX_CONTENT_LENGTH` — upload cap in bytes (default `16777216`, i.e. 16 MB).
+- `LOG_LEVEL` — application log level (default `INFO`).
+- `PORT` — listen port for `serve.py` only (default `8000`).
+
+`compose.yaml` fixes `DB_PATH`, `NAMELIST_PATH`, and `LOG_ARCHIVE_DIR` to `/data` paths and only interpolates `SECRET_KEY` from the root `.env` file.
+
+### Deployment
+
+One designated, always-on PC runs the app; staff reach it over the office LAN. The SQLite database and the Monthly Log Archive live on that PC's **local disk** — a single writer, so there is no SQLite-over-SMB corruption risk. The NAS is a **backup target only**. ADR 0004 records the decision and the rejected alternatives.
+
+- **Windows host (native):** run `serve.py` (waitress) as a service, bound to the LAN. Follow [docs/deployment/windows-host.md](docs/deployment/windows-host.md).
+- **Backups:** `backup_db.py` copies the database plus the archived Monthly Logs and their per-month Master List snapshots to the NAS. Follow [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md) and [docs/deployment/nas-share.md](docs/deployment/nas-share.md).
+- **Docker:** `compose.yaml` is an equivalent single-host deployment (gunicorn) with the database and archive in the mounted `data` volume.
+- **Trust boundary:** office LAN only, plain HTTP, no auth, no `Secure` cookies. Do not expose it off-campus.
 
 ## Development notes
 
-- Install dev dependencies (pytest, mypy, playwright) with `python -m pip install -r requirements-dev.txt`.
-- Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium and skip automatically when it is unavailable).
-- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py` for typechecking.
-- Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). The web route and the CLI share one ingestion path, so they can't drift.
+- Install Python 3.11+ (CI tests 3.11 and 3.12; Docker uses 3.12-slim).
+- Install dev dependencies (pytest, mypy — pinned in `requirements-dev.txt` — playwright, and types-waitress) with `python -m pip install -r requirements-dev.txt`.
+- Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium — `python -m playwright install chromium` — and skip automatically when it is unavailable).
+- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py serve.py backup_db.py defaults.py` for typechecking (config in `pyproject.toml`; CI runs both pytest and mypy on push/PR).
+- Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web upload uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). Both files are local samples (`test_data.csv` is gitignored and not in the repo), so supply them first. The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.
 - Lateness frequency, total minutes late, and total points are computed once in the ingestion module and carried on the typed boarder record; the month view, the download, and the CSV export all use that one definition.
 - The CSV export, the month download, and `export_to_csv` all share the single CSV writer in `parser.py`, so their output is identical.

@@ -2,7 +2,7 @@
 
 import re
 
-from helpers import month_row, open_month_detail, record
+from helpers import month_row, open_seeded_month_detail, record
 
 import app as app_module
 import storage
@@ -50,28 +50,21 @@ class TestAllTimeClickThrough:
 
 class TestMonthDetailClickThrough:
     def test_detail_names_link_and_survive_sorting(self, fresh_client, browser_page):
-        with app_module.connect() as conn:
-            storage.save_month(
-                conn,
-                [
-                    record("ALICE", "601A", 1, 2, 9),
-                    record("BOB", "601B", 1, 2, 3),
-                ],
-                "2026-03",
-            )
-
-        html = fresh_client.get("/").get_data(as_text=True)
         page = browser_page
         page_errors = []
         page.on("pageerror", lambda error: page_errors.append(str(error)))
-        page.set_content(html)
-
-        open_month_detail(
+        open_seeded_month_detail(
+            fresh_client,
             page,
+            [
+                record("ALICE", "601A", 1, 2, 9),
+                record("BOB", "601B", 1, 2, 3),
+            ],
             [
                 month_row("ALICE", "601A", 1, 2, 9),
                 month_row("BOB", "601B", 1, 2, 3),
             ],
+            seed_month="2026-03",
         )
 
         links = page.locator("#month-detail-body a.boarder-link")

@@ -2,10 +2,10 @@
 
 import json
 import re
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from helpers import record
+from helpers import record, static_dir
 
 import app as app_module
 import storage
@@ -31,11 +31,11 @@ def seed_history(key, display_name, bed, months):
 def open_charted_profile(browser_page, html):
     """Fulfils /boarder/ with rendered HTML and local static files, then
     waits until Chart.js has drawn the profile chart on the canvas."""
-    static_dir = Path(__file__).resolve().parent.parent / "static"
+    static_dir_path = static_dir()
 
     def fulfill_static(route):
         filename = route.request.url.rsplit("/", 1)[-1]
-        local = static_dir / filename
+        local = static_dir_path / filename
         if local.is_file():
             route.fulfill(
                 body=local.read_bytes(),
@@ -383,7 +383,7 @@ class TestProfileTrendChart:
             "frequency": [1, 2],
             "minutes": [3, 5],
         }
-        table = re.search(r'<table class="boarder-history-table">.*?</table>', html, re.S)
+        table = re.search(r'<table class="boarder-history-table"[^>]*>.*?</table>', html, re.S)
         assert table is not None
         for figure in ("2026-01", "2026-02", "4", "9", "3", "5"):
             assert f"<td>{figure}</td>" in table.group(0)
@@ -423,6 +423,160 @@ class TestProfileTrendChart:
         open_charted_profile(browser_page, html)
 
 
+class TestEscalationSection:
+    def test_merged_rows_join_history_with_live_punishment_chronologically(self, fresh_client):
+        seed_history(
+            "ALICE",
+            "Alice",
+            "601A",
+            [("2026-01", 1, 3, 4), ("2026-02", 2, 5, 9)],
+        )
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-01",
+                assigned_at="2026-02-01T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        months = re.findall(r"<td>(2026-\d{2})</td>", section.group(0))
+        assert months == ["2026-01", "2026-02"]
+        assert "No punishment assigned" in section.group(0)
+        assert "Assigned" in section.group(0)
+        # Joined figures ride along: January history, February history plus
+        # the live punishment's deadline and due marker.
+        assert "<td>1</td>" in section.group(0)
+        assert "<td>4</td>" in section.group(0)
+        assert "<td>2</td>" in section.group(0)
+        assert "<td>9</td>" in section.group(0)
+        assert "2026-03-01" in section.group(0)
+        assert '<span class="due-badge">due</span>' in section.group(0)
+
+    def test_punishment_only_month_marks_missing_history(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-01",
+                assigned_at="2026-02-01T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        months = re.findall(r"<td>(2026-\d{2})</td>", section.group(0))
+        assert months == ["2026-02"]
+        assert "Assigned" in section.group(0)
+        assert "2026-03-01" in section.group(0)
+        # Missing lateness is explicit, never a silent zero or bare dash.
+        assert "No history" in section.group(0)
+
+    def test_neither_history_nor_punishments_shows_empty_state(self, fresh_client):
+        # Fresh fixture seeds BOB on the Master List with no history/punishments.
+        html = profile_html(fresh_client, "BOB").get_data(as_text=True)
+
+        assert 'id="escalation-table"' not in html
+        assert "No monthly history or punishments stored for this boarder." in html
+
+    def test_voided_plus_live_month_follows_live(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-01",
+                assigned_at="2026-02-01T09:00:00+00:00",
+            )
+            only_id = storage.list_boarder_punishments(conn, "ALICE")[0].id
+            storage.transition_punishment(
+                conn, only_id, "voided",
+                timestamp="2026-02-03T09:00:00+00:00", void_reason="exempt",
+            )
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-10",
+                assigned_at="2026-02-04T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        months = re.findall(r"<td>(2026-\d{2})</td>", section.group(0))
+        assert months == ["2026-02"]
+        # Live row wins: its deadline rides along, the voided one never does.
+        assert "2026-03-10" in section.group(0)
+        assert "2026-03-01" not in section.group(0)
+        assert "Voided" not in section.group(0)
+        # Voided detail stays visible only in the Punishment Timeline.
+        voided = re.search(
+            r'id="punishment-timeline-voided".*?</table>', html, re.S
+        )
+        assert voided is not None
+        assert "<td>2026-02</td>" in voided.group(0)
+
+    def test_voided_only_month_never_inflates_escalation(self, fresh_client):
+        seed_history("ALICE", "Alice", "601A", [("2026-01", 1, 3, 4)])
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-01",
+                boarders=[record("ALICE", "601A", 1, 3, 4)],
+                deadline="2026-02-01",
+                assigned_at="2026-01-01T09:00:00+00:00",
+            )
+            only_id = storage.list_boarder_punishments(conn, "ALICE")[0].id
+            storage.transition_punishment(
+                conn, only_id, "voided",
+                timestamp="2026-01-05T09:00:00+00:00", void_reason="exempt",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        assert "No punishment assigned" in section.group(0)
+        assert "Voided" not in section.group(0)
+        voided = re.search(
+            r'id="punishment-timeline-voided".*?</table>', html, re.S
+        )
+        assert voided is not None
+        assert "<td>2026-01</td>" in voided.group(0)
+
+    def test_second_live_punishment_in_a_month_warns_and_keeps_first(
+        self, caplog
+    ):
+        # The storage seam guarantees at most one live punishment per
+        # boarder-month, so a second live row signals corruption, not a
+        # legal state. The merge keeps rendering the first but must say
+        # so loudly instead of dropping the row silently.
+        series = [
+            SimpleNamespace(
+                month="2026-02", frequency=2, total_minutes=5, total_points=9
+            )
+        ]
+        first = SimpleNamespace(month="2026-02", status="assigned")
+        second = SimpleNamespace(month="2026-02", status="overdue")
+
+        with caplog.at_level("WARNING", logger="app"):
+            rows = app_module._escalation_rows(series, [first, second])
+
+        assert len(rows) == 1
+        assert rows[0]["punishment"] is first
+        assert any(
+            "2026-02" in record.message for record in caplog.records
+        ), "no warning logged for the duplicate live punishment"
+
+
 class TestProfileChrome:
     def test_profile_extends_shared_layout(self, fresh_client):
         html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
@@ -439,3 +593,205 @@ class TestProfileChrome:
 
         assert 'class="profile-header"' in html
         assert 'class="upload-panel' not in html
+
+
+class TestEscalationParityAndLock:
+    """Former-boarder parity, identity parity, and regression lock (#158)."""
+
+    @staticmethod
+    def _escalation_section(html):
+        section = re.search(r'id="escalation-table".*?</table>', html, re.S)
+        assert section is not None, "no merged escalation section found"
+        return section.group(0)
+
+    def test_former_boarder_escalation_matches_current(self, fresh_client):
+        seed_history("ZED", "Zed", "601Z", [("2026-01", 1, 2, 3)])
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-01",
+                boarders=[record("ZED", "601Z", 1, 2, 3)],
+                deadline="2026-02-01",
+                assigned_at="2026-01-01T09:00:00+00:00",
+            )
+        current_html = profile_html(fresh_client, "ZED").get_data(as_text=True)
+
+        with app_module.connect() as conn:
+            zed_id = storage.add_boarder(conn, "ZED", "Zed", "601Z")
+            storage.delete_boarder(conn, zed_id)
+        former_html = profile_html(fresh_client, "ZED").get_data(as_text=True)
+
+        assert "Former" in former_html
+        assert self._escalation_section(former_html) == self._escalation_section(
+            current_html
+        ), "Former boarder's merged section differs from Current"
+
+        # A later Monthly Log re-import never mutates the issued punishment
+        # shown in the Former boarder's merged section either.
+        seed_history("ZED", "Zed", "601Z", [("2026-01", 9, 90, 99)])
+        reimported = self._escalation_section(
+            profile_html(fresh_client, "ZED").get_data(as_text=True)
+        )
+        assert "2026-02-01" in reimported, (
+            "re-import rewrote the Former boarder's issued punishment"
+        )
+
+    def test_reimport_never_mutates_issued_punishment_in_escalation(
+        self, fresh_client
+    ):
+        seed_history("ALICE", "Alice", "601A", [("2026-02", 2, 5, 9)])
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-01",
+                assigned_at="2026-02-01T09:00:00+00:00",
+            )
+
+        before = self._escalation_section(
+            profile_html(fresh_client, "ALICE").get_data(as_text=True)
+        )
+
+        # A corrected Monthly Log re-imports February with higher figures.
+        seed_history("ALICE", "Alice", "601A", [("2026-02", 5, 50, 99)])
+        after = self._escalation_section(
+            profile_html(fresh_client, "ALICE").get_data(as_text=True)
+        )
+
+        assert "2026-03-01" in before and "2026-03-01" in after, (
+            "re-import rewrote the issued punishment shown in the merged row"
+        )
+        assert "<td>99</td>" in after, (
+            "merged row did not pick up the corrected history figures"
+        )
+
+    def test_comma_variant_shows_identical_escalation(self, fresh_client):
+        seed_history("CHEN WEI", "Chen Wei", "701A", [("2026-03", 1, 2, 3)])
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-03",
+                boarders=[record("CHEN WEI", "701A", 1, 2, 3)],
+                deadline="2026-04-01",
+                assigned_at="2026-03-01T09:00:00+00:00",
+            )
+
+        canonical = self._escalation_section(
+            profile_html(fresh_client, "CHEN%20WEI").get_data(as_text=True)
+        )
+
+        # The comma variant resolves onto the canonical key via redirect.
+        redirect = profile_html(fresh_client, "CHEN%2C%20WEI")
+        assert redirect.status_code == 302
+        assert redirect.headers["Location"].endswith("/boarder/CHEN%20WEI")
+        variant = self._escalation_section(
+            fresh_client.get("/boarder/CHEN%2C%20WEI", follow_redirects=True)
+            .get_data(as_text=True)
+        )
+
+        assert variant == canonical, (
+            "name variant's merged section differs from the canonical key"
+        )
+
+    def test_existing_sections_unchanged_with_escalation_present(
+        self, fresh_client
+    ):
+        seed_history(
+            "ALICE",
+            "Alice",
+            "601A",
+            [("2026-01", 1, 3, 4), ("2026-02", 2, 5, 9)],
+        )
+        with app_module.connect() as conn:
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-01",
+                assigned_at="2026-02-01T09:00:00+00:00",
+            )
+            only_id = storage.list_boarder_punishments(conn, "ALICE")[0].id
+            storage.transition_punishment(
+                conn, only_id, "voided",
+                timestamp="2026-02-03T09:00:00+00:00", void_reason="exempt",
+            )
+            storage.assign_punishments(
+                conn,
+                month="2026-02",
+                boarders=[record("ALICE", "601A", 2, 5, 9)],
+                deadline="2026-03-10",
+                assigned_at="2026-02-04T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        # Merged section is present alongside everything else.
+        escalation = self._escalation_section(html)
+        assert "2026-03-10" in escalation
+
+        # Boarder History table keeps its rows and totals.
+        history = re.search(
+            r'class="boarder-history-table".*?</table>', html, re.S
+        )
+        assert history is not None, "Boarder History table changed"
+        assert "<td>2026-01</td>" in history.group(0)
+        assert "<td>2026-02</td>" in history.group(0)
+        assert "<td>3</td>" in history.group(0)  # total incidents
+        assert "<td>13</td>" in history.group(0)  # total points
+
+        # Punishment Timeline keeps the live/voided split and order.
+        live = re.search(
+            r'id="punishment-timeline-live".*?</table>', html, re.S
+        )
+        voided = re.search(
+            r'id="punishment-timeline-voided".*?</table>', html, re.S
+        )
+        assert live is not None, "live Punishment Timeline changed"
+        assert voided is not None, "voided Punishment Timeline changed"
+        assert "2026-03-10" in live.group(0)
+        assert "2026-03-01" not in live.group(0)
+        assert "<td>2026-02</td>" in voided.group(0)
+
+        # Lifetime summary totals and chart payload are untouched.
+        assert 'id="stat-incidents">3<' in html
+        assert 'id="stat-minutes">8<' in html
+        assert 'id="stat-points">13<' in html
+        payload = re.search(
+            r'<script type="application/json" id="profile-trend-data">(.*?)</script>',
+            html,
+            re.S,
+        )
+        assert payload is not None, "chart payload changed"
+        assert json.loads(payload.group(1)) == {
+            "labels": ["2026-01", "2026-02"],
+            "points": [4, 9],
+            "frequency": [1, 2],
+            "minutes": [3, 5],
+        }
+
+        # All Profile tables keep scoped column headers, each under its
+        # established section heading.
+        assert "<h2>Boarder History</h2>" in html
+        assert "<h2>Escalation by Month</h2>" in html
+        assert "<h2>Punishment Timeline</h2>" in html
+        tables = {
+            "escalation-table": rf'id="escalation-table".*?</table>',
+            "punishment-timeline-live": (
+                r'id="punishment-timeline-live".*?</table>'
+            ),
+            "punishment-timeline-voided": (
+                r'id="punishment-timeline-voided".*?</table>'
+            ),
+            "boarder-history-table": (
+                r'class="boarder-history-table".*?</table>'
+            ),
+        }
+        for table_id, pattern in tables.items():
+            table = re.search(pattern, html, re.S)
+            assert table is not None, f"{table_id} changed"
+            headers = re.findall(r"<th(?:\s[^>]*)?>", table.group(0))
+            assert headers, f"{table_id} lost its headers"
+            assert all('scope="col"' in tag for tag in headers), (
+                f"{table_id} diverged from the Profile's table semantics"
+            )

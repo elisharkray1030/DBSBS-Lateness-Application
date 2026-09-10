@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% block title %}DBS Boarding School — Lateness Dashboard{% endblock %}</title>
     <link rel="icon" href="{{ url_for('static', filename='dbslogoF-B.png') }}">
     <style>
@@ -29,6 +30,10 @@
             /* Badge and disabled-control tokens meet WCAG AA at rendered sizes. */
             --due-badge-bg: #c81030;
             --late-badge-bg: #495057;
+            /* Soft wash tinting late rows of the Monthly Report table;
+               deliberately weaker than --error-bg so a late row reads as
+               highlighted, not erroneous. */
+            --late-row-bg: #fdeef1;
             --disabled-bg: #e9ecef;
             --disabled-text: #495057;
             /* TODO: dark mode — map these tokens to a dark palette on a later theme hook. */
@@ -695,6 +700,18 @@
             opacity: 1;
         }
 
+        /* Monthly Report late-row treatment: tint plus bold name so
+           late Boarders stand out on screen and, via the bold cue, in print.
+           Deliberately separate from .late-badge, which means a Punishment
+           was submitted past its Deadline. */
+        .month-report-table tr.month-report-late {
+            background-color: var(--late-row-bg);
+        }
+
+        .month-report-table tr.month-report-late td:nth-child(2) {
+            font-weight: 700;
+        }
+
         .months-list {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -879,21 +896,23 @@
             padding: 6px 12px;
         }
 
-        .consequences-filters {
+        .consequences-filters,
+        .punishments-filters {
             display: flex;
             gap: 12px;
             align-items: flex-end;
             flex-wrap: wrap;
         }
 
-        .consequences-filters label {
+        .consequences-filters label,
+        .punishments-filters label {
             display: flex;
             flex-direction: column;
             gap: 4px;
             font-size: 0.9em;
         }
 
-        .consequences-toolbar {
+        .punishments-toolbar {
             --control-height: 30px;
             display: flex;
             gap: 10px;
@@ -902,41 +921,41 @@
             flex-wrap: wrap;
         }
 
-        .consequences-toolbar .consequences-filters {
+        .punishments-toolbar .punishments-filters {
             align-items: center;
         }
 
-        .consequences-toolbar .consequences-filters label {
+        .punishments-toolbar .punishments-filters label {
             display: inline-flex;
             align-items: center;
             white-space: nowrap;
         }
 
-        .consequences-toolbar select,
-        .consequences-toolbar .btn-sm {
+        .punishments-toolbar select,
+        .punishments-toolbar .btn-sm {
             height: var(--control-height);
         }
 
-        .consequences-toolbar select {
+        .punishments-toolbar select {
             padding-top: 4px;
             padding-bottom: 4px;
         }
 
-        .consequences-count {
+        .punishments-count {
             margin: 0 0 16px;
             color: var(--text-muted);
             font-size: 0.9em;
         }
 
-        .consequences-toolbar + .consequences-count {
+        .punishments-toolbar + .punishments-count {
             margin-top: -12px;
         }
 
-        .consequences-group {
+        .punishments-group {
             margin-bottom: 24px;
         }
 
-        .consequences-group-title {
+        .punishments-group-title {
             margin: 0 0 6px;
             color: var(--navy);
         }
@@ -1068,26 +1087,41 @@
                 flex: none;
             }
 
-            .consequences-toolbar {
+            .punishments-toolbar {
                 flex-direction: column;
                 align-items: stretch;
             }
+        }
+
+        /* Monthly Report single-page sheet (spec #164): pinned portrait
+           size and margins rather than browser/printer defaults. */
+        @page {
+            size: A4 portrait;
+            margin: 10mm 8mm;
         }
 
         @media print {
             /* Print outputs exactly the active view's report region: chrome,
                tooling, inactive panels, transient banners, and the empty
                month-detail skeleton are all excluded. Printing an open month
-               report is an intentional feature (body.report-open). */
+               report is an intentional feature (body.report-open). The
+               month-detail toolbar keeps its report title on paper; only its
+               buttons (and the assign panel) are tooling and stay hidden. */
             .site-header,
             .tabs,
             .upload-panel,
             #history form,
             .reports-panel > :not(#month-detail),
             .month-actions,
-            .month-detail-toolbar,
-            .consequences-toolbar,
-            .consequences-count,
+            /* The Boarders panel reuses .month-detail-toolbar for its
+               import/edit controls: that whole toolbar stays hidden on
+               paper. Inside the Monthly Report only the buttons are
+               tooling — the report title must keep printing. */
+            .boarders-panel .month-detail-toolbar,
+            #month-detail .month-detail-toolbar button,
+            #month-detail-assign,
+            .punishments-toolbar,
+            .punishments-count,
             .banner,
             #month-detail-loading,
             #month-detail-error {
@@ -1106,22 +1140,68 @@
             .print-brand {
                 display: flex !important;
                 align-items: center;
-                gap: 8px;
-                margin-bottom: 16px;
+                gap: 6px;
+                margin-bottom: 2px;
             }
 
             .print-brand img {
-                height: 28px;
+                height: 16px;
             }
 
             .print-brand span {
-                font-size: 1.1rem;
+                font-size: 12px;
                 font-weight: 700;
                 color: var(--navy);
             }
 
+            /* The dashboard H1 is app chrome: the printed sheet carries
+               the brand header plus the report title instead. */
+            body.report-open .container > h1 {
+                display: none !important;
+            }
+
+            /* The reports panel's screen padding would waste printable
+               height; the sheet needs every millimetre for the table. */
+            body.report-open #reports {
+                margin: 0;
+                padding: 0;
+                background: none;
+            }
+
+            /* Report title stays on the printed sheet; the toolbar's
+               buttons are hidden above, so only this heading prints. */
+            #month-detail .month-detail-toolbar {
+                margin-bottom: 2px;
+            }
+
+            #month-detail-title {
+                font-size: 12px;
+                margin: 0;
+            }
+
             #month-detail .table-scroll {
                 margin-top: 0;
+            }
+
+            /* Single-page Monthly Report fit: condensed but legible print
+               type with a 10px floor (never shrunk below readability),
+               tighter rows for vertical economy, a repeating table header,
+               and rows that never split so future overflow degrades
+               gracefully instead of tearing a Boarder across sheets. */
+            #month-detail thead {
+                display: table-header-group;
+            }
+
+            #month-detail tr {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+
+            #month-detail th,
+            #month-detail td {
+                font-size: 10px;
+                line-height: 1.05;
+                padding: 1px 4px;
             }
 
             .table-scroll {
@@ -1158,6 +1238,7 @@
             .container {
                 box-shadow: none;
                 max-width: 100%;
+                margin: 0 auto;
                 padding: 0;
             }
         }
@@ -1232,7 +1313,7 @@
         <a class="tab-link" href="/?tab=reports">View Reports in Database</a>
         <a class="tab-link" href="/?tab=history">Search Boarder History</a>
         {% endif %}
-        <a class="tab-link {% if selected_tab == 'consequences' %}active{% endif %}" data-tab="consequences" href="/consequences">Punishments</a>
+        <a class="tab-link {% if selected_tab == 'punishments' %}active{% endif %}" data-tab="punishments" href="/punishments">Punishments</a>
         {% if panels_in_page %}
         <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">Boarders</button>
         {% else %}

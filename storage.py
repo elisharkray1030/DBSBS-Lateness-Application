@@ -987,13 +987,23 @@ def transition_punishment(
     timestamp: str,
     void_reason: str | None = None,
 ) -> None:
-    """Applies a new status and stamps the matching timestamp column."""
-    column = {
+    """Applies a new status and stamps the matching timestamp column.
+
+    Rejects an unknown status with a ValueError before any write, so a
+    malformed request can never leak a raw key-lookup crash.
+    """
+    column_map = {
         "overdue": "overdue_at",
         "phone_held": "phone_held_at",
         "submitted": "submitted_at",
         "voided": "voided_at",
-    }[status]
+    }
+    if status not in column_map:
+        raise ValueError(
+            f"Unknown punishment status {status!r}; "
+            f"valid statuses: {', '.join(column_map)}"
+        )
+    column = column_map[status]
 
     if status == "voided":
         conn.execute(

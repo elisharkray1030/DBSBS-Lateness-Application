@@ -24,6 +24,10 @@ _Avoid_: normalized name, key, login
 The CSV of lateness incidents for one month, imported to create or refresh that month's report.
 _Avoid_: CSV, file, timesheet
 
+**Monthly Log Archive**:
+The on-disk copy of each imported Monthly Log, filed by month under `LOG_ARCHIVE_DIR` as `<YYYY-MM>.csv`, alongside a per-month Master List snapshot (`namelist-<YYYY-MM>.csv`) of the roster the report was built against. It is the source data that can rebuild the Monthly Reports; distinct from the Report Archive, which holds the reports themselves.
+_Avoid_: source CSVs, logs, backup
+
 **Expected Non-Boarder**:
 A Monthly Log name known never to match a Boarder on the Master List: staff badge names carry the "M." prefix, guests check out numbered GUEST cards, houseparent-family cards read "[RTnn] HOUSEPARENT'S FAMILY", and a fixed set of shared/system cards (e.g. "BA1 DY", "STEPS GATE GUARD") belongs to the house. Hidden from the saved-Import count so a genuinely unknown name stands out; raw diagnostics keep every name.
 _Avoid_: staff name, system card, ignored name

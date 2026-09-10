@@ -1,8 +1,14 @@
 import re
+from pathlib import Path
 
 from records import BoarderRecord
 
 import storage
+
+
+def static_dir():
+    """Resolves the repo's static-assets directory for browser tests."""
+    return Path(__file__).resolve().parent.parent / "static"
 
 
 def history_panel_html(html):
@@ -65,6 +71,42 @@ def open_month_detail(page, rows, month="2026-07"):
     )
 
 
+def open_seeded_month_detail(
+    fresh_client, page, seed_records, rows, month="2026-07", route="/", seed_month=None
+):
+    """Seeds a month, renders the page, and opens the month detail in one call.
+
+    Fold of the repeated browser month-detail scaffold (#163): seed the
+    month, fetch the page through the Flask client, set page content, then
+    open the month detail via :func:`open_month_detail`. Mock ``rows`` stay
+    separate from the seed — several sites mock rows that differ from it.
+    ``seed_month`` defaults to ``month``; only page content and ``fetch``
+    are touched, so caller-side viewport/print-media setup keeps its
+    ordering.
+    """
+    import app as app_module
+
+    with app_module.connect() as conn:
+        storage.save_month(conn, seed_records, seed_month or month)
+    html = fresh_client.get(route).get_data(as_text=True)
+    page.set_content(html)
+    open_month_detail(page, rows, month=month)
+
+
+def assert_late_name_bold(cell):
+    """Asserts the late-name cue (bold name cell) on a month-detail row."""
+    assert cell.evaluate("el => getComputedStyle(el).fontWeight") in ("700", "bold")
+
+
+def assert_late_bed_not_bold(cell):
+    """Asserts the bed cell on a late month-detail row is not bold (#169).
+
+    Only the Name cell carries the bold cue (via the month-report-late
+    stylesheet rule); the Bed cell must stay normal weight.
+    """
+    assert cell.evaluate("el => getComputedStyle(el).fontWeight") in ("400", "normal")
+
+
 def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10",
                      assigned_at="2026-04-01T09:00:00+00:00", include_report=True):
     """Assigns Punishments (optionally saving their Monthly Report first).
@@ -83,3 +125,40 @@ def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10"
         assigned_at=assigned_at,
     )
     return storage.list_punishments(conn)
+
+
+def csrf_token(client):
+    """Returns the session CSRF token, seeding the session with a GET first."""
+    client.get("/")
+    with client.session_transaction() as sess:
+        token = sess.get("csrf_token")
+    assert token, "no CSRF token in session"
+    return token
+
+
+def post_csrf(client, url, data=None, **kwargs):
+    """POSTs a form with the session CSRF token injected."""
+    payload = dict(data or {})
+    payload.setdefault("csrf_token", csrf_token(client))
+    return client.post(url, data=payload, **kwargs)
+
+
+def _with_token_headers(client, extra=None):
+    """Merges the session CSRF header over any caller-provided headers."""
+    headers = dict(extra or {})
+    headers.setdefault("X-CSRF-Token", csrf_token(client))
+    return headers
+
+
+def patch_csrf(client, url, **kwargs):
+    """PATCHes JSON with the session CSRF token as a custom header."""
+    return client.patch(
+        url, headers=_with_token_headers(client, kwargs.pop("headers", None)), **kwargs
+    )
+
+
+def delete_csrf(client, url, **kwargs):
+    """DELETEs with the session CSRF token as a custom header."""
+    return client.delete(
+        url, headers=_with_token_headers(client, kwargs.pop("headers", None)), **kwargs
+    )

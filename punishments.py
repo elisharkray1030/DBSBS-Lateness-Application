@@ -33,9 +33,9 @@ def humanized_status(status: str) -> str:
     return STATUS_LABELS.get(status, status)
 
 
-def last_action_at(punishment) -> str | None:
+def last_action_at(punishment: Punishment) -> str | None:
     """Returns the most recent transition timestamp, or None."""
-    stamps = [
+    stamps: list[str] = [
         getattr(punishment, field)
         for field in _TRANSITION_STAMPS
         if getattr(punishment, field)
@@ -330,7 +330,7 @@ def attach_display_flags(punishments: list[Punishment], now: datetime | None = N
     return punishments
 
 
-def list_consequences(
+def list_punishments_view(
     conn,
     show_all: bool = False,
     month: str | None = None,
