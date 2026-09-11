@@ -17,6 +17,32 @@ The app matches imported Monthly Logs against a boarder master list, calculates 
 - Look up any boarder's profile with all-time history and a Points trend chart
 - Manage the boarder master list through the Boarders tab (view, add, edit, remove, import CSV, export CSV)
 
+## Quick start (Docker)
+
+One command runs the app in a container, isolated from the rest of your machine. The database and Monthly Log archive live in a Docker volume (`lateness-data`); backups and restores use the `shared/` folder.
+
+On Windows, double-click **`run.cmd`** (or run it from a terminal). On macOS/Linux/WSL run **`./run.sh`**. With no arguments, both show a menu.
+
+```powershell
+.\run.cmd            # menu
+.\run.cmd up         # start and open the browser (office LAN)
+.\run.cmd up -Local  # start bound to 127.0.0.1 only
+.\run.cmd backup     # write a backup into .\shared\backups
+.\run.cmd restore    # restore a backup from .\shared\restore
+```
+
+The launcher checks Docker (offering a per-user install if missing), generates a per-host `SECRET_KEY` in `.env`, starts the stack, waits until it is healthy, and opens `http://127.0.0.1:8000`. By default it listens on all interfaces so other office PCs can reach it at `http://<host-ip>:8000`; use `-Local`/`--local` to keep it private.
+
+Adding Monthly Logs and boarders is done **in the browser**, not by copying files: use the Reports tab's Import and the Boarders tab's Master List Import. The `shared/` folder is only for backups and restores — see [shared/README.txt](shared/README.txt).
+
+### Sharing it with the office
+
+1. Give the host PC a static IP (a DHCP reservation) so the URL never changes.
+2. Allow inbound TCP 8000 through Windows Firewall (Docker may prompt the first time).
+3. Keep Docker Desktop running on the host and set the PC not to sleep.
+
+Everything is plain HTTP with no login; keep it on the trusted office LAN and off-campus.
+
 ## Project Layout
 
 - [app.py](app.py) - Flask app and routes; a thin adapter over the ingestion and storage seams
@@ -32,11 +58,15 @@ The app matches imported Monthly Logs against a boarder master list, calculates 
 - [templates/macros.html](templates/macros.html) - shared Jinja macros (Current/Former badge, etc.)
 - [templates/403.html](templates/403.html) / [templates/500.html](templates/500.html) - CSRF-rejection and server-error pages
 - [static/app.js](static/app.js) - browser-side behavior (table sorting, charts, punishment actions)
-- [compose.yaml](compose.yaml) - Docker Compose service definition (single-host deployment)
+- [compose.yaml](compose.yaml) - Docker Compose service definition (app plus profiled backup/restore/seed tooling)
+- [compose.seed.yaml](compose.seed.yaml) - optional override that seeds the Master List from `namelist.csv` on first start
+- [run.cmd](run.cmd) / [run.ps1](run.ps1) / [run.sh](run.sh) - one-command Docker launcher (Windows / PowerShell / Linux-macOS-WSL)
+- [shared/](shared/README.txt) - host bridge for backups and restores (gitignored except its README)
 - [.env.example](.env.example) - Docker Compose environment template; copy to `.env` and set `SECRET_KEY`
 - [serve.py](serve.py) - Windows host entry point (waitress)
 - [start-windows.ps1](start-windows.ps1) - PowerShell launcher for the Windows host (run after setting `SECRET_KEY`)
 - [backup_db.py](backup_db.py) - host backup script (SQLite online copy + archived Monthly Logs and Master List snapshots)
+- [restore_db.py](restore_db.py) - host restore script (puts a backup's database and archive back in place)
 - [defaults.py](defaults.py) - built-in configuration defaults shared by the app and host tooling
 - [pyproject.toml](pyproject.toml) - mypy and pytest configuration
 - [CONTEXT.md](CONTEXT.md) - domain glossary and language
@@ -102,15 +132,17 @@ The bundled Windows launcher is for a shared office-LAN host, not local developm
 
 ### Docker setup
 
+The [launcher scripts](#quick-start-docker) do all of this for you; the manual steps are below.
+
 1. Install and start Docker Desktop.
-2. Keep `namelist.csv` in the project root. It must exist before the first start: Compose bind-mounts it, so a missing file becomes a directory.
-3. Set `SECRET_KEY` before starting. Compose reads it from a root `.env` file, so copy the template and fill it in:
+2. Keep `namelist.csv` in the project root. It seeds the Master List on the first start. To start without it, skip `compose.seed.yaml` (or run the launcher with `--no-seed`) and import the Master List in the Boarders tab.
+3. Set `SECRET_KEY` before starting. Compose reads it from a root `.env` file; the launcher generates one, or copy the template and fill it in:
 
 ```bash
 cp .env.example .env   # then set SECRET_KEY=<the generated secret>
 ```
 
-4. Start the stack:
+4. Start the stack (add `-f compose.seed.yaml` to seed the Master List from `namelist.csv`):
 
 ```bash
 docker compose up -d --build
@@ -123,6 +155,8 @@ docker compose up -d --build
 ```bash
 docker compose down
 ```
+
+Data lives in the `lateness-data` Docker volume, not in the repo. Back up with `docker compose run --rm backup python backup_db.py --dest /backup` (written to `./shared/backups`) and restore with `docker compose run --rm restore python restore_db.py --from /restore/<folder> --force` (from `./shared/restore`).
 
 ## Updating the boarder list
 
@@ -187,8 +221,11 @@ Recognized environment variables:
 - `MAX_CONTENT_LENGTH` — request size cap for Imports, in bytes (default `16777216`, i.e. 16 MB).
 - `LOG_LEVEL` — application log level (default `INFO`).
 - `PORT` — listen port for `serve.py` only (default `8000`).
+- `BIND_ADDR` — Docker host bind address (default `0.0.0.0`, i.e. the office LAN; set `127.0.0.1` for loopback only).
+- `APP_PORT` — Docker host port (default `8000`).
+- `BACKUP_KEEP` — timestamped backups to keep in `shared/backups` (default `7`).
 
-`compose.yaml` fixes `DB_PATH`, `NAMELIST_PATH`, and `LOG_ARCHIVE_DIR` to `/data` paths and only interpolates `SECRET_KEY` from the root `.env` file.
+`compose.yaml` fixes `DB_PATH`, `NAMELIST_PATH`, and `LOG_ARCHIVE_DIR` to `/data` paths (the `lateness-data` volume) and interpolates `SECRET_KEY` from the root `.env` file. `compose.seed.yaml` optionally mounts `namelist.csv` read-only for the first-start seed.
 
 ### Deployment
 
@@ -196,7 +233,7 @@ One designated, always-on PC runs the app; staff reach it over the office LAN. T
 
 - **Windows host (native):** run `serve.py` (waitress) as a service, bound to the LAN. Follow [docs/deployment/windows-host.md](docs/deployment/windows-host.md).
 - **Backups:** `backup_db.py` copies the database plus the archived Monthly Logs and their per-month Master List snapshots to the NAS. Follow [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md) and [docs/deployment/nas-share.md](docs/deployment/nas-share.md).
-- **Docker:** `compose.yaml` is an equivalent single-host deployment (gunicorn) with the database and archive in the mounted `data` volume.
+- **Docker:** `compose.yaml` is an equivalent single-host deployment (gunicorn) with the database and archive in the named `lateness-data` volume. The [launcher scripts](#quick-start-docker) are the one-command localhost entry point; `BIND_ADDR=0.0.0.0` (the default) exposes it to the office LAN.
 - **Trust boundary:** office LAN only, plain HTTP, no auth, no `Secure` cookies. Do not expose it off-campus.
 
 ## Development notes
@@ -204,7 +241,7 @@ One designated, always-on PC runs the app; staff reach it over the office LAN. T
 - Install Python 3.11+ (CI tests 3.11 and 3.12; Docker uses 3.12-slim).
 - Install dev dependencies (pytest, mypy — pinned in `requirements-dev.txt` — playwright, and types-waitress) with `python -m pip install -r requirements-dev.txt`.
 - Run `python -m pytest tests` to run the suite across the ingestion and storage seams, the Flask test-client seam, and the Playwright browser seam (synthetic CSVs and an in-memory SQLite connection; browser tests need Playwright's Chromium — `python -m playwright install chromium` — and skip automatically when it is unavailable).
-- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py serve.py backup_db.py defaults.py` for typechecking (config in `pyproject.toml`; CI runs both pytest and mypy on push/PR).
+- Run `python -m mypy app.py parser.py storage.py records.py punishments.py seed_demo_data.py serve.py backup_db.py restore_db.py defaults.py` for typechecking (config in `pyproject.toml`; CI runs both pytest and mypy on push/PR).
 - Run `python parser.py` for a quick parser check: it streams `namelist.csv` plus `test_data.csv` through the same ingestion module the web Import uses, writes `lateness_final_report.csv`, and prints the diagnostics (rows read, matched rows, unmatched names, unparseable rows). Both files are local samples (`test_data.csv` is gitignored and not in the repo), so supply them first. The web route and the CLI share one ingestion path, so they can't drift.
 - The lateness window is hard-coded in `parser.py`.
 - Lateness frequency, total minutes late, and total points are computed once in the ingestion module and carried on the typed boarder record; the month view, the download, and the CSV export all use that one definition.

@@ -1,14 +1,74 @@
+name: lateness-app
+
+# One image for the app and the tooling services. The tooling services are
+# profiled so a plain `up` starts only the app; the launcher targets them
+# explicitly with `docker compose run`, which activates the profile on demand.
+x-app: &app
+  build: .
+  image: lateness-app:local
+
 services:
-  lateness-app:
-    build: .
+  app:
+    <<: *app
     ports:
-      - "8000:8000"
+      # Default to the office LAN (0.0.0.0). Set BIND_ADDR=127.0.0.1 for a
+      # loopback-only run, or APP_PORT to move off 8000.
+      - "${BIND_ADDR:-0.0.0.0}:${APP_PORT:-8000}:8000"
     environment:
       DB_PATH: /data/lateness_history.db
       NAMELIST_PATH: /data/namelist.csv
       LOG_ARCHIVE_DIR: /data/logs
-      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in the environment before starting.}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env before starting.}
     volumes:
-      - ./data:/data
-      - ./namelist.csv:/data/namelist.csv:ro
+      - lateness-data:/data
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  # Back up the live database and Monthly Log Archive to ./shared/backups.
+  # Run: docker compose run --rm backup python backup_db.py --dest /backup --keep 7
+  backup:
+    <<: *app
+    profiles: ["tools"]
+    environment:
+      DB_PATH: /data/lateness_history.db
+      LOG_ARCHIVE_DIR: /data/logs
+    volumes:
+      - lateness-data:/data
+      - ./shared/backups:/backup
+
+  # Restore a backup from ./shared/restore. Stop the app first.
+  # Run: docker compose run --rm restore python restore_db.py --from /restore/NAME --force
+  restore:
+    <<: *app
+    profiles: ["tools"]
+    environment:
+      DB_PATH: /data/lateness_history.db
+      LOG_ARCHIVE_DIR: /data/logs
+    volumes:
+      - lateness-data:/data
+      - ./shared/restore:/restore:ro
+
+  # Seed deterministic demo data. Destructive; use on a scratch volume only.
+  # Run: docker compose run --rm seed python seed_demo_data.py --db /data/lateness_history.db --namelist /data/namelist.csv --log-dir /data/raw/seed
+  seed:
+    <<: *app
+    profiles: ["tools"]
+    environment:
+      DB_PATH: /data/lateness_history.db
+      NAMELIST_PATH: /data/namelist.csv
+      LOG_ARCHIVE_DIR: /data/logs
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env before starting.}
+    volumes:
+      - lateness-data:/data
+
+volumes:
+  lateness-data:
