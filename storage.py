@@ -11,6 +11,8 @@ from records import (
     BoarderRecord,
     DistributionBucket,
     HouseTrendPoint,
+    IPointAudit,
+    IPointEntry,
     MonthSummary,
     Punishment,
     TopBoarderEntry,
@@ -96,6 +98,32 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS ipoint_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_name TEXT NOT NULL,
+            points INTEGER NOT NULL,
+            occurred_on TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ipoint_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER NOT NULL,
+            normalized_name TEXT NOT NULL,
+            action TEXT NOT NULL,
+            before_state TEXT,
+            after_state TEXT,
+            changed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_punishments_active
         ON punishments(normalized_name, month)
         WHERE status != 'voided'
@@ -118,7 +146,13 @@ def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
     counted under MIGRATION_SKIPS_KEY so the collision stays visible.
     """
     skipped = 0
-    for table in ("boarders", "boarder_history", "punishments"):
+    for table in (
+        "boarders",
+        "boarder_history",
+        "punishments",
+        "ipoint_entries",
+        "ipoint_audit",
+    ):
         rows = conn.execute(
             f"SELECT id, normalized_name FROM {table} ORDER BY id"
         ).fetchall()
@@ -554,7 +588,7 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     ]
 
 
-def _freshest_identity_map(conn: sqlite3.Connection) -> dict[str, BoarderIdentity]:
+def freshest_identity_map(conn: sqlite3.Connection) -> dict[str, BoarderIdentity]:
     """Maps every known Match Key to its freshest-first identity."""
     return {
         entry.normalized_name: BoarderIdentity(
@@ -581,7 +615,7 @@ def top_boarders(
     supplied by the caller so the widget's N lives in one place. Identity
     fields resolve freshest-first like everywhere else in the app.
     """
-    identity = _freshest_identity_map(conn)
+    identity = freshest_identity_map(conn)
     if month is None:
         cursor = conn.execute(
             """
@@ -660,7 +694,7 @@ def repeat_offenders(
     application layer's named constants. Identity fields resolve
     freshest-first.
     """
-    identity = _freshest_identity_map(conn)
+    identity = freshest_identity_map(conn)
     months_above: dict[str, list[str]] = {}
     cursor = conn.execute(
         """
@@ -1024,3 +1058,141 @@ def transition_punishment(
             (status, timestamp, punishment_id),
         )
     conn.commit()
+
+
+def stage_ipoint_entry(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    points: int,
+    occurred_on: str,
+    reason: str,
+    recorded_at: str,
+) -> int:
+    """Stages one I-Point Entry on the open transaction; it does not commit.
+
+    The I-Points lifecycle owns the transaction so an entry and its audit row
+    are written together. A standalone caller must commit the connection, or
+    the staged row is discarded when it closes.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO ipoint_entries (
+            normalized_name, points, occurred_on, reason, recorded_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (normalized_name, points, occurred_on, reason, recorded_at),
+    )
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("Insert succeeded but no row id was returned.")
+    return lastrowid
+
+
+def stage_ipoint_audit(
+    conn: sqlite3.Connection,
+    entity_type: str,
+    entity_id: int,
+    normalized_name: str,
+    action: str,
+    before_state: str | None,
+    after_state: str | None,
+    changed_at: str,
+) -> None:
+    """Stages one I-Point Audit row on the open transaction; it does not commit.
+
+    Called beside every ledger mutation so the live ledger and its history
+    share one transaction and cannot diverge; the I-Points lifecycle commits.
+    """
+    conn.execute(
+        """
+        INSERT INTO ipoint_audit (
+            entity_type, entity_id, normalized_name, action,
+            before_state, after_state, changed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            entity_type,
+            entity_id,
+            normalized_name,
+            action,
+            before_state,
+            after_state,
+            changed_at,
+        ),
+    )
+
+
+def _ipoint_entry_from_row(row) -> IPointEntry:
+    return IPointEntry(
+        id=row[0],
+        normalized_name=row[1],
+        points=row[2],
+        occurred_on=row[3],
+        reason=row[4],
+        recorded_at=row[5],
+    )
+
+
+def list_ipoint_entries(
+    conn: sqlite3.Connection, normalized_name: str | None = None
+) -> list[IPointEntry]:
+    """Lists I-Point Entries chronologically, optionally for one Match Key."""
+    if normalized_name is None:
+        cursor = conn.execute(
+            """
+            SELECT id, normalized_name, points, occurred_on, reason, recorded_at
+            FROM ipoint_entries
+            ORDER BY occurred_on ASC, id ASC
+            """
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT id, normalized_name, points, occurred_on, reason, recorded_at
+            FROM ipoint_entries
+            WHERE normalized_name = ?
+            ORDER BY occurred_on ASC, id ASC
+            """,
+            (normalized_name,),
+        )
+    return [_ipoint_entry_from_row(row) for row in cursor.fetchall()]
+
+
+def _ipoint_audit_from_row(row) -> IPointAudit:
+    return IPointAudit(
+        id=row[0],
+        entity_type=row[1],
+        entity_id=row[2],
+        normalized_name=row[3],
+        action=row[4],
+        before_state=row[5],
+        after_state=row[6],
+        changed_at=row[7],
+    )
+
+
+def list_ipoint_audit(
+    conn: sqlite3.Connection, normalized_name: str | None = None
+) -> list[IPointAudit]:
+    """Lists I-Point Audit rows, optionally for one Match Key, newest first."""
+    if normalized_name is None:
+        cursor = conn.execute(
+            """
+            SELECT id, entity_type, entity_id, normalized_name, action,
+                   before_state, after_state, changed_at
+            FROM ipoint_audit
+            ORDER BY id DESC
+            """
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT id, entity_type, entity_id, normalized_name, action,
+                   before_state, after_state, changed_at
+            FROM ipoint_audit
+            WHERE normalized_name = ?
+            ORDER BY id DESC
+            """,
+            (normalized_name,),
+        )
+    return [_ipoint_audit_from_row(row) for row in cursor.fetchall()]

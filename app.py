@@ -36,7 +36,9 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 import defaults
+import ipoints
 import storage
+from ipoints import EntryRejected
 from parser import (
     RejectedOutcome,
     boarders_to_csv,
@@ -1131,6 +1133,66 @@ def punishments_legacy_redirect():
     """
     query = request.query_string.decode("utf-8")
     return redirect(f"/punishments{('?' + query) if query else ''}")
+
+
+@bp.route('/ipoints')
+def ipoints_view():
+    """Renders the dedicated I-Points page: log form plus per-boarder ledger."""
+    with connect(read_only=True) as conn:
+        summaries = ipoints.boarder_balances(conn)
+        boarder_options = sorted(
+            {boarder.display_name for boarder in storage.list_boarders(conn)}
+            | {summary.display_name for summary in summaries}
+        )
+
+    message, error = _consume_flashes()
+
+    return render_template('ipoints.html', **_page_context(
+        selected_tab='ipoints',
+        message=message,
+        error=error,
+        ipoint_summaries=summaries,
+        boarder_options=boarder_options,
+        today=ipoints.today_iso(),
+    ))
+
+
+@bp.route('/ipoints/entries', methods=['POST'])
+def log_ipoint_entry():
+    boarder = request.form.get('boarder', '').strip()
+    points = request.form.get('points', '').strip()
+    occurred_on = request.form.get('occurred_on', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.log_entry(
+                conn,
+                normalized_name=normalize_name(boarder),
+                points=points,
+                occurred_on=occurred_on,
+                reason=reason,
+            )
+
+        if isinstance(outcome, EntryRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info(
+                "Logged I-Point Entry for %s", outcome.normalized_name
+            )
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "log the I-Point Entry",
+        attempt,
+        _busy_redirect,
+        "I-Point Entry logging hit sustained contention",
+    )
 
 
 @bp.route('/statistics')

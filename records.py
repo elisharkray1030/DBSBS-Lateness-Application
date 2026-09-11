@@ -234,3 +234,44 @@ class Punishment:
     was_late: bool = False
     last_action: str | None = None
     actions: list["OfferedAction"] = field(default_factory=list)
+
+
+@dataclass
+class IPointEntry:
+    """One logged occasion on which a boarder was given I-Points."""
+
+    id: int
+    normalized_name: str
+    points: int
+    occurred_on: str
+    reason: str
+    recorded_at: str
+
+
+@dataclass
+class IPointAudit:
+    """One retained change to a boarder's I-Points, with its prior state."""
+
+    id: int
+    entity_type: str
+    entity_id: int
+    normalized_name: str
+    action: str
+    before_state: str | None
+    after_state: str | None
+    changed_at: str
+
+
+@dataclass
+class IPointSummary:
+    """One boarder's derived I-Points position for the I-Points view.
+
+    ``balance`` is derived from the ledger, never stored; ``entries`` powers
+    the per-boarder ledger listing without a second read.
+    """
+
+    normalized_name: str
+    display_name: str
+    bed: str
+    balance: int
+    entries: list[IPointEntry] = field(default_factory=list)

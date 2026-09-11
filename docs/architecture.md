@@ -45,8 +45,8 @@ in-memory (`:memory:`) connection in tests. No storage function reads a
 
 Important behavior:
 
-- `create_schema(conn)` creates the `boarder_history` table if it does not
-  exist.
+- `create_schema(conn)` creates the app's tables if they do not exist,
+  including `boarder_history`, `ipoint_entries`, and `ipoint_audit`.
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
 - `list_months(conn)` returns the month summaries used in the UI (month label,
   boarder count, total minutes late), ordered newest-first.
@@ -63,6 +63,14 @@ Important behavior:
 - `replace_boarders(conn, rows)` replaces the Master List after resolving
   duplicate normalized names last-row-wins and validating that no two different
   boarders share a Bed, raising a `ValueError` otherwise.
+- `stage_ipoint_entry(conn, ...)` and `stage_ipoint_audit(conn, ...)` stage one
+  I-Point ledger row and one audit row on the open transaction; the I-Points
+  lifecycle owns the commit, so the two are written together or not at all.
+- `list_ipoint_entries(conn[, name])` and `list_ipoint_audit(conn[, name])` read
+  the ledger and its history, optionally for one Match Key.
+- `freshest_identity_map(conn)` maps every known Match Key to its freshest-first
+  identity, derived from the All-Time List and shared by the House Dashboard and
+  the I-Point Balance.
 
 ## Records — `records.py`
 
@@ -71,6 +79,10 @@ display name, bed, frequency, total minutes late, total points) once, shared by
 the ingestion module, the CSV writer, the storage module, and the JSON body. It
 also holds the `Boarder` Master List row and the `UnparsedTimeRow` record, and
 the `bed_sort_key` rule that orders Monthly Report rows.
+
+It also carries the I-Point records: `IPointEntry` (one logged occasion),
+`IPointAudit` (one retained change with its prior state), and `IPointSummary`
+(one boarder's derived Balance plus their Entries).
 
 ## Punishments — `punishments.py`
 
@@ -87,6 +99,30 @@ Important behavior:
 - The Assign Punishments flow lives in `app.py` (`/assign/<month>`) and
   delegates to this module.
 
+## I-Points — `ipoints.py`
+
+`ipoints.py` owns the I-Points ledger, standing beside `punishments.py` as the
+second disciplinary lifecycle: it validates and logs Entries, writes each
+ledger row and its audit row in one transaction, and derives every boarder's
+Balance from the stored ledger rather than storing it.
+
+Important behavior:
+
+- `log_entry(conn, ...)` validates a submission (positive whole points, a
+  required reason, a valid date) and writes the Entry plus its `created` audit
+  row in one connection block; a rejected submission writes nothing. A blank
+  date falls back to the injected `today` or the machine-local date.
+- `boarder_balances(conn)` derives each boarder's Balance as the sum of their
+  Entries, resolving identity freshest-first through the shared All-Time List
+  and falling back to the Match Key for a boarder known only through I-Points.
+  In this slice the only write is additive, so the Balance cannot fall below
+  zero.
+- The I-Points tables (`ipoint_entries`, `ipoint_audit`) are created
+  idempotently by `create_schema` and re-keyed with the other tables by the
+  Match-Key migration.
+- The web routes live in `app.py` (`GET /ipoints`, `POST /ipoints/entries`) and
+  delegate here; the route layer stays a thin adapter.
+
 ## Demo seeding — `seed_demo_data.py`
 
 `seed_demo_data.py` populates the database with deterministic demo data
@@ -99,10 +135,10 @@ through the same `ingest_log` path the web Import uses. Run with
 
 `app.py` exposes the web routes for importing Monthly Logs, searching history,
 rendering the dashboard, returning month JSON data, serving CSV downloads,
-deleting month records, and managing punishments and the Master List. It is a
-thin adapter: each route opens a file-backed connection, delegates to the
-ingestion and storage modules, and renders the outcome. No storage or parsing
-logic lives here.
+deleting month records, and managing punishments, I-Points, and the Master List.
+It is a thin adapter: each route opens a file-backed connection, delegates to
+the ingestion and storage modules, and renders the outcome. No storage or
+parsing logic lives here.
 
 Important behavior:
 
@@ -110,6 +146,9 @@ Important behavior:
   nothing reads a `DB_PATH` module global inside the storage layer.
 - The Import route forwards the request stream straight into `ingest_log` — no
   temp file on disk.
+- The I-Points routes (`GET /ipoints`, `POST /ipoints/entries`) delegate to
+  `ipoints.py`; the GET opens a read-only connection, the POST the read-write
+  one behind CSRF and the shared mutation-retry wrapper.
 - `api_month()` returns the month's rows as an ordered collection of explicit
   fields (name, display name, bed, frequency, total minutes, total points), so
   the wire format matches the stored rows and the CSV writer and carries the
@@ -135,6 +174,9 @@ Important behavior:
 - `templates/boarder.html` is the boarder profile: all-time record, Points
   trend chart, and all punishments. Reached by clicking a boarder name anywhere
   in the app or via Find a Boarder search.
+- `templates/ipoints.html` is the I-Points view: the log-Entry form and the
+  per-boarder ledger with each boarder's Balance. Reached from a tab-bar entry
+  beside Punishments.
 - `templates/macros.html` holds shared Jinja macros (for example, the
   Current/Former status badge).
 - `static/app.js` holds browser-side behavior: table sorting, charts, and
