@@ -588,7 +588,7 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     ]
 
 
-def _freshest_identity_map(conn: sqlite3.Connection) -> dict[str, BoarderIdentity]:
+def freshest_identity_map(conn: sqlite3.Connection) -> dict[str, BoarderIdentity]:
     """Maps every known Match Key to its freshest-first identity."""
     return {
         entry.normalized_name: BoarderIdentity(
@@ -615,7 +615,7 @@ def top_boarders(
     supplied by the caller so the widget's N lives in one place. Identity
     fields resolve freshest-first like everywhere else in the app.
     """
-    identity = _freshest_identity_map(conn)
+    identity = freshest_identity_map(conn)
     if month is None:
         cursor = conn.execute(
             """
@@ -694,7 +694,7 @@ def repeat_offenders(
     application layer's named constants. Identity fields resolve
     freshest-first.
     """
-    identity = _freshest_identity_map(conn)
+    identity = freshest_identity_map(conn)
     months_above: dict[str, list[str]] = {}
     cursor = conn.execute(
         """

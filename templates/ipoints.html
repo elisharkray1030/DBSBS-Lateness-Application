@@ -60,7 +60,6 @@
                                 <th scope="col">Date</th>
                                 <th scope="col">Points</th>
                                 <th scope="col">Reason</th>
-                                <th scope="col">Logged</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -69,7 +68,6 @@
                                 <td>{{ entry.occurred_on }}</td>
                                 <td>{{ entry.points }}</td>
                                 <td>{{ entry.reason }}</td>
-                                <td>{{ format_timestamp(entry.recorded_at) }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

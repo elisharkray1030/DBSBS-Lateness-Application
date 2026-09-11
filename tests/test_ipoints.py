@@ -321,6 +321,26 @@ class TestLogEntryRoute:
         assert "Repeated disruption" in html
         assert "Balance: 5" in html
 
+    def test_ledger_lists_only_the_entry_fields(self, fresh_client):
+        post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Alice",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "Repeated disruption",
+            },
+        )
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        header = html[html.index("<thead>") : html.index("</thead>")]
+
+        assert "Date" in header
+        assert "Points" in header
+        assert "Reason" in header
+        assert "Logged" not in header
+
     def test_logging_shows_success_feedback(self, fresh_client):
         post_csrf(
             fresh_client,

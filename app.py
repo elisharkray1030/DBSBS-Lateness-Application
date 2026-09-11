@@ -53,7 +53,6 @@ from punishments import (
     TransitionRejected,
     assign_batch,
     attach_display_flags,
-    format_timestamp,
     humanized_status,
     list_punishments_view,
     transition,
@@ -572,7 +571,6 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = False
     app.jinja_env.globals["humanized_status"] = humanized_status
-    app.jinja_env.globals["format_timestamp"] = format_timestamp
     app.register_blueprint(bp)
 
     @app.before_request

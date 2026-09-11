@@ -81,30 +81,6 @@ def _resolve_occurred_on(occurred_on: str | None, today: str | None) -> "str | N
         return None
 
 
-def _write_audit(
-    conn,
-    *,
-    entity_type: str,
-    entity_id: int,
-    normalized_name: str,
-    action: str,
-    before_state: str | None,
-    after_state: str | None,
-    changed_at: str,
-) -> None:
-    """Stages one audit row on the open transaction; the caller owns the block."""
-    storage.stage_ipoint_audit(
-        conn,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        normalized_name=normalized_name,
-        action=action,
-        before_state=before_state,
-        after_state=after_state,
-        changed_at=changed_at,
-    )
-
-
 def log_entry(
     conn,
     normalized_name: str,
@@ -145,7 +121,7 @@ def log_entry(
         entry_id = storage.stage_ipoint_entry(
             conn, name, points_value, resolved_date, clean_reason, stamp
         )
-        _write_audit(
+        storage.stage_ipoint_audit(
             conn,
             entity_type="entry",
             entity_id=entry_id,
@@ -180,10 +156,7 @@ def boarder_balances(conn) -> list[IPointSummary]:
     through I-Points. Summaries sort by the shared Bed rule then name.
     """
     entries = storage.list_ipoint_entries(conn)
-    identity = {
-        entry.normalized_name: entry
-        for entry in storage.list_all_time_boarders(conn)
-    }
+    identity = storage.freshest_identity_map(conn)
     grouped: dict[str, list[IPointEntry]] = {}
     for entry in entries:
         grouped.setdefault(entry.normalized_name, []).append(entry)
