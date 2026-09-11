@@ -18,7 +18,8 @@ losing the audit trail that makes the discipline defensible.
 Add **Irregularity Points (I-Points)** as a second, persisting disciplinary
 currency. Staff log I-Point Entries (points, date, reason) and I-Point
 Adjustments directly in a new I-Points view. A Boarder's I-Point Balance
-carries across months. At each local month's close, a Boarder whose Balance is
+carries across months and never falls below zero. At each local month's close,
+a Boarder whose Balance is
 at least 5 is shown a pending Redemption: the largest tier at or below the
 Balance (5/10/15 → 1 day / 1 week / 1 calendar month) becomes a Phone
 Confiscation when staff confirm it, and the remainder carries forward. Every
@@ -26,7 +27,9 @@ Entry, Adjustment, Redemption, and Confiscation is freely editable, voidable,
 or removable, with every change retained in an I-Point Audit History. Phone
 Confiscations surface alongside lateness Punishments: the Boarder Profile shows
 both, and the I-Points view flags a Confiscation as Stacked when a lateness
-Phone Hold applies at the same time.
+Phone Hold applies at the same time. The phone is returned only once both gates
+clear — the lateness Punishment is submitted and the Confiscation is released —
+and the app never releases it on its own.
 
 ## User Stories
 
@@ -49,7 +52,8 @@ Phone Hold applies at the same time.
 9. As staff, I want to edit or remove an Adjustment, so corrections stay easy.
 10. As staff, I want to see every Boarder's I-Point Balance at a glance.
 11. As staff, I want the Balance to combine Entries and Adjustments minus
-    confirmed Redemptions, so it always reflects what's outstanding.
+    confirmed Redemptions, and never fall below zero, so it always reflects
+    what's outstanding.
 12. As staff, I want the Balance to carry across months, so unresolved points
     aren't lost.
 13. As staff, I want a pending Redemption to appear once a Boarder's Balance
@@ -99,7 +103,8 @@ Phone Hold applies at the same time.
 39. As staff, I want to filter Confiscations by status, so I can see active,
     released, and voided sets.
 40. As staff, I want server-side validation: Entry points are positive integers,
-    Adjustments are non-zero signed integers, and required reasons are enforced.
+    Adjustments are non-zero signed integers whose deduction may not exceed the
+    Balance, and required reasons are enforced.
 41. As staff, I want month-close evaluation to use the local calendar date, so a
     month closes at local midnight.
 42. As staff, I want back-dated Entries to change only the running Balance,
@@ -120,6 +125,13 @@ Phone Hold applies at the same time.
     several months.
 50. As staff, I want every edit and removal to record the prior state, so the
     discipline stays reviewable.
+51. As staff, I want any write that would take a Balance below zero to be
+    refused, so a Boarder never shows negative I-Points.
+52. As staff, I want the phone returned only once both the lateness Punishment
+    is submitted and the I-Point Confiscation is released, so neither
+    consequence is cut short.
+53. As staff, I want a Confiscation flagged due for release without the app
+    releasing it, so I stay in control of the phone's return.
 
 ## Implementation Decisions
 
@@ -135,7 +147,7 @@ Phone Hold applies at the same time.
   summary carrying the Balance and the derived pending Redemption.
 - **Schema — four tables**, created idempotently alongside the existing ones:
   - `ipoint_entries`: id, normalized_name (Match Key), points (positive int),
-    awarded_on (date), reason, recorded_at.
+    occurred_on (date), reason, recorded_at.
   - `ipoint_adjustments`: id, normalized_name, points (non-zero signed int),
     reason, recorded_at.
   - `confiscations`: id, normalized_name, display_name, bed (both frozen at
@@ -151,6 +163,19 @@ Phone Hold applies at the same time.
   is derived as Entries + Adjustments − the `points_redeemed` of non-voided
   Confiscations. Pending Redemptions are **derived, never stored** (ADR 0005).
 - **Derived Balance, never stored**, so it cannot drift from the ledger.
+- **The Balance is floored at zero on every write** (ADR 0006): logging,
+  editing, or removing an Entry; adding, editing, or removing an Adjustment; and
+  confirming or voiding a Redemption are each rejected if the resulting Balance
+  would drop below zero. A subtractive Adjustment is additionally capped at the
+  current Balance.
+- **I-Point Entries carry the incident date under `occurred_on`** — the date the
+  incident happened, distinct from the `recorded_at` audit timestamp. The
+  user-visible field is labelled "Date".
+- **The phone's return has two gates** (ADR 0005): the lateness Phone Hold
+  clears on Punishment submission and the Confiscation clears on release at or
+  after `release_due`. A Stacked boarder's phone returns only once both clear; a
+  Confiscation past `release_due` raises a due-for-release flag, and the app
+  never releases on its own.
 - **One active Confiscation per Boarder** enforced by a partial unique index on
   `normalized_name` where `status = 'active'`.
 - **Month-close evaluation is one pure function** taking the ledger and an
@@ -171,7 +196,8 @@ Phone Hold applies at the same time.
 - **Editability per entity**, matching the agreed scope: Entries and Adjustments
   may be edited and removed; a confirmed Redemption may be edited or voided; a
   Confiscation may be edited, voided, or removed. Forcing a Redemption before a
-  month's close and resetting a Balance are not offered.
+  month's close and resetting a Balance are not offered. An edit or removal is
+  refused when it would take the Balance below zero (ADR 0006).
 - **Routes** (thin, following the GET-render / POST-flash-redirect pattern and
   the shared mutation-retry wrapper): a GET I-Points page; POST routes to log,
   edit, and remove an Entry; to add, edit, and remove an Adjustment; to confirm
@@ -181,8 +207,9 @@ Phone Hold applies at the same time.
 - **UI — one dedicated I-Points page** (not a panel on the home template),
   rendered through the shared layout, with a new tab-bar entry next to
   Punishments. The page holds: the Balance list with each Boarder's Balance and
-  pending Redemption, grouped pending Redemptions for batch action, the Entry
-  ledger with inline edit/remove, Adjustments, the Confiscation list with status
+  pending Redemption, grouped pending Redemptions for batch action, one
+  per-Boarder ledger listing Entries and Adjustments together under a Type
+  column with inline edit/remove, the Confiscation list with status
   filtering and Stacked/due-for-release flags, and per-Boarder audit history.
   Controls are server-rendered native form elements with labels and `aria-live`
   feedback; removal/edit actions reuse the shared confirm dialog.
@@ -201,9 +228,13 @@ Phone Hold applies at the same time.
 - **Naming cleanup**: the Punishments `TransitionSaved` message currently prints
   the Match Key while its sibling success message prints display names; align it
   while paralleling the modules.
+- **Pre-factor — rename the Entry date field**: the shipped `awarded_on` column
+  and its Python/route/template/seeder uses are renamed to `occurred_on` in their
+  own commit before the Adjustments slice, since "awarded" contradicts the
+  glossary (`_Avoid_: award`) and implies the points are a positive thing.
 - **Documentation**: the architecture doc (which still describes "two seams" and
   covers Punishments only) is extended with the I-Points module, tables, and
-  view. `CONTEXT.md` and ADR 0005 already carry the vocabulary and model.
+  view. `CONTEXT.md`, ADR 0005, and ADR 0006 carry the vocabulary and model.
 
 ## Testing Decisions
 
@@ -215,13 +246,15 @@ Phone Hold applies at the same time.
   adding/editing/removing Adjustments; the Balance and pending Redemption
   rendering; confirming and voiding a Redemption; each Confiscation action
   (confirm, edit, void, release, release early, remove); status filtering; the
-  Stacked flag; CSRF rejection; and the Boarder Profile I-Point section.
+  Stacked flag; CSRF rejection; a rejected overdraw surfaced as feedback; and the
+  Boarder Profile I-Point section.
 - **Secondary seam: the new lifecycle module**, tested with the in-memory
   connection fixture and an injected `today`, mirroring the Punishments module
   tests. Covered: Balance across Entries, Adjustments, and redemptions; tier
   selection (largest ≤ Balance, cap 15, locked); carry-forward across multiple
   months; no second pending while one is open; back-dated Entries not reopening
-  a closed month; one active Confiscation; and the audit row written per
+  a closed month; one active Confiscation; the non-negative floor enforced on
+  every mutation; the two-gate phone release; and the audit row written per
   mutation. Storage functions are exercised through these tests, so no separate
   storage seam is introduced.
 - **One browser test** for the interactive and accessibility requirements:
@@ -249,13 +282,13 @@ Phone Hold applies at the same time.
 
 - ADR 0005 records the model and its rejected alternatives (scheduler,
   extending `punishments`, pending escalation, editable vs append-only ledger,
-  import-driven evaluation).
+  import-driven evaluation). ADR 0006 records the non-negative Balance floor.
 - `CONTEXT.md` carries the glossary: Irregularity Points, I-Point Entry,
   I-Point Adjustment, I-Point Balance, I-Point Audit History, Redemption, Phone
   Confiscation, and Stacked.
 - "Stacked" is additive, not interchangeable: the phone is released only once
-  the lateness Punishment is submitted and the Confiscation period has elapsed.
-  This is the recorded interpretation of the grilling decision.
+  both gates clear — the lateness Punishment is submitted and the Confiscation
+  is released. This is the recorded interpretation of the grilling decision.
 - "1 month" means one calendar month, not 30 days.
 - Existing databases gain the new tables through the idempotent schema step; no
   backfill is required because the feature has no prior data.

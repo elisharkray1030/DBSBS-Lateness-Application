@@ -58,5 +58,9 @@ quick-log action on the Boarder Profile.
   store only the Match Key and resolve identity freshest-first.
 - "1 month" means one calendar month. A Stacked Confiscation adds to a lateness
   Phone Hold rather than replacing it.
+- The phone returns only once both gates clear: the lateness Punishment is
+  submitted and the Confiscation is released (after its period, or early at
+  staff discretion). A Confiscation with its period elapsed raises a
+  due-for-release flag, but the app never releases on its own.
 - Removed boarders accrue no new entries; existing balance and confiscations
   stay frozen, and their Match Key joins the All-Time List union.

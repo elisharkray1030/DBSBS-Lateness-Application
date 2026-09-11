@@ -91,11 +91,11 @@ One logged occasion on which a boarder was given I-Points, carrying the points, 
 _Avoid_: award, incident, infraction, charge
 
 **I-Point Adjustment**:
-A manual staff correction to a boarder's I-Point Balance that adds or subtracts points without being tied to a specific Entry. Used to rebalance instead of rewriting history.
+A manual staff correction to a boarder's I-Point Balance that adds or subtracts points without being tied to a specific Entry. Used to rebalance instead of rewriting history, and a subtraction may never take the Balance below zero.
 _Avoid_: correction, override, manual entry
 
 **I-Point Balance**:
-A boarder's outstanding I-Points: every I-Point Entry plus every I-Point Adjustment minus every confirmed Redemption. It carries from month to month.
+A boarder's outstanding I-Points: every I-Point Entry plus every I-Point Adjustment minus every confirmed Redemption. It carries from month to month and is never negative — no Entry, Adjustment, or Redemption change may take it below zero.
 _Avoid_: total, score
 
 **I-Point Audit History**:
@@ -107,9 +107,9 @@ The conversion of an I-Point Balance into a Phone Confiscation at a month's clos
 _Avoid_: deduction, cash-in, spend
 
 **Phone Confiscation**:
-The I-Point consequence: the boarder's phone is taken for a fixed period set by the redeemed tier — 1 day for 5, 1 week for 10, 1 calendar month for 15. Separate from a lateness Phone Hold; staff may edit, void, or remove one.
+The I-Point consequence: the boarder's phone is taken for a fixed period set by the redeemed tier — 1 day for 5, 1 week for 10, 1 calendar month for 15. Separate from a lateness Phone Hold; staff may edit, void, or remove one, and mark it released once its period has elapsed (or early at their discretion). The app never releases one on its own.
 _Avoid_: phone hold, confiscation
 
 **Stacked**:
-Describes a Phone Confiscation and a lateness Phone Hold applying to the same boarder at once. The two are additive, not interchangeable: the phone is released only once the lateness Punishment is submitted and the Confiscation period has elapsed.
+Describes a Phone Confiscation and a lateness Phone Hold applying to the same boarder at once. The two are additive, not interchangeable: the phone is released only once both gates clear — the lateness Punishment is submitted and the Confiscation is released (after its period has elapsed, or early at staff discretion). The app never releases on its own.
 _Avoid_: overlap, concurrent, combined
