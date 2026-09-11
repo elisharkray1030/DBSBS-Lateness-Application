@@ -90,8 +90,8 @@ def _write_audit(
     after_state: str | None,
     changed_at: str,
 ) -> None:
-    """Writes one audit row without committing; the caller owns the block."""
-    storage.insert_ipoint_audit(
+    """Stages one audit row on the open transaction; the caller owns the block."""
+    storage.stage_ipoint_audit(
         conn,
         entity_type=entity_type,
         entity_id=entity_id,
@@ -140,7 +140,7 @@ def log_entry(
     display_name = resolve_display_name(conn, name)
 
     with conn:
-        entry_id = storage.insert_ipoint_entry(
+        entry_id = storage.stage_ipoint_entry(
             conn, name, points_value, resolved_date, clean_reason, stamp
         )
         _write_audit(

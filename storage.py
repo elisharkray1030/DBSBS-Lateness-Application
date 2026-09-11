@@ -1060,7 +1060,7 @@ def transition_punishment(
     conn.commit()
 
 
-def insert_ipoint_entry(
+def stage_ipoint_entry(
     conn: sqlite3.Connection,
     normalized_name: str,
     points: int,
@@ -1068,10 +1068,11 @@ def insert_ipoint_entry(
     reason: str,
     recorded_at: str,
 ) -> int:
-    """Inserts one I-Point Entry without committing.
+    """Stages one I-Point Entry on the open transaction; it does not commit.
 
     The I-Points lifecycle owns the transaction so an entry and its audit row
-    are written together; a standalone caller must commit.
+    are written together. A standalone caller must commit the connection, or
+    the staged row is discarded when it closes.
     """
     cursor = conn.execute(
         """
@@ -1087,7 +1088,7 @@ def insert_ipoint_entry(
     return lastrowid
 
 
-def insert_ipoint_audit(
+def stage_ipoint_audit(
     conn: sqlite3.Connection,
     entity_type: str,
     entity_id: int,
@@ -1097,10 +1098,10 @@ def insert_ipoint_audit(
     after_state: str | None,
     changed_at: str,
 ) -> None:
-    """Inserts one I-Point Audit row without committing.
+    """Stages one I-Point Audit row on the open transaction; it does not commit.
 
     Called beside every ledger mutation so the live ledger and its history
-    share one transaction and cannot diverge.
+    share one transaction and cannot diverge; the I-Points lifecycle commits.
     """
     conn.execute(
         """
