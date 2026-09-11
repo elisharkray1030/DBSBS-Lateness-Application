@@ -36,11 +36,11 @@ and the app never releases it on its own.
 1. As staff, I want to log an I-Point Entry for a Boarder with points, a date,
    and a reason, so that repeated behaviour is recorded as it happens.
 2. As staff, I want the Entry date to default to today but be editable, so I
-   can record an incident I missed.
+   can record an Entry I missed.
 3. As staff, I want a reason to be required on every Entry, so the record is
    defensible.
 4. As staff, I want to log more than one point in a single Entry, so one
-   serious incident needn't be entered many times.
+   serious occasion needn't be logged many times.
 5. As staff, I want to edit an Entry's points, date, or reason, so I can correct
    a mistake.
 6. As staff, I want to remove an Entry, so a mistaken log disappears from the
@@ -156,21 +156,23 @@ and the app never releases it on its own.
     released_at, voided_at, void_reason.
   - `ipoint_audit`: id, entity_type (`entry | adjustment | confiscation`),
     entity_id, normalized_name, action
-    (`created | edited | removed | confirmed | released | voided | removed`),
+    (`created | edited | removed | confirmed | released | voided`),
     before_state, after_state, changed_at.
 - **A confirmed Redemption is the Confiscation row.** There is no separate
   Redemption table: the Confiscation carries `points_redeemed`, and the Balance
   is derived as Entries + Adjustments − the `points_redeemed` of non-voided
   Confiscations. Pending Redemptions are **derived, never stored** (ADR 0005).
 - **Derived Balance, never stored**, so it cannot drift from the ledger.
-- **The Balance is floored at zero on every write** (ADR 0006): logging,
-  editing, or removing an Entry; adding, editing, or removing an Adjustment; and
-  confirming or voiding a Redemption are each rejected if the resulting Balance
-  would drop below zero. A subtractive Adjustment is additionally capped at the
-  current Balance.
-- **I-Point Entries carry the incident date under `occurred_on`** — the date the
-  incident happened, distinct from the `recorded_at` audit timestamp. The
-  user-visible field is labelled "Date".
+- **The Balance is floored at zero** (ADR 0006): the slices that introduce
+  subtractive writes (#177–#179) reject any Entry or Adjustment change that
+  would leave the Balance below zero. As of #176 the only write is additive
+  logging, which cannot break the floor. A subtractive Adjustment is additionally
+  capped at the current Balance; confirming a Redemption is capped at the
+  Balance and voiding one adds points back, so neither can break the floor on
+  its own.
+- **I-Point Entries carry the date under `occurred_on`** — the date the Entry
+  records, distinct from the `recorded_at` audit timestamp. The user-visible
+  field is labelled "Date".
 - **The phone's return has two gates** (ADR 0005): the lateness Phone Hold
   clears on Punishment submission and the Confiscation clears on release at or
   after `release_due`. A Stacked boarder's phone returns only once both clear; a
@@ -270,7 +272,7 @@ and the app never releases it on its own.
 - Forcing a Redemption before a month's close, and resetting a Balance.
 - Automatic transitions or any scheduler — Confirm, Release, and Void stay
   manual (ADR 0001, ADR 0005).
-- Incident-level detail (day or time) beyond the Entry's date and reason.
+- Detail beyond the Entry's date and reason (no time of day).
 - Extracting a shared lifecycle engine from the Punishments and I-Points
   modules.
 - Authentication and per-staff attribution — the app has no auth, so audit rows

@@ -63,4 +63,6 @@ quick-log action on the Boarder Profile.
   staff discretion). A Confiscation with its period elapsed raises a
   due-for-release flag, but the app never releases on its own.
 - Removed boarders accrue no new entries; existing balance and confiscations
-  stay frozen, and their Match Key joins the All-Time List union.
+  stay frozen, and their Match Key joins the All-Time List union. Neither is
+  implemented yet: the union gains I-Point keys in #182, and the no-new-Entries
+  guard is #187.
