@@ -54,8 +54,10 @@ def resolve_display_name(conn, normalized_name: str) -> str:
 def _coerce_points(points) -> "int | None":
     """Returns an integer candidate, or None for a non-whole-number value.
 
-    Only integers and digit-only strings qualify, so a fractional value can
-    never be silently truncated into an Entry.
+    Only integers and decimal-digit strings qualify, so a fractional value can
+    never be silently truncated into an Entry. ``str.isdecimal`` (not
+    ``str.isdigit``) is required because digit-class characters such as a
+    superscript ``²`` pass ``isdigit`` but have no ``int`` value.
     """
     if isinstance(points, bool):
         return None
@@ -63,7 +65,7 @@ def _coerce_points(points) -> "int | None":
         return points
     if isinstance(points, str):
         text = points.strip()
-        if not text.isdigit():
+        if not text.isdecimal():
             return None
         return int(text)
     return None

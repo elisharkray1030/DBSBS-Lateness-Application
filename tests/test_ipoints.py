@@ -110,6 +110,15 @@ class TestLogEntry:
             assert isinstance(outcome, EntryRejected)
         assert storage.list_ipoint_entries(conn) == []
 
+    def test_non_decimal_digit_class_points_rejected(self, conn):
+        for points in ("²", "³", "½"):
+            outcome = log_entry(
+                conn, normalized_name="ALICE", points=points, occurred_on="2026-08-01", reason="x"
+            )
+
+            assert isinstance(outcome, EntryRejected)
+        assert storage.list_ipoint_entries(conn) == []
+
     def test_string_positive_integer_accepted(self, conn):
         outcome = log_entry(
             conn, normalized_name="ALICE", points="7", occurred_on="2026-08-01", reason="x"
@@ -375,6 +384,23 @@ class TestLogEntryRoute:
             },
         )
 
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "No I-Point Entries" in html
+
+    def test_non_decimal_digit_points_shows_error(self, fresh_client):
+        response = post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Alice",
+                "points": "²",
+                "occurred_on": "2026-08-01",
+                "reason": "x",
+            },
+        )
+
+        assert response.status_code == 302
         html = fresh_client.get("/ipoints").get_data(as_text=True)
         assert "banner-error" in html
         assert "No I-Point Entries" in html
