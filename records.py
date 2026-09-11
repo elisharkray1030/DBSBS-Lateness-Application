@@ -243,7 +243,7 @@ class IPointEntry:
     id: int
     normalized_name: str
     points: int
-    awarded_on: str
+    occurred_on: str
     reason: str
     recorded_at: str
 

@@ -19,7 +19,7 @@ def seed_entry(
     conn,
     name="ALICE",
     points=5,
-    awarded_on="2026-08-01",
+    occurred_on="2026-08-01",
     reason="Repeated disruption",
     recorded_at="2026-08-01T09:00:00+00:00",
 ):
@@ -27,7 +27,7 @@ def seed_entry(
         conn,
         normalized_name=name,
         points=points,
-        awarded_on=awarded_on,
+        occurred_on=occurred_on,
         reason=reason,
         recorded_at=recorded_at,
     )
@@ -51,7 +51,7 @@ class TestLogEntry:
 
         assert len(entries) == 1
         assert entries[0].points == 3
-        assert entries[0].awarded_on == "2026-08-01"
+        assert entries[0].occurred_on == "2026-08-01"
         assert entries[0].reason == "Late to prep"
 
     def test_records_the_provided_timestamp(self, conn):
@@ -70,7 +70,7 @@ class TestLogEntry:
 
     def test_blank_reason_rejected(self, conn):
         outcome = log_entry(
-            conn, normalized_name="ALICE", points=5, awarded_on="2026-08-01", reason="  "
+            conn, normalized_name="ALICE", points=5, occurred_on="2026-08-01", reason="  "
         )
 
         assert isinstance(outcome, EntryRejected)
@@ -79,7 +79,7 @@ class TestLogEntry:
 
     def test_zero_points_rejected(self, conn):
         outcome = log_entry(
-            conn, normalized_name="ALICE", points=0, awarded_on="2026-08-01", reason="x"
+            conn, normalized_name="ALICE", points=0, occurred_on="2026-08-01", reason="x"
         )
 
         assert isinstance(outcome, EntryRejected)
@@ -87,7 +87,7 @@ class TestLogEntry:
 
     def test_negative_points_rejected(self, conn):
         outcome = log_entry(
-            conn, normalized_name="ALICE", points=-3, awarded_on="2026-08-01", reason="x"
+            conn, normalized_name="ALICE", points=-3, occurred_on="2026-08-01", reason="x"
         )
 
         assert isinstance(outcome, EntryRejected)
@@ -95,7 +95,7 @@ class TestLogEntry:
 
     def test_non_integer_points_rejected(self, conn):
         outcome = log_entry(
-            conn, normalized_name="ALICE", points="five", awarded_on="2026-08-01", reason="x"
+            conn, normalized_name="ALICE", points="five", occurred_on="2026-08-01", reason="x"
         )
 
         assert isinstance(outcome, EntryRejected)
@@ -104,7 +104,7 @@ class TestLogEntry:
     def test_fractional_points_rejected(self, conn):
         for points in ("5.9", 5.9, True):
             outcome = log_entry(
-                conn, normalized_name="ALICE", points=points, awarded_on="2026-08-01", reason="x"
+                conn, normalized_name="ALICE", points=points, occurred_on="2026-08-01", reason="x"
             )
 
             assert isinstance(outcome, EntryRejected)
@@ -112,7 +112,7 @@ class TestLogEntry:
 
     def test_string_positive_integer_accepted(self, conn):
         outcome = log_entry(
-            conn, normalized_name="ALICE", points="7", awarded_on="2026-08-01", reason="x"
+            conn, normalized_name="ALICE", points="7", occurred_on="2026-08-01", reason="x"
         )
 
         assert isinstance(outcome, EntrySaved)
@@ -120,7 +120,7 @@ class TestLogEntry:
 
     def test_blank_boarder_rejected(self, conn):
         outcome = log_entry(
-            conn, normalized_name="  ", points=5, awarded_on="2026-08-01", reason="x"
+            conn, normalized_name="  ", points=5, occurred_on="2026-08-01", reason="x"
         )
 
         assert isinstance(outcome, EntryRejected)
@@ -131,17 +131,17 @@ class TestLogEntry:
             conn,
             normalized_name="ALICE",
             points=5,
-            awarded_on="",
+            occurred_on="",
             reason="x",
             today="2026-09-11",
         )
 
         assert isinstance(outcome, EntrySaved)
-        assert storage.list_ipoint_entries(conn)[0].awarded_on == "2026-09-11"
+        assert storage.list_ipoint_entries(conn)[0].occurred_on == "2026-09-11"
 
     def test_invalid_date_rejected(self, conn):
         outcome = log_entry(
-            conn, normalized_name="ALICE", points=5, awarded_on="not-a-date", reason="x"
+            conn, normalized_name="ALICE", points=5, occurred_on="not-a-date", reason="x"
         )
 
         assert isinstance(outcome, EntryRejected)
@@ -177,7 +177,7 @@ class TestLogEntry:
 
     def test_rejected_entry_writes_no_audit_row(self, conn):
         log_entry(
-            conn, normalized_name="ALICE", points=0, awarded_on="2026-08-01", reason="x"
+            conn, normalized_name="ALICE", points=0, occurred_on="2026-08-01", reason="x"
         )
 
         assert storage.list_ipoint_audit(conn) == []
@@ -202,12 +202,12 @@ class TestBalance:
         assert balances == {"ALICE": 2, "BOB": 7}
 
     def test_summary_groups_entries_chronologically(self, conn):
-        seed_entry(conn, name="ALICE", points=1, awarded_on="2026-09-01")
-        seed_entry(conn, name="ALICE", points=2, awarded_on="2026-07-01")
+        seed_entry(conn, name="ALICE", points=1, occurred_on="2026-09-01")
+        seed_entry(conn, name="ALICE", points=2, occurred_on="2026-07-01")
 
         alice = ipoints.boarder_balances(conn)[0]
 
-        assert [e.awarded_on for e in alice.entries] == ["2026-07-01", "2026-09-01"]
+        assert [e.occurred_on for e in alice.entries] == ["2026-07-01", "2026-09-01"]
 
     def test_summary_resolves_display_name_and_bed(self, conn):
         storage.replace_boarders(
@@ -234,7 +234,7 @@ class TestMatchKeyMigration:
         conn.execute(
             """
             INSERT INTO ipoint_entries
-                (normalized_name, points, awarded_on, reason, recorded_at)
+                (normalized_name, points, occurred_on, reason, recorded_at)
             VALUES ('CHEN, WEI', 5, '2026-08-01', 'x', '2026-08-01T09:00:00+00:00')
             """
         )
@@ -276,7 +276,7 @@ class TestIPointsPage:
         assert 'action="/ipoints/entries"' in html
         assert 'for="ipoint-boarder"' in html
         assert 'for="ipoint-points"' in html
-        assert 'for="ipoint-awarded-on"' in html
+        assert 'for="ipoint-occurred-on"' in html
         assert 'for="ipoint-reason"' in html
 
     def test_date_field_defaults_to_today(self, fresh_client):
@@ -301,7 +301,7 @@ class TestLogEntryRoute:
             data={
                 "boarder": "Alice",
                 "points": "5",
-                "awarded_on": "2026-08-01",
+                "occurred_on": "2026-08-01",
                 "reason": "Repeated disruption",
             },
         )
@@ -319,7 +319,7 @@ class TestLogEntryRoute:
             data={
                 "boarder": "Alice",
                 "points": "5",
-                "awarded_on": "2026-08-01",
+                "occurred_on": "2026-08-01",
                 "reason": "Repeated disruption",
             },
         )
@@ -337,7 +337,7 @@ class TestLogEntryRoute:
                 data={
                     "boarder": "Alice",
                     "points": points,
-                    "awarded_on": "2026-08-01",
+                    "occurred_on": "2026-08-01",
                     "reason": "x",
                 },
             )
@@ -353,7 +353,7 @@ class TestLogEntryRoute:
             data={
                 "boarder": "Alice",
                 "points": "5",
-                "awarded_on": "2026-08-01",
+                "occurred_on": "2026-08-01",
                 "reason": "",
             },
         )
@@ -370,7 +370,7 @@ class TestLogEntryRoute:
             data={
                 "boarder": "Alice",
                 "points": "0",
-                "awarded_on": "2026-08-01",
+                "occurred_on": "2026-08-01",
                 "reason": "x",
             },
         )
@@ -385,7 +385,7 @@ class TestLogEntryRoute:
             data={
                 "boarder": "Alice",
                 "points": "5",
-                "awarded_on": "2026-08-01",
+                "occurred_on": "2026-08-01",
                 "reason": "x",
             },
         )

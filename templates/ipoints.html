@@ -31,8 +31,8 @@
                                min="1" step="1" required>
                     </div>
                     <div class="form-field">
-                        <label for="ipoint-awarded-on"><strong>Date</strong></label>
-                        <input type="date" id="ipoint-awarded-on" name="awarded_on"
+                        <label for="ipoint-occurred-on"><strong>Date</strong></label>
+                        <input type="date" id="ipoint-occurred-on" name="occurred_on"
                                value="{{ today }}" required>
                     </div>
                     <div class="form-field">
@@ -66,7 +66,7 @@
                         <tbody>
                             {% for entry in summary.entries %}
                             <tr data-entry-id="{{ entry.id }}">
-                                <td>{{ entry.awarded_on }}</td>
+                                <td>{{ entry.occurred_on }}</td>
                                 <td>{{ entry.points }}</td>
                                 <td>{{ entry.reason }}</td>
                                 <td>{{ format_timestamp(entry.recorded_at) }}</td>

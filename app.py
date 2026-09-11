@@ -1163,7 +1163,7 @@ def ipoints_view():
 def log_ipoint_entry():
     boarder = request.form.get('boarder', '').strip()
     points = request.form.get('points', '').strip()
-    awarded_on = request.form.get('awarded_on', '').strip()
+    occurred_on = request.form.get('occurred_on', '').strip()
     reason = request.form.get('reason', '').strip()
 
     def attempt():
@@ -1172,7 +1172,7 @@ def log_ipoint_entry():
                 conn,
                 normalized_name=normalize_name(boarder),
                 points=points,
-                awarded_on=awarded_on,
+                occurred_on=occurred_on,
                 reason=reason,
             )
 

@@ -22,14 +22,14 @@ class EntrySaved:
     normalized_name: str
     display_name: str
     points: int
-    awarded_on: str
+    occurred_on: str
 
     @property
     def message(self) -> str:
         noun = "I-Point" if self.points == 1 else "I-Points"
         return (
             f"Logged {self.points} {noun} for {self.display_name} "
-            f"on {self.awarded_on}."
+            f"on {self.occurred_on}."
         )
 
 
@@ -69,8 +69,8 @@ def _coerce_points(points) -> "int | None":
     return None
 
 
-def _resolve_awarded_on(awarded_on: str | None, today: str | None) -> "str | None":
-    raw = (awarded_on or "").strip()
+def _resolve_occurred_on(occurred_on: str | None, today: str | None) -> "str | None":
+    raw = (occurred_on or "").strip()
     if not raw:
         return today or today_iso()
     try:
@@ -107,7 +107,7 @@ def log_entry(
     conn,
     normalized_name: str,
     points,
-    awarded_on: str | None,
+    occurred_on: str | None,
     reason: str,
     recorded_at: str | None = None,
     today: str | None = None,
@@ -132,9 +132,9 @@ def log_entry(
     if not clean_reason:
         return EntryRejected(reason="A reason is required.")
 
-    resolved_date = _resolve_awarded_on(awarded_on, today)
+    resolved_date = _resolve_occurred_on(occurred_on, today)
     if resolved_date is None:
-        return EntryRejected(reason="The awarded date must be a valid date.")
+        return EntryRejected(reason="Enter a valid date.")
 
     stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
     display_name = resolve_display_name(conn, name)
@@ -153,7 +153,7 @@ def log_entry(
             after_state=json.dumps(
                 {
                     "points": points_value,
-                    "awarded_on": resolved_date,
+                    "occurred_on": resolved_date,
                     "reason": clean_reason,
                 },
                 sort_keys=True,
@@ -165,7 +165,7 @@ def log_entry(
         normalized_name=name,
         display_name=display_name,
         points=points_value,
-        awarded_on=resolved_date,
+        occurred_on=resolved_date,
     )
 
 
@@ -195,7 +195,7 @@ def boarder_balances(conn) -> list[IPointSummary]:
                 display_name=who.display_name if who else key,
                 bed=who.bed if who else "",
                 balance=sum(row.points for row in rows),
-                entries=sorted(rows, key=lambda row: (row.awarded_on, row.id)),
+                entries=sorted(rows, key=lambda row: (row.occurred_on, row.id)),
             )
         )
     summaries.sort(key=lambda summary: (bed_sort_key(summary.bed), summary.display_name))

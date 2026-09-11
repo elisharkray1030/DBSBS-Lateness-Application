@@ -102,7 +102,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             normalized_name TEXT NOT NULL,
             points INTEGER NOT NULL,
-            awarded_on TEXT NOT NULL,
+            occurred_on TEXT NOT NULL,
             reason TEXT NOT NULL,
             recorded_at TEXT NOT NULL
         )
@@ -1064,7 +1064,7 @@ def stage_ipoint_entry(
     conn: sqlite3.Connection,
     normalized_name: str,
     points: int,
-    awarded_on: str,
+    occurred_on: str,
     reason: str,
     recorded_at: str,
 ) -> int:
@@ -1077,10 +1077,10 @@ def stage_ipoint_entry(
     cursor = conn.execute(
         """
         INSERT INTO ipoint_entries (
-            normalized_name, points, awarded_on, reason, recorded_at
+            normalized_name, points, occurred_on, reason, recorded_at
         ) VALUES (?, ?, ?, ?, ?)
         """,
-        (normalized_name, points, awarded_on, reason, recorded_at),
+        (normalized_name, points, occurred_on, reason, recorded_at),
     )
     lastrowid = cursor.lastrowid
     if lastrowid is None:
@@ -1127,7 +1127,7 @@ def _ipoint_entry_from_row(row) -> IPointEntry:
         id=row[0],
         normalized_name=row[1],
         points=row[2],
-        awarded_on=row[3],
+        occurred_on=row[3],
         reason=row[4],
         recorded_at=row[5],
     )
@@ -1140,18 +1140,18 @@ def list_ipoint_entries(
     if normalized_name is None:
         cursor = conn.execute(
             """
-            SELECT id, normalized_name, points, awarded_on, reason, recorded_at
+            SELECT id, normalized_name, points, occurred_on, reason, recorded_at
             FROM ipoint_entries
-            ORDER BY awarded_on ASC, id ASC
+            ORDER BY occurred_on ASC, id ASC
             """
         )
     else:
         cursor = conn.execute(
             """
-            SELECT id, normalized_name, points, awarded_on, reason, recorded_at
+            SELECT id, normalized_name, points, occurred_on, reason, recorded_at
             FROM ipoint_entries
             WHERE normalized_name = ?
-            ORDER BY awarded_on ASC, id ASC
+            ORDER BY occurred_on ASC, id ASC
             """,
             (normalized_name,),
         )
