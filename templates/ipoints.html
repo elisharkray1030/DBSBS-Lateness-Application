@@ -1,0 +1,87 @@
+{% extends "layout.html" %}
+
+{% block title %}I-Points — DBS Boarding School{% endblock %}
+
+{% block heading %}
+    <h1>I-Points</h1>
+{% endblock %}
+
+{% block content %}
+    <section id="ipoints" class="panel active ipoints-panel">
+        <h2>Irregularity Points</h2>
+
+        <div class="upload-panel">
+            <h3 class="upload-title">Log I-Point Entry</h3>
+            <form action="/ipoints/entries" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="ipoint-boarder"><strong>Boarder Name</strong></label>
+                        <input type="text" id="ipoint-boarder" name="boarder"
+                               list="ipoint-boarders" autocomplete="off" required>
+                        <datalist id="ipoint-boarders">
+                            {% for option in boarder_options %}
+                                <option value="{{ option }}"></option>
+                            {% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="form-field">
+                        <label for="ipoint-points"><strong>Points</strong></label>
+                        <input type="number" id="ipoint-points" name="points"
+                               min="1" step="1" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="ipoint-awarded-on"><strong>Date</strong></label>
+                        <input type="date" id="ipoint-awarded-on" name="awarded_on"
+                               value="{{ today }}" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="ipoint-reason"><strong>Reason</strong></label>
+                        <input type="text" id="ipoint-reason" name="reason" required>
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-primary">Log Entry</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        {% if ipoint_summaries %}
+            {% for summary in ipoint_summaries %}
+            <div class="ipoints-group">
+                <h3 class="ipoints-group-title">
+                    {{ summary.display_name }}{% if summary.bed %} (Bed {{ summary.bed }}){% endif %}
+                    <span class="ipoint-balance-badge">Balance: {{ summary.balance }}</span>
+                </h3>
+                <div class="table-scroll">
+                    <table class="ipoints-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Date</th>
+                                <th scope="col">Points</th>
+                                <th scope="col">Reason</th>
+                                <th scope="col">Logged</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in summary.entries %}
+                            <tr data-entry-id="{{ entry.id }}">
+                                <td>{{ entry.awarded_on }}</td>
+                                <td>{{ entry.points }}</td>
+                                <td>{{ entry.reason }}</td>
+                                <td>{{ format_timestamp(entry.recorded_at) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                No I-Point Entries have been logged yet.
+            </div>
+        {% endif %}
+    </section>
+{% endblock %}
