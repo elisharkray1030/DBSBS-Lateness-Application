@@ -1,0 +1,16 @@
+# Optional seed overlay: bind the host's namelist.csv into the app so the
+# first `init-db` seeds the Master List. The launcher includes this file by
+# default and omits it when started with --no-seed.
+#
+# `create_host_path: false` makes Compose fail with a clear error instead of
+# silently creating a directory in place of a missing file — a directory here
+# would crash `init-db` and stop the container from starting.
+services:
+  app:
+    volumes:
+      - type: bind
+        source: ./namelist.csv
+        target: /data/namelist.csv
+        read_only: true
+        bind:
+          create_host_path: false

@@ -61,6 +61,21 @@ schtasks /Create /TN "Lateness backup (startup)" /SC ONSTART /RU SYSTEM ^
 
 ## Restore (database)
 
+`restore_db.py` automates steps 2-3 below (with the app stopped): it swaps in the
+backup's `lateness_history.db` atomically, clears any stale SQLite journal, and
+copies `logs\*.csv` back into `LOG_ARCHIVE_DIR`.
+
+```powershell
+cd C:\lateness-app
+.\.venv\Scripts\python.exe restore_db.py --from "\\NAS\lateness-backups\lateness-20260910-120000" --force
+```
+
+Under Docker, `run.cmd restore` (or `./run.sh restore`) does the same against the
+`lateness-data` volume, taking the folder from `shared\restore`. `restore_db.py`
+refuses to overwrite an existing database unless `--force` is passed.
+
+The manual equivalent:
+
 1. Stop the service: `nssm stop LatenessApp`.
 2. Copy the chosen `lateness_history.db` from the backup folder over the live
    database file (`DB_PATH`, default `C:\lateness-app\lateness_history.db`).
@@ -82,10 +97,11 @@ schtasks /Create /TN "Lateness backup (startup)" /SC ONSTART /RU SYSTEM ^
 
 ## Restore drill
 
-The repeatable half of a restore is covered by `tests/test_backup_db.py`, which
-reopens a backup database through the storage seam and confirms the rows are
-present. Run the full manual drill on the real host once after setup and note
-the date in your change log:
+The repeatable half of a restore is covered by `tests/test_backup_db.py` and
+`tests/test_restore_db.py`, which reopen a backup database through the storage
+seam, restore one into a live path, and confirm the rows are present. Run the
+full manual drill on the real host once after setup and note the date in your
+change log:
 
 1. Take a backup.
 2. Move the live database aside, restore the backup database, start the app, and

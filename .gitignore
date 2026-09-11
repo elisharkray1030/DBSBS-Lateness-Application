@@ -24,6 +24,12 @@ data/raw/
 # snapshots kept for backup / rebuild)
 data/logs/
 
+# Docker host bridge: backups land here and restores are staged here. The
+# tracked shared/README.txt explains the folder.
+shared/backups/
+shared/restore/
+shared/*.db
+
 # Temp / test
 test_data.csv
 

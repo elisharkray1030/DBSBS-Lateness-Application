@@ -9,3 +9,6 @@ lateness_history.db
 *.log
 *.csv
 !namelist.csv
+data/
+shared/
+tests/
