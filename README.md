@@ -4,50 +4,146 @@ Flask-based disciplinary reporting dashboard for tracking boarder lateness from 
 
 The app matches imported Monthly Logs against a boarder Master List, calculates lateness frequency and minutes late, stores month summaries in SQLite, and lets you view, search, download, and delete saved reports.
 
-## Requirements
+One designated, always-on PC runs the app; every other staff PC just opens a browser to it. The database and Monthly Log Archive live on **that PC's local disk** — a single writer, so there is no SQLite-over-SMB corruption risk ([ADR 0004](docs/adr/0004-single-host-deployment.md)). A NAS is used as a **backup target only**.
 
-- **Normal use:** Docker Desktop. The launcher runs everything in a container.
-- **Development only:** Python 3.11+.
+## What you need
 
-## Run it
+- A Windows PC to act as the **host** — always powered on during working hours.
+- **Docker Desktop** installed on the host (the launcher can install it for you).
+- A **`namelist.csv`** Master List (at least `Name` and `Bed` columns). Put it in the project root before the first start, or import it later from the Boarders tab.
+- A **NAS share** (or another folder/drive) to hold backups. The runbooks assume `\\NAS\lateness-backups`.
 
-One command runs the app in a container, isolated from the rest of your machine. The database and Monthly Log Archive live in a Docker volume (`lateness-data`); backups and restores use the `shared/` folder.
+Normal use needs no Python on the host — everything runs in a container. Python is only needed for development.
 
-On Windows, double-click **`run.cmd`** (or run it from a terminal). On macOS/Linux/WSL run **`./run.sh`**. With no arguments, both show a menu.
+## Quick start: set up the host (one time)
+
+### 1. Put the files on the host
+
+Put the project at a stable path such as `C:\lateness-app`, and put `namelist.csv` in that folder.
+
+### 2. Install Docker Desktop
+
+If Docker Desktop is missing, the launcher offers a per-user `winget` install. If you prefer to do it yourself, install from <https://www.docker.com/products/docker-desktop/> and sign out/in or reboot if prompted.
+
+### 3. Start the app
+
+On Windows, double-click **`run.cmd`**, or run it from a terminal, and choose **Start**:
 
 ```powershell
 .\run.cmd            # menu
 .\run.cmd up         # start and open the browser (office LAN)
 .\run.cmd up --local # start bound to 127.0.0.1 only
-.\run.cmd backup     # write a backup into .\shared\backups
-.\run.cmd restore    # restore a backup from .\shared\restore
 ```
 
-```bash
-./run.sh            # menu
-./run.sh up         # start and open the browser (office LAN)
-./run.sh up --local # start bound to 127.0.0.1 only
-./run.sh backup     # write a backup into ./shared/backups
-./run.sh restore    # restore a backup from ./shared/restore
-```
+On macOS/Linux/WSL, use **`./run.sh`** with the same commands.
 
 `run.cmd` and `run.sh` accept bash-style flags such as `--local` and `--no-seed`; `run.ps1` uses the PowerShell spellings `-Local` and `-NoSeed`. `--no-seed` skips seeding the Master List from `namelist.csv` on first start.
 
-The launcher checks Docker (offering a per-user install if missing), generates a per-host `SECRET_KEY` in `.env`, starts the stack, waits until it is healthy, and opens `http://127.0.0.1:8000`. By default it listens on all interfaces so other office PCs can reach it at `http://<host-ip>:8000`; use `--local` to keep it private.
+The launcher checks Docker, generates a per-host `SECRET_KEY` in `.env`, builds and starts the stack, waits until it is healthy, and opens `http://127.0.0.1:8000`. By default it listens on all interfaces so other office PCs can reach it; use `--local` to keep it private.
 
-Adding boarders and Monthly Logs is done **in the browser**, not by copying files: use the Reports tab's Import and the Boarders tab's Master List Import. The `shared/` folder is only for backups and restores — see [shared/README.txt](shared/README.txt).
+### 4. Make it reachable on the office network
 
-If `namelist.csv` is present in the project root, the launcher seeds the Master List from it once on the first start; if it is absent, import the Master List in the Boarders tab.
+1. **Give the host a stable address.** On the router, reserve a DHCP lease for the host (or set a static IP), and give the PC a friendly name such as `lateness-host` so staff bookmark a name, not an IP.
+2. **Open the firewall port** (admin PowerShell, scoped to the **Private**/office profile):
 
-### Sharing it with the office
+   ```powershell
+   New-NetFirewallRule -DisplayName "Lateness app" -Direction Inbound `
+     -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private
+   ```
 
-1. Give the host PC a static IP (a DHCP reservation) so the URL never changes.
-2. Allow inbound TCP 8000 through Windows Firewall (Docker may prompt the first time).
-3. Keep Docker Desktop running on the host and set the PC not to sleep.
+3. **Keep the host awake.** Settings → System → Power & sleep → set **Sleep** to **Never** while plugged in. Disable hybrid sleep / fast startup if staff must reach the app at any hour.
+4. **Keep Docker running across reboots.** Set Docker Desktop to start on login and enable **auto-logon** (or leave the host logged in). Docker Desktop runs inside a signed-in user session, so the app is only up while that user is logged on.
+5. **Confirm from another PC:** `http://lateness-host:8000/` (or `http://<host-ip>:8000/`).
 
-Everything is plain HTTP with no login; keep it on the trusted office LAN and off-campus.
+> **Trust boundary:** the app is plain HTTP with no login. Any device on the office LAN can view and change the data, so keep it on the trusted LAN and do not expose it off-campus.
 
-Stop, inspect, and recover with `run.cmd down`, `logs`, and `status`. Data lives in the named `lateness-data` Docker volume, not in the repo; back up with `run.cmd backup` and restore with `run.cmd restore` (see [shared/README.txt](shared/README.txt)).
+### 5. Load the Master List
+
+If `namelist.csv` is in the project root, the launcher seeds the Master List once on the first start. If you don't have one yet, start with `.\run.cmd up --no-seed` and import the Master List from the Boarders tab (or add boarders by hand). See [Seed semantics](#seed-semantics) for what "seed once" means.
+
+Adding boarders and Monthly Logs is done **in the browser**, not by copying files: use the Reports tab's Import and the Boarders tab's Master List Import.
+
+### 6. Set up backups
+
+Set up the NAS backup before you rely on the app — see [Backups and recovery](#backups-and-recovery).
+
+### 7. Run the restore drill once
+
+Prove a backup can be restored on this host, and note the date. See [Restore drill](#restore-drill).
+
+## Backups and recovery
+
+Backups run on the host (the only writer) and copy to the NAS. The NAS is storage only; it never holds the live database.
+
+### Back up now
+
+```powershell
+.\run.cmd backup     # write a backup into .\shared\backups
+```
+
+Every run creates a timestamped folder `lateness-YYYYMMDD-HHMMSSffffff` under `shared\backups`. `BACKUP_KEEP` (default 7) sets how many timestamped folders to retain; older folders are deleted after a successful run. The launcher handles the container plumbing for you.
+
+### Mirror backups to the NAS
+
+The launcher writes backups to `shared\backups` on the host. Mirror that folder to the NAS on a schedule.
+
+1. **Create the share** `\\NAS\lateness-backups` and give the host write access. See [docs/deployment/nas-share.md](docs/deployment/nas-share.md) for permissions and vendor-specific steps.
+2. **Schedule the backup + mirror.** Run these from an elevated Command Prompt, replacing the time and path as needed. `/IT` runs the task only while the host user is logged on — which is exactly when Docker Desktop is reachable:
+
+   ```bat
+   schtasks /Create /TN "Lateness backup" /SC DAILY /ST 21:00 /IT /TR "cmd /c \"C:\lateness-app\run.cmd backup && robocopy C:\lateness-app\shared\backups \\NAS\lateness-backups /MIR /R:2 /W:5\""
+   ```
+
+   Mirror again when the host user logs on (so a host rebooted after hours is backed up without waiting for the next evening):
+
+   ```bat
+   schtasks /Create /TN "Lateness backup (logon)" /SC ONLOGON /IT /TR "cmd /c \"C:\lateness-app\run.cmd backup && robocopy C:\lateness-app\shared\backups \\NAS\lateness-backups /MIR /R:2 /W:5\""
+   ```
+
+   `robocopy /MIR` mirrors the source exactly, so extra files on the NAS are removed — it holds the same newest `BACKUP_KEEP` folders as `shared\backups`.
+
+3. **Verify the first run.** Run `run.cmd backup` and the `robocopy` command once by hand, confirm a `lateness-*` folder appears on the NAS, then check again after the scheduled task has fired.
+
+On a **native Windows host** (waitress, no Docker) `backup_db.py --dest "\\NAS\lateness-backups"` writes straight to the UNC share; see [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md).
+
+### Restore
+
+```powershell
+.\run.cmd restore    # restore a backup from .\shared\restore
+```
+
+1. Copy a `lateness-*` folder from `shared\backups` into `shared\restore`.
+2. Run `.\run.cmd restore`. The launcher stops the app, restores the database and archive, and restarts the app. You will be asked to confirm, since this replaces the live database.
+3. Open the app and confirm a known month and its totals.
+
+On the native host, `restore_db.py` does the same; see [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md).
+
+### What a backup contains
+
+- `lateness_history.db` — a consistent copy taken with SQLite's **online backup API**. A raw file copy of a live database can capture a half-written page; the backup API copies under the database lock instead, so it is safe while staff use the app.
+- `logs/` — every CSV in the Monthly Log Archive: each imported Monthly Log (`<YYYY-MM>.csv`), paired with a `namelist-<YYYY-MM>.csv` Master List snapshot of the roster as it stood for that Import.
+
+A backup is all-or-nothing: if any copy fails, the partial folder is removed so only complete backups are ever left on the share.
+
+> Punishments live **only** in the database, not in the CSVs. Protect the database copies accordingly.
+
+### Rebuild (database lost, archive kept)
+
+1. Stop the app and start from a fresh database. Starting the app runs `init-db`, which seeds the Master List from `NAMELIST_PATH`. Copy the newest `logs\namelist-<YYYY-MM>.csv` over that path first, so the rebuild starts from the roster of the latest month you hold.
+2. Re-import each `logs\<YYYY-MM>.csv` on the Import page, using the month in the filename. Each Import also rewrites its `namelist-<YYYY-MM>.csv` snapshot.
+3. Punishments are not recoverable this way and must be re-issued.
+
+### Restore drill
+
+Run this once after setup and note the date in your change log:
+
+1. Take a backup (`.\run.cmd backup`).
+2. Copy the newest `lateness-*` folder from `shared\backups` into `shared\restore`.
+3. Run `.\run.cmd restore`.
+4. Open the app and confirm a known month and its totals.
+5. Record the date the drill passed.
+
+The repeatable half of this is covered by `tests/test_backup_db.py` and `tests/test_restore_db.py`, which reopen a backup database through the storage seam and restore one into a live path.
 
 ## Using the application
 
@@ -78,33 +174,37 @@ How to use it:
 
 Printing is intentional for Monthly Reports: with a report open, Print (or Ctrl/Cmd+P) outputs exactly that report — the application chrome, other tabs' content, and empty report skeletons are excluded.
 
-## Data and Import rules
+## Updating the app
 
-**Input files**
+On the Docker host, pull the new code and rebuild. Your data lives in the `lateness-data` volume, so it is preserved.
 
-- `namelist.csv` (the seed Master List) should contain at least `Name` and `Bed` columns. It seeds an empty Master List on the first `init-db`; after that, manage the list through the Boarders tab.
-- Monthly Log CSV files should contain at least `Name` and `Transaction Time` columns.
-- `Transaction Time` values must be strict `HH:MM` or `HH:MM:SS` (24-hour) times. Anything else is rejected with the offending rows surfaced, never silently dropped.
-- Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, in bytes). An Import over the cap is rejected with a staff-readable error and nothing is stored.
-- The SQLite database file is created automatically on first run if it does not already exist.
+```powershell
+.\run.cmd down
+git pull
+.\run.cmd up
+```
 
-**What gets saved**
+The launcher rebuilds the image on every start, so no extra flag is needed.
 
-- A month report is saved only when the Import produced at least one row for a known boarder with a parseable time.
-- Imports that match nothing, or whose times can't be read, are rejected with a specific error (Master List missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows saves normally.
-- A successful Import reports how many boarders were recorded and how many had lateness, plus counts of unmatched or unparseable rows when present, so staff can correct bad source data.
-- The request stream is consumed directly by the ingestion module — it is never written to a temp file on disk.
-- The web Import and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
+Afterwards open the app and load one Monthly Report to confirm the new code is live. On a native Windows host, follow [docs/deployment/windows-host.md](docs/deployment/windows-host.md) instead.
 
-**Seed semantics**
+## Troubleshooting
 
-On first database preparation — `init-db`, which `serve.py` and the Docker image run automatically before serving and which local development runs manually — if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once, then sets a seed flag in a `meta` table. After that the file is no longer read — all changes happen through the Boarders tab or a CSV import. If the Master List is later emptied (every boarder removed), it stays empty across restarts; the seed never runs again. A fresh start with no `namelist.csv` forfeits the one-time seed — a `namelist.csv` appearing later never silently seeds a list you did not ask for.
+- **App starts but no boarders are found** — confirm `namelist.csv` has the expected column names on first start, or add boarders through the Boarders tab.
+- **Changes do not persist after a restart** — confirm the container has the `lateness-data` volume mounted (`docker volume ls`). Data lives in a named volume, not a folder in the repo.
+- **Container cannot find `namelist.csv` on first startup** — confirm the file exists in the project root and that `NAMELIST_PATH` points to it; you can also add boarders through the Boarders tab without a seed file.
+- **The app is unreachable on port 8000** — another process may already hold the port. Set `APP_PORT` in `.env` to a free port (and allow that port through the firewall), then retry.
+- **The launcher reports Docker is not running** — start Docker Desktop and retry.
+- **Other office PCs cannot reach the app** — confirm the firewall rule (step 4), that `BIND_ADDR` is not `127.0.0.1`, and that you are using the host's LAN address.
+- **Backups are not appearing on the NAS** — confirm the scheduled task ran while the host user was logged on, and that the task's account can write to the share. Test the `robocopy` line by hand from the host.
 
-**Monthly Log Archive**
+## Alternative: native Windows host (waitress + NSSM)
 
-Each successful Import files the Monthly Log and a Master List snapshot under `LOG_ARCHIVE_DIR` (default `data/logs`): the log as `<YYYY-MM>.csv` and a `namelist-<YYYY-MM>.csv` snapshot of the list that produced the report. Both are written atomically, and a re-Import overwrites that month. A rejected Import writes nothing. Monthly Reports can be rebuilt from the archive.
+Instead of Docker, the designated host can run the app directly with waitress (`serve.py`) as a Windows service via [NSSM](https://nssm.cc/). This avoids Docker Desktop but adds manual steps: a Python venv, machine environment variables including `SECRET_KEY`, and the service install. Follow [docs/deployment/windows-host.md](docs/deployment/windows-host.md). Use a UNC path (`\\NAS\share\...`) anywhere the service must reach the NAS; a mapped drive letter is per-user and absent for a service.
 
-## Configuration
+## Reference
+
+### Configuration
 
 Recognized environment variables:
 
@@ -123,14 +223,37 @@ Recognized environment variables:
 
 `compose.yaml` fixes `DB_PATH`, `NAMELIST_PATH`, and `LOG_ARCHIVE_DIR` to `/data` paths (the `lateness-data` volume) and interpolates `SECRET_KEY` from the root `.env` file. `compose.seed.yaml` optionally mounts `namelist.csv` read-only for the first-start seed.
 
-## Deployment
+Under Docker, the root `.env` file is read by **Docker Compose only** — the launcher creates it and fills in `SECRET_KEY`. The native Windows host has no `.env` loader: use real environment variables. To generate a secret yourself:
 
-One designated, always-on PC runs the app; staff reach it over the office LAN. The SQLite database and the Monthly Log Archive live on that PC's **local disk** — a single writer, so there is no SQLite-over-SMB corruption risk. The NAS is a **backup target only** ([ADR 0004](docs/adr/0004-single-host-deployment.md)).
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
 
-- **Docker (canonical):** `compose.yaml` runs gunicorn with the database and archive in the named `lateness-data` volume. The [launcher scripts](#run-it) are the one-command entry point; `BIND_ADDR=0.0.0.0` (the default) exposes it to the office LAN.
-- **Windows host (native):** run `serve.py` (waitress) as a service, bound to the LAN. Follow [docs/deployment/windows-host.md](docs/deployment/windows-host.md).
-- **Backups:** `backup_db.py` copies the database plus the archived Monthly Logs and their per-month Master List snapshots to the NAS. Follow [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md) and [docs/deployment/nas-share.md](docs/deployment/nas-share.md).
-- **Trust boundary:** office LAN only, plain HTTP, no auth, no `Secure` cookies. Do not expose it off-campus.
+### Data and Import rules
+
+#### Input files
+
+- `namelist.csv` (the seed Master List) should contain at least `Name` and `Bed` columns. It seeds an empty Master List on the first `init-db`; after that, manage the list through the Boarders tab.
+- Monthly Log CSV files should contain at least `Name` and `Transaction Time` columns.
+- `Transaction Time` values must be strict `HH:MM` or `HH:MM:SS` (24-hour) times. Anything else is rejected with the offending rows surfaced, never silently dropped.
+- Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`, in bytes). An Import over the cap is rejected with a staff-readable error and nothing is stored.
+- The SQLite database file is created automatically on first run if it does not already exist.
+
+#### What gets saved
+
+- A month report is saved only when the Import produced at least one row for a known boarder with a parseable time.
+- Imports that match nothing, or whose times can't be read, are rejected with a specific error (Master List missing/empty, no rows matched, or all times unparseable) and leave the database untouched. A clean month with matched rows saves normally.
+- A successful Import reports how many boarders were recorded and how many had lateness, plus counts of unmatched or unparseable rows when present, so staff can correct bad source data.
+- The request stream is consumed directly by the ingestion module — it is never written to a temp file on disk.
+- The web Import and the parser CLI run the exact same ingestion module, so the two surfaces can't drift apart.
+
+#### Seed semantics
+
+On first database preparation — `init-db`, which `serve.py` and the Docker image run automatically before serving and which local development runs manually — if the boarders table is empty and a `namelist.csv` exists at `NAMELIST_PATH`, the app seeds the table from that file once, then sets a seed flag in a `meta` table. After that the file is no longer read — all changes happen through the Boarders tab or a CSV import. If the Master List is later emptied (every boarder removed), it stays empty across restarts; the seed never runs again. A fresh start with no `namelist.csv` forfeits the one-time seed — a `namelist.csv` appearing later never silently seeds a list you did not ask for.
+
+#### Monthly Log Archive
+
+Each successful Import files the Monthly Log and a Master List snapshot under `LOG_ARCHIVE_DIR` (default `data/logs`): the log as `<YYYY-MM>.csv` and a `namelist-<YYYY-MM>.csv` snapshot of the list that produced the report. Both are written atomically, and a re-Import overwrites that month. A rejected Import writes nothing. Monthly Reports can be rebuilt from the archive.
 
 ## Development
 
@@ -212,11 +335,3 @@ See [docs/architecture.md](docs/architecture.md) for how the modules fit togethe
 | [docs/](docs/) | Architecture note, ADRs, deployment runbooks, specs, and reviews |
 | [.env.example](.env.example) | Docker Compose environment template; copy to `.env` and set `SECRET_KEY` |
 | `lateness_history.db` | Default local SQLite database (created on first run; gitignored) |
-
-## Troubleshooting
-
-- If the app starts but no boarders are found, confirm `namelist.csv` has the expected column names on first start, or add boarders through the Boarders tab.
-- If Docker Compose starts but changes do not persist, confirm the container has the `lateness-data` volume mounted (`docker volume ls`). Data lives in a named volume, not a folder in the repo.
-- If the container cannot find `namelist.csv` on first startup, confirm the file exists in the project root and that `NAMELIST_PATH` points to it; you can also add boarders through the Boarders tab without a seed file.
-- If the app is unreachable on port 8000, another process may already hold the port — set `APP_PORT` to a free port and try again.
-- If the launcher reports that Docker is not running, start Docker Desktop and retry.
