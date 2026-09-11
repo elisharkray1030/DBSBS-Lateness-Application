@@ -7,7 +7,7 @@ The app matches imported Monthly Logs against a boarder Master List, calculates 
 ## Requirements
 
 - **Normal use:** Docker Desktop. The launcher runs everything in a container.
-- **Development only:** Python 3.11+ (CI tests 3.11 and 3.12; Docker uses 3.12-slim).
+- **Development only:** Python 3.11+.
 
 ## Run it
 
@@ -30,6 +30,8 @@ On Windows, double-click **`run.cmd`** (or run it from a terminal). On macOS/Lin
 ./run.sh backup     # write a backup into ./shared/backups
 ./run.sh restore    # restore a backup from ./shared/restore
 ```
+
+`run.cmd` and `run.sh` accept bash-style flags such as `--local` and `--no-seed`; `run.ps1` uses the PowerShell spellings `-Local` and `-NoSeed`. `--no-seed` skips seeding the Master List from `namelist.csv` on first start.
 
 The launcher checks Docker (offering a per-user install if missing), generates a per-host `SECRET_KEY` in `.env`, starts the stack, waits until it is healthy, and opens `http://127.0.0.1:8000`. By default it listens on all interfaces so other office PCs can reach it at `http://<host-ip>:8000`; use `--local` to keep it private.
 
@@ -201,13 +203,13 @@ See [docs/architecture.md](docs/architecture.md) for how the modules fit togethe
 | [templates/](templates/) | Jinja templates: base layout and tabs, main panels, dashboard, boarder profile, macros, error pages |
 | [static/app.js](static/app.js) | Browser-side behaviour (table sorting, charts, punishment actions) |
 | [tests/](tests/) | pytest suite covering the ingestion and storage seams, Flask test-client routes, and Playwright browser tests (browser tests skip automatically when Playwright is unavailable) |
-| [data/](data/) | Local runtime data (SQLite database and Monthly Log Archive) when not using Docker |
+| data/ | Local runtime data when not using Docker (Monthly Log Archive and parser scratch files); gitignored |
 | [shared/](shared/README.txt) | Host bridge for Docker backups and restores (gitignored except its README) |
-| [namelist.csv](namelist.csv) | Seed Master List used for first-start matching (local-only: gitignored for privacy, not in the repo) |
+| namelist.csv | Seed Master List used for first-start matching (local-only: gitignored for privacy, not in the repo) |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary and language |
 | [AGENTS.md](AGENTS.md) | Contributor and agent instructions |
 | [pyproject.toml](pyproject.toml) | mypy and pytest configuration |
-| [docs/](docs/architecture.md) | Architecture note, ADRs, deployment runbooks, specs, and reviews |
+| [docs/](docs/) | Architecture note, ADRs, deployment runbooks, specs, and reviews |
 | [.env.example](.env.example) | Docker Compose environment template; copy to `.env` and set `SECRET_KEY` |
 | `lateness_history.db` | Default local SQLite database (created on first run; gitignored) |
 

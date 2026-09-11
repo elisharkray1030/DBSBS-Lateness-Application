@@ -87,6 +87,14 @@ Important behavior:
 - The Assign Punishments flow lives in `app.py` (`/assign/<month>`) and
   delegates to this module.
 
+## Demo seeding — `seed_demo_data.py`
+
+`seed_demo_data.py` populates the database with deterministic demo data
+(January through August, excluding June) for development or testing. It reads
+the seed Master List, generates synthetic lateness logs, and ingests them
+through the same `ingest_log` path the web Import uses. Run with
+`python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]`.
+
 ## App layer — `app.py`
 
 `app.py` exposes the web routes for importing Monthly Logs, searching history,
@@ -115,7 +123,7 @@ Important behavior:
 
 - `templates/layout.html` renders the tab bar, pagination controls, flash
   messages, and application chrome. All page routes render through this layout.
-- `templates/index.html` renders the Find a Boarder search, Reports database,
+- `templates/index.html` renders the Find a Boarder search, Reports panel,
   Punishments panel, and Boarders management panel. The month detail table
   renders canonical display names and typed values supplied by the server,
   starts in the server-defined Bed order, and supports display-only sorting
