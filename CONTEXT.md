@@ -41,7 +41,7 @@ The collection of saved monthly reports. The UI tab deliberately reads "View Rep
 _Avoid_: database, historical reports
 
 **All-Time List**:
-Every boarder ever recorded: the Master List unioned with the distinct Match Keys found in Boarder History and Punishments, derived live at request time and never stored. Each entry's Current/Former status is likewise derived — Current when the key sits on the Master List, Former when it survives only in frozen snapshots. Identity fields resolve freshest-first: the current Master List entry wins; otherwise the latest snapshot (latest month, tie-broken by latest import time).
+Every boarder ever recorded: the Master List unioned with the distinct Match Keys found in Boarder History, Punishments, and I-Points, derived live at request time and never stored. Each entry's Current/Former status is likewise derived — Current when the key sits on the Master List, Former when it survives only in stored records off the list (including a key known only through I-Points). Identity fields resolve freshest-first: the current Master List entry wins; otherwise the latest snapshot (latest month, tie-broken by latest timestamp) across Boarder History, Punishments, and confirmed Phone Confiscations.
 _Avoid_: historic roster, alumni list, everyone-ever
 
 **Boarder History**:

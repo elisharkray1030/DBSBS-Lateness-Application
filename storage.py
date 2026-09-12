@@ -805,24 +805,64 @@ def house_trend(conn: sqlite3.Connection) -> list[HouseTrendPoint]:
     ]
 
 
+def _ipoint_all_time_sources(
+    conn: sqlite3.Connection,
+) -> tuple[set[str], list[tuple[str, str, str, str, str]]]:
+    """Returns the I-Point ledger's All-Time List contribution.
+
+    The first element is every Match Key known through I-Points: Entries,
+    Adjustments, Confiscations, and surviving Audit rows (audit-only keys stay
+    traceable, mirroring how a voided Punishment keeps its boarder listed).
+    The second is the frozen identity each confirmed Confiscation carries, as
+    ``(key, display_name, bed, trigger_month, confirmed_at)`` — the I-Point
+    analogue of a Punishment's ``(month, assigned_at)`` snapshot. A pending
+    Confiscation freezes no identity yet, so it contributes its key only.
+    """
+    keys: set[str] = set()
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM ipoint_entries")
+    keys.update(row[0] for row in cursor.fetchall())
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM ipoint_adjustments")
+    keys.update(row[0] for row in cursor.fetchall())
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM ipoint_audit")
+    keys.update(row[0] for row in cursor.fetchall())
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM confiscations")
+    keys.update(row[0] for row in cursor.fetchall())
+
+    snapshots: list[tuple[str, str, str, str, str]] = []
+    cursor = conn.execute(
+        """
+        SELECT normalized_name, display_name, bed, trigger_month, confirmed_at
+        FROM confiscations
+        WHERE confirmed_at IS NOT NULL
+          AND (display_name != '' OR bed != '')
+        """
+    )
+    for key, display, bed, month, confirmed_at in cursor.fetchall():
+        snapshots.append((key, display, bed, month, confirmed_at))
+    return keys, snapshots
+
+
 def list_all_time_boarders(conn: sqlite3.Connection) -> list[AllTimeEntry]:
     """Derives the All-Time List: every boarder ever recorded, read-only.
 
     Unions the Master List with the distinct Match Keys found in Boarder
-    History and Punishments (voided included, so audit-only survivors stay
-    traceable). An entry is Current when its key sits on the Master List;
-    otherwise Former. Identity fields resolve freshest-first: the current
-    Master List entry wins; otherwise the freshest snapshot (latest month,
-    tie-broken by latest snapshot timestamp). Seen months and lifetime
-    totals come from history rows only, since Punishments freeze their own
-    points rather than reporting lateness. Current rows sort before Former
-    rows, each group by the shared Bed ordering rule then display name.
+    History, Punishments, and I-Points (voided and audit-only survivors
+    included, so nothing vanishes silently). An entry is Current when its key
+    sits on the Master List; otherwise Former. Identity fields resolve
+    freshest-first: the current Master List entry wins; otherwise the freshest
+    snapshot (latest month, tie-broken by latest snapshot timestamp) across
+    Boarder History, Punishments, and confirmed Confiscations. Seen months and
+    lifetime totals come from history rows only, since Punishments and
+    Confiscations freeze their own points rather than reporting lateness.
+    Current rows sort before Former rows, each group by the shared Bed ordering
+    rule then display name.
     """
     master = {boarder.normalized_name: boarder for boarder in list_boarders(conn)}
 
     seen_months: dict[str, set[str]] = {}
     lifetime: dict[str, list[int]] = {}
     freshest: dict[str, tuple[str, str, str, str]] = {}
+    punished: set[str] = set()
 
     def absorb_snapshot(key: str, display: str, bed: str, month: str, stamp: str) -> None:
         candidate = (month, stamp)
@@ -848,28 +888,41 @@ def list_all_time_boarders(conn: sqlite3.Connection) -> list[AllTimeEntry]:
         "SELECT normalized_name, display_name, bed, month, assigned_at FROM punishments"
     )
     for key, display, bed, month, assigned_at in cursor.fetchall():
+        punished.add(key)
         absorb_snapshot(key, display, bed, month, assigned_at)
 
+    ipoint_keys, ipoint_snapshots = _ipoint_all_time_sources(conn)
+    for key, display, bed, month, confirmed_at in ipoint_snapshots:
+        absorb_snapshot(key, display, bed, month, confirmed_at)
+
     entries: list[AllTimeEntry] = []
-    for key in set(master) | set(freshest):
+    for key in set(master) | set(freshest) | ipoint_keys:
         current = master.get(key)
         if current is not None:
             display, bed = current.display_name, current.bed
-        else:
+        elif key in freshest:
             _, _, display, bed = freshest[key]
+        else:
+            display, bed = key, ""
         months = sorted(seen_months.get(key, ()))
         freq, minutes, points = lifetime.get(key, [0, 0, 0])
+        is_current = current is not None
         entries.append(
             AllTimeEntry(
                 normalized_name=key,
                 display_name=display,
                 bed=bed,
-                is_current=current is not None,
+                is_current=is_current,
                 first_month=months[0] if months else None,
                 last_month=months[-1] if months else None,
                 total_frequency=freq,
                 total_minutes=minutes,
                 total_points=points,
+                is_ipoints_only=(
+                    not is_current
+                    and key not in seen_months
+                    and key not in punished
+                ),
             )
         )
     entries.sort(key=lambda entry: (not entry.is_current, boarder_sort_key(entry)))
@@ -880,10 +933,10 @@ def search_boarders(conn: sqlite3.Connection, name_query: str) -> list[AllTimeEn
     """Returns one entry per Match Key whose key contains the query.
 
     A person lookup, not a history listing: shares the All-Time List's
-    derivation wholesale — same union of Master List, Boarder History and
-    Punishments keys, freshest-first identity resolution, Current/Former
-    status, and sort order — narrowed to keys containing the normalized
-    query substring.
+    derivation wholesale — same union of Master List, Boarder History,
+    Punishments, and I-Point keys, freshest-first identity resolution,
+    Current/Former status, and sort order — narrowed to keys containing the
+    normalized query substring.
     """
     needle = normalize_name(name_query)
     if not needle:

@@ -196,9 +196,12 @@ class AllTimeEntry:
     """One derived All-Time List row: every boarder ever recorded.
 
     Derived live from the Master List unioned with the Match Keys found in
-    Boarder History and Punishments — never stored. ``is_current`` is
-    likewise derived (True when the key sits on the Master List), and the
+    Boarder History, Punishments, and I-Points — never stored. ``is_current``
+    is likewise derived (True when the key sits on the Master List), and the
     seen-month/lifetime figures sum this key's history rows only.
+    ``is_ipoints_only`` marks a key known only through I-Points (no Master
+    List, history, or Punishment presence), so the profile can keep it
+    loggable while refusing a Removed Boarder (see #187).
     """
 
     normalized_name: str
@@ -210,6 +213,7 @@ class AllTimeEntry:
     total_frequency: int
     total_minutes: int
     total_points: int
+    is_ipoints_only: bool = False
 
 
 @dataclass
