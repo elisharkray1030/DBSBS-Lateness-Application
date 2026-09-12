@@ -1,6 +1,7 @@
 import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from typing import NamedTuple
 from uuid import uuid4
 
 from records import (
@@ -1148,31 +1149,42 @@ def stage_ipoint_audit(
     )
 
 
-_IPOINT_ENTRY_COLUMNS = "id, normalized_name, points, occurred_on, reason, recorded_at"
-_IPOINT_AUDIT_COLUMNS = (
+class _IPointListing(NamedTuple):
+    columns: str
+    table: str
+    order_by: str
+
+
+_IPOINT_ENTRY_LISTING = _IPointListing(
+    "id, normalized_name, points, occurred_on, reason, recorded_at",
+    "ipoint_entries",
+    "occurred_on ASC, id ASC",
+)
+_IPOINT_AUDIT_LISTING = _IPointListing(
     "id, entity_type, entity_id, normalized_name, action, "
-    "before_state, after_state, changed_at"
+    "before_state, after_state, changed_at",
+    "ipoint_audit",
+    "id DESC",
 )
 
 
 def _select_ipoint_rows(
     conn: sqlite3.Connection,
-    columns: str,
-    table: str,
-    order_by: str,
+    listing: _IPointListing,
     normalized_name: str | None = None,
-) -> list:
+) -> list[tuple]:
     """Fetches every row, or one Match Key's, through the one WHERE shape.
 
-    Column lists and sort order stay with each caller so the shared seam owns
-    only the all-or-filtered clause both I-Point listings repeat.
+    Columns, table, and sort order travel together in the listing, so the
+    shared seam owns only the all-or-filtered clause both I-Point listings
+    repeat.
     """
-    sql = f"SELECT {columns} FROM {table}"
+    sql = f"SELECT {listing.columns} FROM {listing.table}"
     params: tuple[str, ...] = ()
     if normalized_name is not None:
         sql += " WHERE normalized_name = ?"
         params = (normalized_name,)
-    sql += f" ORDER BY {order_by}"
+    sql += f" ORDER BY {listing.order_by}"
     return conn.execute(sql, params).fetchall()
 
 
@@ -1192,7 +1204,7 @@ def get_ipoint_entry(
 ) -> IPointEntry | None:
     """Returns one I-Point Entry by id, or None when it is absent."""
     cursor = conn.execute(
-        f"SELECT {_IPOINT_ENTRY_COLUMNS} FROM ipoint_entries WHERE id = ?",
+        f"SELECT {_IPOINT_ENTRY_LISTING.columns} FROM ipoint_entries WHERE id = ?",
         (entry_id,),
     )
     row = cursor.fetchone()
@@ -1203,13 +1215,7 @@ def list_ipoint_entries(
     conn: sqlite3.Connection, normalized_name: str | None = None
 ) -> list[IPointEntry]:
     """Lists I-Point Entries chronologically, optionally for one Match Key."""
-    rows = _select_ipoint_rows(
-        conn,
-        _IPOINT_ENTRY_COLUMNS,
-        "ipoint_entries",
-        "occurred_on ASC, id ASC",
-        normalized_name,
-    )
+    rows = _select_ipoint_rows(conn, _IPOINT_ENTRY_LISTING, normalized_name)
     return [_ipoint_entry_from_row(row) for row in rows]
 
 
@@ -1230,7 +1236,5 @@ def list_ipoint_audit(
     conn: sqlite3.Connection, normalized_name: str | None = None
 ) -> list[IPointAudit]:
     """Lists I-Point Audit rows, optionally for one Match Key, newest first."""
-    rows = _select_ipoint_rows(
-        conn, _IPOINT_AUDIT_COLUMNS, "ipoint_audit", "id DESC", normalized_name
-    )
+    rows = _select_ipoint_rows(conn, _IPOINT_AUDIT_LISTING, normalized_name)
     return [_ipoint_audit_from_row(row) for row in rows]

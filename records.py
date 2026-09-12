@@ -249,20 +249,6 @@ class IPointEntry:
 
 
 @dataclass
-class IPointAudit:
-    """One retained change to a boarder's I-Points, with its prior state."""
-
-    id: int
-    entity_type: str
-    entity_id: int
-    normalized_name: str
-    action: str
-    before_state: str | None
-    after_state: str | None
-    changed_at: str
-
-
-@dataclass(frozen=True)
 class IPointAuditDraft:
     """An I-Point Audit row waiting to be staged, minus its database id.
 
@@ -277,6 +263,16 @@ class IPointAuditDraft:
     before_state: str | None
     after_state: str | None
     changed_at: str
+
+
+@dataclass
+class IPointAudit(IPointAuditDraft):
+    """One retained change to a boarder's I-Points, with its prior state.
+
+    A stored Audit row: the fields a draft carries, plus its database id.
+    """
+
+    id: int
 
 
 @dataclass
