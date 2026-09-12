@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from records import (
+    IPointAdjustment,
     IPointAudit,
     IPointAuditDraft,
     IPointAuditNote,
@@ -48,10 +49,71 @@ class EntrySaved:
 
 
 @dataclass
-class EntryRejected:
-    """The submitted I-Point Entry is not valid."""
+class ChangeRejected:
+    """An I-Point ledger write was refused; ``reason`` is user-facing."""
 
     reason: str
+
+
+@dataclass
+class EntryRejected(ChangeRejected):
+    """The submitted I-Point Entry is not valid."""
+
+
+@dataclass
+class AdjustmentSaved:
+    """An I-Point Adjustment was added."""
+
+    normalized_name: str
+    display_name: str
+    points: int
+    reason: str
+
+    @property
+    def message(self) -> str:
+        return (
+            f"Added an adjustment of {points_phrase(self.points)} "
+            f"for {self.display_name}."
+        )
+
+
+@dataclass
+class AdjustmentEdited:
+    """An I-Point Adjustment's points or reason was corrected."""
+
+    normalized_name: str
+    display_name: str
+    points: int
+    reason: str
+
+    @property
+    def message(self) -> str:
+        return (
+            f"Updated {self.display_name}'s adjustment to "
+            f"{points_phrase(self.points)}."
+        )
+
+
+@dataclass
+class AdjustmentRemoved:
+    """An I-Point Adjustment was removed; its prior state stays in the audit."""
+
+    normalized_name: str
+    display_name: str
+    points: int
+    reason: str
+
+    @property
+    def message(self) -> str:
+        return (
+            f"Removed {self.display_name}'s adjustment of "
+            f"{points_phrase(self.points)}."
+        )
+
+
+@dataclass
+class AdjustmentRejected(ChangeRejected):
+    """The submitted I-Point Adjustment is not valid."""
 
 
 @dataclass
@@ -119,6 +181,26 @@ def _coerce_points(points) -> "int | None":
     return None
 
 
+def _coerce_signed_points(points) -> "int | None":
+    """Returns a signed integer candidate, or None for a non-whole-number value.
+
+    Like ``_coerce_points`` but admitting a leading sign, since an Adjustment
+    may subtract. ``str.isdecimal`` still gates the digits, so a fractional or
+    digit-class value (``5.9``, ``²``) can never slip through.
+    """
+    if isinstance(points, bool):
+        return None
+    if isinstance(points, int):
+        return points
+    if isinstance(points, str):
+        text = points.strip()
+        body = text[1:] if text[:1] in "+-" else text
+        if not body.isdecimal():
+            return None
+        return int(text)
+    return None
+
+
 def _parse_occurred_on(occurred_on: str | None) -> "str | None":
     """Returns the normalized ISO date, or None when blank or unparseable."""
     raw = (occurred_on or "").strip()
@@ -147,23 +229,34 @@ def _entry_state(entry: IPointEntry) -> dict[str, object]:
     return _entry_fields(entry.points, entry.occurred_on, entry.reason)
 
 
+def _adjustment_fields(points: int, reason: str) -> dict[str, object]:
+    """The auditable snapshot of an Adjustment's user-editable fields."""
+    return {"points": points, "reason": reason}
+
+
+def _adjustment_state(adjustment: IPointAdjustment) -> dict[str, object]:
+    """The auditable snapshot of one stored Adjustment's editable fields."""
+    return _adjustment_fields(adjustment.points, adjustment.reason)
+
+
 def _dump_state(state: dict[str, object] | None) -> str | None:
     """Encodes one auditable snapshot as sort-keyed JSON, or None when absent."""
     return json.dumps(state, sort_keys=True) if state is not None else None
 
 
 def _audit_draft(
-    entry_id: int,
+    entity_type: str,
+    entity_id: int,
     normalized_name: str,
     action: str,
     before_state: dict[str, object] | None,
     after_state: dict[str, object] | None,
     changed_at: str,
 ) -> IPointAuditDraft:
-    """Builds one Entry Audit draft, encoding both snapshots as JSON."""
+    """Builds one Audit draft, encoding both snapshots as JSON."""
     return IPointAuditDraft(
-        entity_type="entry",
-        entity_id=entry_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
         normalized_name=normalized_name,
         action=action,
         before_state=_dump_state(before_state),
@@ -174,8 +267,83 @@ def _audit_draft(
 
 def _balance_for(conn, normalized_name: str) -> int:
     """Derives one boarder's current I-Point Balance from the ledger."""
-    return sum(
+    entries = sum(
         entry.points for entry in storage.list_ipoint_entries(conn, normalized_name)
+    )
+    adjustments = sum(
+        adjustment.points
+        for adjustment in storage.list_ipoint_adjustments(conn, normalized_name)
+    )
+    return entries + adjustments
+
+
+def _validate_adjustment(
+    normalized_name: str, points, reason: str
+) -> tuple[str, int, str] | AdjustmentRejected:
+    """Validates the shared Adjustment fields: name, non-zero points, reason."""
+    name = (normalized_name or "").strip()
+    if not name:
+        return AdjustmentRejected(reason="A boarder name is required.")
+
+    points_value = _coerce_signed_points(points)
+    if points_value is None or points_value == 0:
+        return AdjustmentRejected(
+            reason="Adjustment points must be a non-zero whole number."
+        )
+
+    clean_reason = (reason or "").strip()
+    if not clean_reason:
+        return AdjustmentRejected(reason="A reason is required.")
+
+    return name, points_value, clean_reason
+
+
+def add_adjustment(
+    conn,
+    normalized_name: str,
+    points,
+    reason: str,
+    recorded_at: str | None = None,
+) -> AdjustmentSaved | AdjustmentRejected:
+    """Validates and adds one signed I-Point Adjustment, auditing it atomically.
+
+    A positive Adjustment adds to the Balance; a subtraction may never take the
+    Balance below zero (ADR 0006), so it is capped at the current Balance. A
+    rejected submission writes nothing.
+    """
+    validated = _validate_adjustment(normalized_name, points, reason)
+    if isinstance(validated, AdjustmentRejected):
+        return validated
+    name, points_value, clean_reason = validated
+
+    if _balance_for(conn, name) + points_value < 0:
+        return AdjustmentRejected(reason=_OVERDRAW)
+
+    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
+    display_name = resolve_display_name(conn, name)
+
+    with conn:
+        adjustment_id = storage.stage_ipoint_adjustment(
+            conn, name, points_value, clean_reason, stamp
+        )
+        storage.stage_ipoint_audit(
+            conn,
+            _audit_draft(
+                "adjustment",
+                adjustment_id,
+                name,
+                "created",
+                None,
+                _adjustment_fields(points_value, clean_reason),
+                stamp,
+            ),
+        )
+
+    return AdjustmentSaved(
+        normalized_name=name,
+        display_name=display_name,
+        points=points_value,
+        reason=clean_reason,
     )
 
 
@@ -222,6 +390,7 @@ def log_entry(
         storage.stage_ipoint_audit(
             conn,
             _audit_draft(
+                "entry",
                 entry_id,
                 name,
                 "created",
@@ -283,6 +452,7 @@ def edit_entry(
         storage.stage_ipoint_audit(
             conn,
             _audit_draft(
+                "entry",
                 entry_id,
                 entry.normalized_name,
                 "edited",
@@ -326,6 +496,7 @@ def remove_entry(
         storage.stage_ipoint_audit(
             conn,
             _audit_draft(
+                "entry",
                 entry_id,
                 entry.normalized_name,
                 "removed",
@@ -343,8 +514,116 @@ def remove_entry(
     )
 
 
-def _describe_change(action: str, before, after) -> str:
+def edit_adjustment(
+    conn,
+    adjustment_id: int,
+    points,
+    reason: str,
+    recorded_at: str | None = None,
+) -> "AdjustmentEdited | AdjustmentRejected":
+    """Validates and applies an Adjustment correction, auditing the prior state.
+
+    The new signed value must be non-zero and its reason present. A change that
+    would drive the Balance below zero is refused (ADR 0006), writing nothing.
+    """
+    adjustment = storage.get_ipoint_adjustment(conn, adjustment_id)
+    if adjustment is None:
+        return AdjustmentRejected(reason="That I-Point Adjustment no longer exists.")
+
+    validated = _validate_adjustment(adjustment.normalized_name, points, reason)
+    if isinstance(validated, AdjustmentRejected):
+        return validated
+    _, points_value, clean_reason = validated
+
+    projected = _balance_for(conn, adjustment.normalized_name) - adjustment.points
+    if projected + points_value < 0:
+        return AdjustmentRejected(reason=_OVERDRAW)
+
+    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
+    display_name = resolve_display_name(conn, adjustment.normalized_name)
+
+    with conn:
+        storage.stage_update_ipoint_adjustment(
+            conn, adjustment_id, points_value, clean_reason
+        )
+        storage.stage_ipoint_audit(
+            conn,
+            _audit_draft(
+                "adjustment",
+                adjustment_id,
+                adjustment.normalized_name,
+                "edited",
+                _adjustment_state(adjustment),
+                _adjustment_fields(points_value, clean_reason),
+                stamp,
+            ),
+        )
+
+    return AdjustmentEdited(
+        normalized_name=adjustment.normalized_name,
+        display_name=display_name,
+        points=points_value,
+        reason=clean_reason,
+    )
+
+
+def remove_adjustment(
+    conn,
+    adjustment_id: int,
+    recorded_at: str | None = None,
+) -> "AdjustmentRemoved | AdjustmentRejected":
+    """Removes an Adjustment from the ledger, auditing the prior state.
+
+    A removal that would drive the Balance below zero is refused (ADR 0006),
+    writing nothing.
+    """
+    adjustment = storage.get_ipoint_adjustment(conn, adjustment_id)
+    if adjustment is None:
+        return AdjustmentRejected(reason="That I-Point Adjustment no longer exists.")
+
+    projected = _balance_for(conn, adjustment.normalized_name) - adjustment.points
+    if projected < 0:
+        return AdjustmentRejected(reason=_OVERDRAW)
+
+    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
+    display_name = resolve_display_name(conn, adjustment.normalized_name)
+
+    with conn:
+        storage.stage_delete_ipoint_adjustment(conn, adjustment_id)
+        storage.stage_ipoint_audit(
+            conn,
+            _audit_draft(
+                "adjustment",
+                adjustment_id,
+                adjustment.normalized_name,
+                "removed",
+                _adjustment_state(adjustment),
+                None,
+                stamp,
+            ),
+        )
+
+    return AdjustmentRemoved(
+        normalized_name=adjustment.normalized_name,
+        display_name=display_name,
+        points=adjustment.points,
+        reason=adjustment.reason,
+    )
+
+
+def _describe_change(action: str, before, after, entity_type: str) -> str:
     """Words one audit row's prior and new state for the history table."""
+    if entity_type == "adjustment":
+        if action == "created" and after:
+            return f"Created adjustment of {after['points']}: {after['reason']}"
+        if action == "removed" and before:
+            return f"Removed adjustment of {before['points']}: {before['reason']}"
+        if action == "edited" and before and after:
+            return (
+                f"{before['points']} -> {after['points']} points; "
+                f"{before['reason']} -> {after['reason']}"
+            )
+        return action
     if action == "created" and after:
         return f"Created {after['points']} on {after['occurred_on']}: {after['reason']}"
     if action == "removed" and before:
@@ -365,19 +644,20 @@ def _audit_note(audit: IPointAudit) -> IPointAuditNote:
     return IPointAuditNote(
         action=audit.action.capitalize(),
         changed_at=audit.changed_at,
-        description=_describe_change(audit.action, before, after),
+        description=_describe_change(audit.action, before, after, audit.entity_type),
     )
 
 
 def boarder_balances(conn) -> list[IPointSummary]:
     """Derives each boarder's I-Point Balance from the stored ledger.
 
-    Balance is the sum of that Match Key's Entries — never stored, so it
-    cannot drift. Identity fields resolve freshest-first through the
-    All-Time List, falling back to the Match Key for a boarder known only
+    Balance is the sum of that Match Key's Entries plus Adjustments — never
+    stored, so it cannot drift. Identity fields resolve freshest-first through
+    the All-Time List, falling back to the Match Key for a boarder known only
     through I-Points. Summaries sort by the shared Bed rule then name.
     """
     entries = storage.list_ipoint_entries(conn)
+    adjustments = storage.list_ipoint_adjustments(conn)
     audits = storage.list_ipoint_audit(conn)
     identity = storage.freshest_identity_map(conn)
 
@@ -385,21 +665,28 @@ def boarder_balances(conn) -> list[IPointSummary]:
     for entry in entries:
         grouped.setdefault(entry.normalized_name, []).append(entry)
 
+    grouped_adjustments: dict[str, list[IPointAdjustment]] = {}
+    for adjustment in adjustments:
+        grouped_adjustments.setdefault(adjustment.normalized_name, []).append(adjustment)
+
     grouped_audits: dict[str, list[IPointAudit]] = {}
     for audit in audits:
         grouped_audits.setdefault(audit.normalized_name, []).append(audit)
 
     summaries: list[IPointSummary] = []
-    for key in grouped.keys() | grouped_audits.keys():
+    for key in grouped.keys() | grouped_adjustments.keys() | grouped_audits.keys():
         rows = grouped.get(key, [])
+        adjustment_rows = grouped_adjustments.get(key, [])
         who = identity.get(key)
         summaries.append(
             IPointSummary(
                 normalized_name=key,
                 display_name=who.display_name if who else key,
                 bed=who.bed if who else "",
-                balance=sum(row.points for row in rows),
+                balance=sum(row.points for row in rows)
+                + sum(row.points for row in adjustment_rows),
                 entries=sorted(rows, key=lambda row: (row.occurred_on, row.id)),
+                adjustments=adjustment_rows,
                 audits=[_audit_note(audit) for audit in grouped_audits.get(key, [])],
             )
         )

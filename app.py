@@ -38,7 +38,7 @@ except ModuleNotFoundError as exc:
 import defaults
 import ipoints
 import storage
-from ipoints import EntryRejected
+from ipoints import AdjustmentRejected, EntryRejected
 from parser import (
     RejectedOutcome,
     boarders_to_csv,
@@ -1252,6 +1252,100 @@ def remove_ipoint_entry(entry_id):
         attempt,
         _busy_redirect,
         "I-Point Entry removal hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/adjustments', methods=['POST'])
+def add_ipoint_adjustment():
+    boarder = request.form.get('boarder', '').strip()
+    points = request.form.get('points', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.add_adjustment(
+                conn,
+                normalized_name=normalize_name(boarder),
+                points=points,
+                reason=reason,
+            )
+
+        if isinstance(outcome, AdjustmentRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info(
+                "Added I-Point Adjustment for %s", outcome.normalized_name
+            )
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "add the I-Point Adjustment",
+        attempt,
+        _busy_redirect,
+        "I-Point Adjustment add hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/adjustments/<int:adjustment_id>/edit', methods=['POST'])
+def edit_ipoint_adjustment(adjustment_id):
+    points = request.form.get('points', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.edit_adjustment(
+                conn,
+                adjustment_id,
+                points=points,
+                reason=reason,
+            )
+
+        if isinstance(outcome, AdjustmentRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Edited I-Point Adjustment %s", adjustment_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "edit the I-Point Adjustment",
+        attempt,
+        _busy_redirect,
+        "I-Point Adjustment edit hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/adjustments/<int:adjustment_id>/remove', methods=['POST'])
+def remove_ipoint_adjustment(adjustment_id):
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.remove_adjustment(conn, adjustment_id)
+
+        if isinstance(outcome, AdjustmentRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Removed I-Point Adjustment %s", adjustment_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "remove the I-Point Adjustment",
+        attempt,
+        _busy_redirect,
+        "I-Point Adjustment removal hit sustained contention",
     )
 
 
