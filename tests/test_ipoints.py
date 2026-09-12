@@ -750,6 +750,19 @@ class TestRemoveEntryRoute:
         with app_module.connect() as conn:
             assert len(storage.list_ipoint_entries(conn)) == 1
 
+    def test_overdraw_refusal_is_surfaced_as_page_feedback(self, fresh_client):
+        entry_id = self._seed(fresh_client)
+        with app_module.connect() as conn:
+            _seed_offset(conn, "ALICE", -5)
+
+        post_csrf(fresh_client, f"/ipoints/entries/{entry_id}/remove")
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "below zero" in html.lower()
+        with app_module.connect() as conn:
+            assert len(storage.list_ipoint_entries(conn, "ALICE")) == 2
+
 
 class TestIPointsEditingControls:
     def test_page_renders_labelled_edit_and_remove_controls(self, fresh_client):

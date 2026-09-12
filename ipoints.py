@@ -23,6 +23,12 @@ import storage
 _OVERDRAW = "That change would take the Boarder's I-Point Balance below zero."
 
 
+def points_phrase(points: int) -> str:
+    """Words a point count with its singular/plural I-Point noun."""
+    noun = "I-Point" if points == 1 else "I-Points"
+    return f"{points} {noun}"
+
+
 @dataclass
 class EntrySaved:
     """An I-Point Entry was logged."""
@@ -34,9 +40,8 @@ class EntrySaved:
 
     @property
     def message(self) -> str:
-        noun = "I-Point" if self.points == 1 else "I-Points"
         return (
-            f"Logged {self.points} {noun} for {self.display_name} "
+            f"Logged {points_phrase(self.points)} for {self.display_name} "
             f"on {self.occurred_on}."
         )
 
@@ -59,9 +64,8 @@ class EntryEdited:
 
     @property
     def message(self) -> str:
-        noun = "I-Point" if self.points == 1 else "I-Points"
         return (
-            f"Updated {self.display_name}: {self.points} {noun} "
+            f"Updated {self.display_name}: {points_phrase(self.points)} "
             f"on {self.occurred_on}."
         )
 
@@ -77,9 +81,8 @@ class EntryRemoved:
 
     @property
     def message(self) -> str:
-        noun = "I-Point" if self.points == 1 else "I-Points"
         return (
-            f"Removed {self.points} {noun} for {self.display_name} "
+            f"Removed {points_phrase(self.points)} for {self.display_name} "
             f"({self.occurred_on})."
         )
 
@@ -133,13 +136,14 @@ def _resolve_occurred_on(occurred_on: str | None, today: str | None) -> "str | N
     return _parse_occurred_on(raw)
 
 
+def _entry_fields(points: int, occurred_on: str, reason: str) -> dict[str, object]:
+    """The auditable snapshot of an Entry's user-editable fields."""
+    return {"points": points, "occurred_on": occurred_on, "reason": reason}
+
+
 def _entry_state(entry: IPointEntry) -> dict[str, object]:
-    """The auditable snapshot of one Entry's user-editable fields."""
-    return {
-        "points": entry.points,
-        "occurred_on": entry.occurred_on,
-        "reason": entry.reason,
-    }
+    """The auditable snapshot of one stored Entry's editable fields."""
+    return _entry_fields(entry.points, entry.occurred_on, entry.reason)
 
 
 def _balance_for(conn, normalized_name: str) -> int:
@@ -264,11 +268,7 @@ def edit_entry(
             action="edited",
             before_state=json.dumps(_entry_state(entry), sort_keys=True),
             after_state=json.dumps(
-                {
-                    "points": points_value,
-                    "occurred_on": resolved_date,
-                    "reason": clean_reason,
-                },
+                _entry_fields(points_value, resolved_date, clean_reason),
                 sort_keys=True,
             ),
             changed_at=stamp,
