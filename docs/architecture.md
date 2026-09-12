@@ -46,8 +46,8 @@ in-memory (`:memory:`) connection in tests. No storage function reads a
 Important behavior:
 
 - `create_schema(conn)` creates the app's tables if they do not exist,
-  including `boarder_history`, `ipoint_entries`, `ipoint_adjustments`, and
-  `ipoint_audit`.
+  including `boarder_history`, `ipoint_entries`, `ipoint_adjustments`,
+  `ipoint_audit`, and `confiscations`.
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
 - `list_months(conn)` returns the month summaries used in the UI (month label,
   boarder count, total minutes late), ordered newest-first.
@@ -64,13 +64,15 @@ Important behavior:
 - `replace_boarders(conn, rows)` replaces the Master List after resolving
   duplicate normalized names last-row-wins and validating that no two different
   boarders share a Bed, raising a `ValueError` otherwise.
-- `stage_ipoint_entry(conn, ...)`, `stage_ipoint_adjustment(conn, ...)`, and
-  `stage_ipoint_audit(conn, audit)` stage one I-Point ledger row and one audit
-  row on the open transaction; the I-Points lifecycle owns the commit, so the
-  ledger row and its audit travel together or not at all.
+- `stage_ipoint_entry(conn, ...)`, `stage_ipoint_adjustment(conn, ...)`,
+  `stage_ipoint_confiscation(conn, ...)`, and `stage_ipoint_audit(conn, audit)`
+  stage one I-Point ledger row and one audit row on the open transaction; the
+  I-Points lifecycle owns the commit, so the ledger row and its audit travel
+  together or not at all.
 - `list_ipoint_entries(conn[, name])`, `list_ipoint_adjustments(conn[, name])`,
-  and `list_ipoint_audit(conn[, name])` read the ledger and its history,
-  optionally for one Match Key.
+  `list_ipoint_confiscations(conn[, name])`, and
+  `list_ipoint_audit(conn[, name])` read the ledger and its history, optionally
+  for one Match Key.
 - `freshest_identity_map(conn)` maps every known Match Key to its freshest-first
   identity, derived from the All-Time List and shared by the House Dashboard and
   the I-Point Balance.
@@ -84,10 +86,12 @@ also holds the `Boarder` Master List row and the `UnparsedTimeRow` record, and
 the `bed_sort_key` rule that orders Monthly Report rows.
 
 It also carries the I-Point records: `IPointEntry` (one logged occasion),
-`IPointAdjustment` (one signed, manual correction), `IPointAuditDraft` (the
+`IPointAdjustment` (one signed, manual correction), `Confiscation` (one Phone
+Confiscation, pending through released or voided), `IPointAuditDraft` (the
 fields of one retained change, before its id, staged into storage),
 `IPointAudit` (a stored change with its prior state), and `IPointSummary` (one
-boarder's derived Balance plus their Entries, Adjustments, and Audit History).
+boarder's derived Balance plus their Entries, Adjustments, pending Redemption,
+and Audit History).
 
 ## Punishments — `punishments.py`
 
@@ -108,7 +112,8 @@ Important behavior:
 
 `ipoints.py` owns the I-Points ledger, standing beside `punishments.py` as the
 second disciplinary lifecycle: it validates and logs Entries, edits and removes
-them, adds, edits, and removes signed Adjustments, writes each ledger row and
+them, adds, edits, and removes signed Adjustments, evaluates month-close
+Redemptions, confirms them into Phone Confiscations, writes each ledger row and
 its audit row in one transaction, and derives every boarder's Balance from the
 stored ledger rather than storing it.
 
@@ -130,20 +135,37 @@ Important behavior:
   current Balance so it can never take the Balance below zero (ADR 0006). Each
   change writes its `created`/`edited`/`removed` audit row (entity type
   `adjustment`) in the same connection block.
-- `boarder_balances(conn)` derives each boarder's Balance as the sum of their
-  live Entries plus Adjustments, resolving identity freshest-first through the
-  shared All-Time List and falling back to the Match Key for a boarder known
-  only through I-Points. It also attaches each boarder's live Entries and
-  Adjustments and their newest-first Audit History notes, and keeps a boarder
-  whose Entries were all removed in that view.
-- The I-Points tables (`ipoint_entries`, `ipoint_adjustments`, `ipoint_audit`)
-  are created idempotently by `create_schema` and re-keyed with the other tables
-  by the Match-Key migration.
+- `boarder_balances(conn)` derives each boarder's Balance as the sum of
+  their live Entries plus Adjustments minus the `points_redeemed` of their
+  confirmed (`active` or `released`) Confiscations, resolving identity
+  freshest-first through the shared All-Time List and falling back to the Match
+  Key for a boarder known only through I-Points. It also attaches each boarder's
+  live Entries and Adjustments, their pending Redemption, and their newest-first
+  Audit History notes, and keeps a boarder whose Entries were all removed in
+  that view.
+- `evaluate_month_close(entries, adjustments, confiscations, today)` is where
+  month-close logic lives — a pure function taking an injected `today` —
+  returning a pending Redemption at the largest tier at or below the
+  Balance (5/10/15, capped at 15), locked at creation. `pending_redemptions(conn, today)`
+  detects the rows to write and `materialise_pending_redemptions(conn, today)`
+  persists them idempotently (ADR 0007).
+- `confirm_redemption(conn, id, ...)` freezes display name and bed, sets the
+  Confiscation `active` with its `release_due`, and debits the Balance, refusing
+  when the Balance has fallen below the pending's `points_redeemed`; `void_redemption`
+  cancels a pending row. Each writes a `confirmed`/`voided` audit row
+  (entity type `confiscation`) in the same connection block.
+- The I-Points tables (`ipoint_entries`, `ipoint_adjustments`, `confiscations`,
+  `ipoint_audit`) are created idempotently by `create_schema` and re-keyed with
+  the other tables by the Match-Key migration. A partial unique index keeps one
+  open (`pending` or `active`) Confiscation per Match Key.
 - The web routes live in `app.py` (`GET /ipoints`, `POST /ipoints/entries`,
   `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`,
   `POST /ipoints/adjustments`, `POST /ipoints/adjustments/<id>/edit`,
-  `POST /ipoints/adjustments/<id>/remove`) and delegate here; the route layer
-  stays a thin adapter.
+  `POST /ipoints/adjustments/<id>/remove`,
+  `POST /ipoints/confiscations/<id>/confirm`,
+  `POST /ipoints/confiscations/<id>/void`) and delegate here; the route layer
+  stays a thin adapter. The GET opens a read-only connection, materialising due
+  pending Redemptions through a read-write pass only when needed (ADR 0007).
 
 ## Demo seeding — `seed_demo_data.py`
 
@@ -171,9 +193,12 @@ Important behavior:
 - The I-Points routes (`GET /ipoints`, `POST /ipoints/entries`,
   `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`,
   `POST /ipoints/adjustments`, `POST /ipoints/adjustments/<id>/edit`,
-  `POST /ipoints/adjustments/<id>/remove`)
-  delegate to `ipoints.py`; the GET opens a read-only connection, the POSTs the
-  read-write one behind CSRF and the shared mutation-retry wrapper.
+  `POST /ipoints/adjustments/<id>/remove`,
+  `POST /ipoints/confiscations/<id>/confirm`,
+  `POST /ipoints/confiscations/<id>/void`)
+  delegate to `ipoints.py`; the GET opens a read-only connection (materialising
+  due pending Redemptions through a read-write pass only when needed), the POSTs
+  the read-write one behind CSRF and the shared mutation-retry wrapper.
 - `api_month()` returns the month's rows as an ordered collection of explicit
   fields (name, display name, bed, frequency, total minutes, total points), so
   the wire format matches the stored rows and the CSV writer and carries the
@@ -201,9 +226,9 @@ Important behavior:
   in the app or via Find a Boarder search.
 - `templates/ipoints.html` is the I-Points view: the log-Entry and
   add-Adjustment forms and the per-boarder ledger with each boarder's Balance,
-  Entries and Adjustments distinguished by a Type column with inline edit/remove
-  controls, and a collapsible per-boarder Audit History. Reached from a tab-bar
-  entry beside Punishments.
+  pending Redemption (confirm/void), Entries and Adjustments distinguished by a
+  Type column with inline edit/remove controls, and a collapsible per-boarder
+  Audit History. Reached from a tab-bar entry beside Punishments.
 - `templates/macros.html` holds shared Jinja macros (for example, the
   Current/Former status badge).
 - `static/app.js` holds browser-side behavior: table sorting, charts, and

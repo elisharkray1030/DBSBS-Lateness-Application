@@ -22,7 +22,8 @@ carries across months and never falls below zero. At each local month's close,
 a Boarder whose Balance is
 at least 5 is shown a pending Redemption: the largest tier at or below the
 Balance (5/10/15 → 1 day / 1 week / 1 calendar month) becomes a Phone
-Confiscation when staff confirm it, and the remainder carries forward. Every
+Confiscation when staff confirm it, and the remainder carries forward. The
+pending Redemption is persisted, so its tier stays locked at creation. Every
 Entry, Adjustment, Redemption, and Confiscation is freely editable, voidable,
 or removable, with every change retained in an I-Point Audit History. Phone
 Confiscations surface alongside lateness Punishments: the Boarder Profile shows
@@ -116,7 +117,9 @@ and the app never releases it on its own.
 45. As staff, I want every I-Points write protected by CSRF, like the rest of
     the app.
 46. As staff, I want reads to stay read-only and writes to keep the shared
-    lock-retry behavior, so the shared-NAS deployment stays safe.
+    lock-retry behavior, so the shared-NAS deployment stays safe; the one
+    exception is materialising a newly due pending Redemption when the I-Points
+    page is opened (ADR 0007).
 47. As staff, I want the I-Points view keyboard-operable with labelled controls,
     so it's accessible without a mouse.
 48. As staff, I want deterministic demo/seed I-Point data, so the view isn't
@@ -152,24 +155,30 @@ and the app never releases it on its own.
     reason, recorded_at.
   - `confiscations`: id, normalized_name, display_name, bed (both frozen at
     confirmation), trigger_month, points_redeemed, tier, status
-    (`active | released | voided`), created_at, confirmed_at, release_due,
-    released_at, voided_at, void_reason.
+    (`pending | active | released | voided`), created_at, confirmed_at,
+    release_due, released_at, voided_at, void_reason.
   - `ipoint_audit`: id, entity_type (`entry | adjustment | confiscation`),
     entity_id, normalized_name, action
     (`created | edited | removed | confirmed | released | voided`),
     before_state, after_state, changed_at.
 - **A confirmed Redemption is the Confiscation row.** There is no separate
   Redemption table: the Confiscation carries `points_redeemed`, and the Balance
-  is derived as Entries + Adjustments − the `points_redeemed` of non-voided
-  Confiscations. Pending Redemptions are **derived, never stored** (ADR 0005).
+  is derived as Entries + Adjustments − the `points_redeemed` of confirmed
+  (`active` or `released`) Confiscations. A pending Redemption is a persisted
+  `confiscations` row with `status = 'pending'` (ADR 0007), which supersedes
+  ADR 0005's "derived, never stored": the tier stays locked at creation and an
+  ignored pending neither duplicates nor escalates. A pending row reserves its
+  points but does not debit the Balance; confirming debits them.
 - **Derived Balance, never stored**, so it cannot drift from the ledger.
 - **The Balance is floored at zero** (ADR 0006): the slices that introduce
   subtractive writes (#177–#179) reject any Entry or Adjustment change that
   would leave the Balance below zero. As of #176 the only write is additive
   logging, which cannot break the floor. A subtractive Adjustment is additionally
-  capped at the current Balance; confirming a Redemption is capped at the
-  Balance and voiding one adds points back, so neither can break the floor on
-  its own.
+  capped at the current Balance; confirming a Redemption debits at most the
+  Balance and is refused when the Balance has fallen below its `points_redeemed`
+  since materialisation, and voiding a confirmed Confiscation adds points back.
+  Because a pending row does not debit the Balance, that refusal is a reachable
+  path.
 - **I-Point Entries carry the date under `occurred_on`** — the date the Entry
   records, distinct from the `recorded_at` audit timestamp. The user-visible
   field is labelled "Date".
@@ -178,17 +187,23 @@ and the app never releases it on its own.
   after `release_due`. A Stacked boarder's phone returns only once both clear; a
   Confiscation past `release_due` raises a due-for-release flag, and the app
   never releases on its own.
-- **One active Confiscation per Boarder** enforced by a partial unique index on
-  `normalized_name` where `status = 'active'`.
+- **One open Confiscation per Boarder** enforced by a partial unique index on
+  `normalized_name` where `status IN ('pending', 'active')`, so a pending
+  Redemption and a live Confiscation can never overlap.
 - **Month-close evaluation is one pure function** taking the ledger and an
   injected `today`. It inspects the latest fully-elapsed local calendar month;
-  when the Balance as of that month's end is at least 5 and no active
+  when the Balance as of that month's end is at least 5 and no open
   Confiscation exists, a pending Redemption is produced at the largest tier at
   or below the Balance, capped at 15, locked at creation. Injecting `today`
   keeps the boundary deterministic in tests (the same pattern the Punishment
   module uses for its computed flags). Local date comes from the machine clock
   (consistent with the existing `current_year` derivation); this is the only
   place locale-aware time matters.
+- **A pending Redemption is materialised on read when needed** (ADR 0007). The
+  GET evaluates the ledger on the read-only connection; when it finds a Boarder
+  whose month-close pending is not yet stored, it opens the read-write
+  connection under the shared mutation-retry seam, idempotently upserts the
+  pending rows, and re-reads once. Reads stay read-only in the ordinary case.
 - **Point-in-time confirmed Redemption.** Editing Entries after a Redemption is
   confirmed never recomputes it; staff rebalance with an explicit Adjustment.
 - **Transactional audit.** Every Entry, Adjustment, and Confiscation mutation
@@ -285,6 +300,8 @@ and the app never releases it on its own.
 - ADR 0005 records the model and its rejected alternatives (scheduler,
   extending `punishments`, pending escalation, editable vs append-only ledger,
   import-driven evaluation). ADR 0006 records the non-negative Balance floor.
+  ADR 0007 supersedes ADR 0005's derived-pending decision with a persisted
+  pending Confiscation materialised on read.
 - `CONTEXT.md` carries the glossary: Irregularity Points, I-Point Entry,
   I-Point Adjustment, I-Point Balance, I-Point Audit History, Redemption, Phone
   Confiscation, and Stacked.

@@ -38,7 +38,7 @@ except ModuleNotFoundError as exc:
 import defaults
 import ipoints
 import storage
-from ipoints import AdjustmentRejected, EntryRejected
+from ipoints import AdjustmentRejected, EntryRejected, RedemptionRejected
 from parser import (
     RejectedOutcome,
     boarders_to_csv,
@@ -1137,7 +1137,32 @@ def punishments_legacy_redirect():
 
 @bp.route('/ipoints')
 def ipoints_view():
-    """Renders the dedicated I-Points page: log form plus per-boarder ledger."""
+    """Renders the dedicated I-Points page: log form plus per-boarder ledger.
+
+    Reads stay read-only; only when the month-close evaluation finds a Boarder
+    whose pending Redemption is not yet stored does the route take a
+    read-write pass to materialise it, then re-read (ADR 0007).
+    """
+    with connect(read_only=True) as conn:
+        needs_materialisation = bool(ipoints.pending_redemptions(conn))
+
+    if needs_materialisation:
+        def attempt():
+            with connect() as conn:
+                ipoints.materialise_pending_redemptions(conn)
+            return True
+
+        def _busy_redirect(exc):
+            flash(busy_message(exc.action), "error")
+            return True
+
+        _mutate_with_retry(
+            "evaluate pending I-Point redemptions",
+            attempt,
+            _busy_redirect,
+            "I-Point pending Redemption evaluation hit sustained contention",
+        )
+
     with connect(read_only=True) as conn:
         summaries = ipoints.boarder_balances(conn)
         boarder_options = sorted(
@@ -1154,6 +1179,7 @@ def ipoints_view():
         ipoint_summaries=summaries,
         boarder_options=boarder_options,
         today=ipoints.today_iso(),
+        tier_period_labels=ipoints.TIER_PERIOD_LABELS,
     ))
 
 
@@ -1346,6 +1372,62 @@ def remove_ipoint_adjustment(adjustment_id):
         attempt,
         _busy_redirect,
         "I-Point Adjustment removal hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/confiscations/<int:confiscation_id>/confirm', methods=['POST'])
+def confirm_ipoint_redemption(confiscation_id):
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.confirm_redemption(conn, confiscation_id)
+
+        if isinstance(outcome, RedemptionRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info(
+                "Confirmed I-Point Redemption %s", confiscation_id
+            )
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "confirm the I-Point redemption",
+        attempt,
+        _busy_redirect,
+        "I-Point redemption confirmation hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/confiscations/<int:confiscation_id>/void', methods=['POST'])
+def void_ipoint_redemption(confiscation_id):
+    reason = request.form.get('void_reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.void_redemption(
+                conn, confiscation_id, reason=reason
+            )
+
+        if isinstance(outcome, RedemptionRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Voided I-Point Redemption %s", confiscation_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "void the I-Point redemption",
+        attempt,
+        _busy_redirect,
+        "I-Point redemption voidance hit sustained contention",
     )
 
 

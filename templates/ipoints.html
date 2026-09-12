@@ -79,6 +79,48 @@
                     {{ summary.display_name }}{% if summary.bed %} (Bed {{ summary.bed }}){% endif %}
                     <span class="ipoint-balance-badge">Balance: {{ summary.balance }}</span>
                 </h3>
+                {% if summary.pending %}
+                {% set tier_period = tier_period_labels.get(summary.pending.tier, summary.pending.tier) %}
+                <div class="ipoint-pending" role="status">
+                    <p>
+                        <strong>Pending redemption:</strong>
+                        {{ summary.pending.points_redeemed }} I-Points for
+                        {{ tier_period }} (triggered at {{ summary.pending.trigger_month }}).
+                        Confirming takes the phone and deducts the points.
+                    </p>
+                    <div class="ipoint-row-actions">
+                        <form action="/ipoints/confiscations/{{ summary.pending.id }}/confirm"
+                              method="post" class="ipoint-confirm-form"
+                              data-confirm-title="Confirm redemption?"
+                              data-confirm-message="Confirm the {{ summary.pending.points_redeemed }}-I-Point redemption for {{ summary.display_name }}? This records a Phone Confiscation and deducts the points from the Balance.">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn btn-primary btn-sm"
+                                    aria-label="Confirm redemption for {{ summary.display_name }}">Confirm</button>
+                        </form>
+                        <form action="/ipoints/confiscations/{{ summary.pending.id }}/void"
+                              method="post" class="ipoint-void-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <label for="void-reason-{{ summary.pending.id }}">Reason (optional)</label>
+                            <input type="text" id="void-reason-{{ summary.pending.id }}"
+                                   name="void_reason"
+                                   aria-label="Reason for voiding the redemption for {{ summary.display_name }}">
+                            <button type="submit" class="btn btn-danger btn-sm"
+                                    aria-label="Void redemption for {{ summary.display_name }}">Void</button>
+                        </form>
+                    </div>
+                </div>
+                {% endif %}
+                {% for confiscation in summary.confiscations if confiscation.status != 'pending' %}
+                <div class="ipoint-confiscation">
+                    <p>
+                        <strong>Phone Confiscation:</strong>
+                        {{ confiscation.status }}{% if confiscation.release_due %},
+                        due back {{ confiscation.release_due }}{% endif %}
+                        ({{ confiscation.points_redeemed }} I-Points,
+                        {{ confiscation.trigger_month }}).
+                    </p>
+                </div>
+                {% endfor %}
                 {% if summary.entries or summary.adjustments %}
                 <div class="table-scroll">
                     <table class="ipoints-table">
