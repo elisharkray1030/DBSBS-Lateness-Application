@@ -156,13 +156,13 @@ class TransitionSaved:
     """A punishment moved to a new status."""
 
     status: str
-    normalized_name: str
+    display_name: str
     month: str
 
     @property
     def message(self) -> str:
         display = self.status.replace("_", " ")
-        return f"{self.normalized_name} ({self.month}) marked {display}."
+        return f"{self.display_name} ({self.month}) marked {display}."
 
 
 @dataclass
@@ -171,7 +171,7 @@ class TransitionRejected:
 
     current_status: str
     target: str
-    normalized_name: str
+    display_name: str
     reason_message: str | None = None
 
     @property
@@ -179,7 +179,7 @@ class TransitionRejected:
         if self.reason_message is not None:
             return self.reason_message
         return (
-            f"Cannot move {self.normalized_name} from '{self.current_status}' "
+            f"Cannot move {self.display_name} from '{self.current_status}' "
             f"to '{self.target}'. That transition is not allowed."
         )
 
@@ -198,14 +198,14 @@ def transition(
     punishment = storage.get_punishment(conn, punishment_id)
     if punishment is None:
         return TransitionRejected(
-            current_status="unknown", target=target, normalized_name="?"
+            current_status="unknown", target=target, display_name="?"
         )
 
     if target not in VALID_TRANSITIONS.get(punishment.status, set()):
         return TransitionRejected(
             current_status=punishment.status,
             target=target,
-            normalized_name=punishment.display_name,
+            display_name=punishment.display_name,
         )
 
     if target == "overdue" and punishment.status == "assigned":
@@ -215,7 +215,7 @@ def transition(
             return TransitionRejected(
                 current_status=punishment.status,
                 target=target,
-                normalized_name=punishment.display_name,
+                display_name=punishment.display_name,
                 reason_message=(
                     f"Cannot mark {punishment.display_name} overdue before its "
                     f"deadline of {punishment.deadline}."
@@ -231,7 +231,7 @@ def transition(
     )
     return TransitionSaved(
         status=target,
-        normalized_name=punishment.display_name,
+        display_name=punishment.display_name,
         month=punishment.month,
     )
 
