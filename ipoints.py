@@ -660,16 +660,22 @@ def pending_redemptions(
     return candidates
 
 
-def materialise_pending_redemptions(conn, today: str | None = None) -> int:
+def materialise_pending_redemptions(
+    conn,
+    today: str | None = None,
+    created_at: str | None = None,
+) -> int:
     """Persists each materialisable pending Redemption idempotently.
 
     Called from the read path under the shared mutation-retry seam when
     :func:`pending_redemptions` finds one, so the stored pending appears without
-    a scheduler (ADR 0007). Returns how many rows were written.
+    a scheduler (ADR 0007). Returns how many rows were written. ``created_at``
+    injects the stamp (defaulting to now, like the other lifecycle writes) so a
+    deterministic caller — the demo seeder — can pin it.
     """
     if today is None:
         today = today_iso()
-    stamp = datetime.now(tz=timezone.utc).isoformat()
+    stamp = created_at or datetime.now(tz=timezone.utc).isoformat()
     written = 0
     for name, pending in pending_redemptions(conn, today):
         try:
