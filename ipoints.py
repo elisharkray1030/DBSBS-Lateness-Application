@@ -10,9 +10,17 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-from records import IPointEntry, IPointSummary, bed_sort_key
+from records import (
+    IPointAudit,
+    IPointAuditNote,
+    IPointEntry,
+    IPointSummary,
+    bed_sort_key,
+)
 
 import storage
+
+_OVERDRAW = "That change would take the Boarder's I-Point Balance below zero."
 
 
 @dataclass
@@ -38,6 +46,42 @@ class EntryRejected:
     """The submitted I-Point Entry is not valid."""
 
     reason: str
+
+
+@dataclass
+class EntryEdited:
+    """An I-Point Entry's points, date, or reason was corrected."""
+
+    normalized_name: str
+    display_name: str
+    points: int
+    occurred_on: str
+
+    @property
+    def message(self) -> str:
+        noun = "I-Point" if self.points == 1 else "I-Points"
+        return (
+            f"Updated {self.display_name}: {self.points} {noun} "
+            f"on {self.occurred_on}."
+        )
+
+
+@dataclass
+class EntryRemoved:
+    """An I-Point Entry was removed; its prior state stays in the audit."""
+
+    normalized_name: str
+    display_name: str
+    points: int
+    occurred_on: str
+
+    @property
+    def message(self) -> str:
+        noun = "I-Point" if self.points == 1 else "I-Points"
+        return (
+            f"Removed {self.points} {noun} for {self.display_name} "
+            f"({self.occurred_on})."
+        )
 
 
 def today_iso() -> str:
@@ -71,14 +115,38 @@ def _coerce_points(points) -> "int | None":
     return None
 
 
-def _resolve_occurred_on(occurred_on: str | None, today: str | None) -> "str | None":
+def _parse_occurred_on(occurred_on: str | None) -> "str | None":
+    """Returns the normalized ISO date, or None when blank or unparseable."""
     raw = (occurred_on or "").strip()
     if not raw:
-        return today or today_iso()
+        return None
     try:
         return date.fromisoformat(raw).isoformat()
     except ValueError:
         return None
+
+
+def _resolve_occurred_on(occurred_on: str | None, today: str | None) -> "str | None":
+    raw = (occurred_on or "").strip()
+    if not raw:
+        return today or today_iso()
+    return _parse_occurred_on(raw)
+
+
+def _entry_state(entry: IPointEntry) -> dict[str, object]:
+    """The auditable snapshot of one Entry's user-editable fields."""
+    return {
+        "points": entry.points,
+        "occurred_on": entry.occurred_on,
+        "reason": entry.reason,
+    }
+
+
+def _balance_for(conn, normalized_name: str) -> int:
+    """Derives one boarder's current I-Point Balance from the ledger."""
+    return sum(
+        entry.points for entry in storage.list_ipoint_entries(conn, normalized_name)
+    )
 
 
 def log_entry(
@@ -147,6 +215,141 @@ def log_entry(
     )
 
 
+def edit_entry(
+    conn,
+    entry_id: int,
+    points,
+    occurred_on: str | None,
+    reason: str,
+    recorded_at: str | None = None,
+) -> "EntryEdited | EntryRejected":
+    """Validates and applies an Entry correction, auditing the prior state.
+
+    Points must remain a positive whole number, the reason present, and the
+    date valid. A blank date is rejected rather than defaulted, since the form
+    always carries the entry's current date. A change that would drive the
+    Balance below zero is refused (ADR 0006), writing nothing.
+    """
+    entry = storage.get_ipoint_entry(conn, entry_id)
+    if entry is None:
+        return EntryRejected(reason="That I-Point Entry no longer exists.")
+
+    points_value = _coerce_points(points)
+    if points_value is None or points_value <= 0:
+        return EntryRejected(reason="Entry points must be a positive whole number.")
+
+    clean_reason = (reason or "").strip()
+    if not clean_reason:
+        return EntryRejected(reason="A reason is required.")
+
+    resolved_date = _parse_occurred_on(occurred_on)
+    if resolved_date is None:
+        return EntryRejected(reason="Enter a valid date.")
+
+    if _balance_for(conn, entry.normalized_name) - entry.points + points_value < 0:
+        return EntryRejected(reason=_OVERDRAW)
+
+    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
+    display_name = resolve_display_name(conn, entry.normalized_name)
+
+    with conn:
+        storage.stage_update_ipoint_entry(
+            conn, entry_id, points_value, resolved_date, clean_reason
+        )
+        storage.stage_ipoint_audit(
+            conn,
+            entity_type="entry",
+            entity_id=entry_id,
+            normalized_name=entry.normalized_name,
+            action="edited",
+            before_state=json.dumps(_entry_state(entry), sort_keys=True),
+            after_state=json.dumps(
+                {
+                    "points": points_value,
+                    "occurred_on": resolved_date,
+                    "reason": clean_reason,
+                },
+                sort_keys=True,
+            ),
+            changed_at=stamp,
+        )
+
+    return EntryEdited(
+        normalized_name=entry.normalized_name,
+        display_name=display_name,
+        points=points_value,
+        occurred_on=resolved_date,
+    )
+
+
+def remove_entry(
+    conn,
+    entry_id: int,
+    recorded_at: str | None = None,
+) -> "EntryRemoved | EntryRejected":
+    """Removes an Entry from the live ledger, auditing the prior state.
+
+    The row leaves the Balance but its snapshot survives in the I-Point Audit
+    History. A removal that would drive the Balance below zero is refused
+    (ADR 0006), writing nothing.
+    """
+    entry = storage.get_ipoint_entry(conn, entry_id)
+    if entry is None:
+        return EntryRejected(reason="That I-Point Entry no longer exists.")
+
+    if _balance_for(conn, entry.normalized_name) - entry.points < 0:
+        return EntryRejected(reason=_OVERDRAW)
+
+    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
+    display_name = resolve_display_name(conn, entry.normalized_name)
+
+    with conn:
+        storage.stage_delete_ipoint_entry(conn, entry_id)
+        storage.stage_ipoint_audit(
+            conn,
+            entity_type="entry",
+            entity_id=entry_id,
+            normalized_name=entry.normalized_name,
+            action="removed",
+            before_state=json.dumps(_entry_state(entry), sort_keys=True),
+            after_state=None,
+            changed_at=stamp,
+        )
+
+    return EntryRemoved(
+        normalized_name=entry.normalized_name,
+        display_name=display_name,
+        points=entry.points,
+        occurred_on=entry.occurred_on,
+    )
+
+
+def _describe_change(action: str, before, after) -> str:
+    """Words one audit row's prior and new state for the history table."""
+    if action == "created" and after:
+        return f"Created {after['points']} on {after['occurred_on']}: {after['reason']}"
+    if action == "removed" and before:
+        return f"Removed {before['points']} on {before['occurred_on']}: {before['reason']}"
+    if action == "edited" and before and after:
+        return (
+            f"{before['points']} -> {after['points']} points; "
+            f"{before['occurred_on']} -> {after['occurred_on']}; "
+            f"{before['reason']} -> {after['reason']}"
+        )
+    return action
+
+
+def _audit_note(audit: IPointAudit) -> IPointAuditNote:
+    """Renders one stored Audit row into a display line."""
+    before = json.loads(audit.before_state) if audit.before_state else None
+    after = json.loads(audit.after_state) if audit.after_state else None
+    return IPointAuditNote(
+        action=audit.action.capitalize(),
+        changed_at=audit.changed_at,
+        description=_describe_change(audit.action, before, after),
+    )
+
+
 def boarder_balances(conn) -> list[IPointSummary]:
     """Derives each boarder's I-Point Balance from the stored ledger.
 
@@ -156,13 +359,20 @@ def boarder_balances(conn) -> list[IPointSummary]:
     through I-Points. Summaries sort by the shared Bed rule then name.
     """
     entries = storage.list_ipoint_entries(conn)
+    audits = storage.list_ipoint_audit(conn)
     identity = storage.freshest_identity_map(conn)
+
     grouped: dict[str, list[IPointEntry]] = {}
     for entry in entries:
         grouped.setdefault(entry.normalized_name, []).append(entry)
 
+    grouped_audits: dict[str, list[IPointAudit]] = {}
+    for audit in audits:
+        grouped_audits.setdefault(audit.normalized_name, []).append(audit)
+
     summaries: list[IPointSummary] = []
-    for key, rows in grouped.items():
+    for key in grouped.keys() | grouped_audits.keys():
+        rows = grouped.get(key, [])
         who = identity.get(key)
         summaries.append(
             IPointSummary(
@@ -171,6 +381,7 @@ def boarder_balances(conn) -> list[IPointSummary]:
                 bed=who.bed if who else "",
                 balance=sum(row.points for row in rows),
                 entries=sorted(rows, key=lambda row: (row.occurred_on, row.id)),
+                audits=[_audit_note(audit) for audit in grouped_audits.get(key, [])],
             )
         )
     summaries.sort(key=lambda summary: (bed_sort_key(summary.bed), summary.display_name))

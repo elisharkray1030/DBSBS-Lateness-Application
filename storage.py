@@ -1088,6 +1088,38 @@ def stage_ipoint_entry(
     return lastrowid
 
 
+def stage_update_ipoint_entry(
+    conn: sqlite3.Connection,
+    entry_id: int,
+    points: int,
+    occurred_on: str,
+    reason: str,
+) -> None:
+    """Stages one I-Point Entry edit on the open transaction; it does not commit.
+
+    The I-Points lifecycle owns the transaction so the ledger and its audit
+    row are written together. ``recorded_at`` is the logging timestamp and is
+    deliberately left untouched by an edit.
+    """
+    conn.execute(
+        """
+        UPDATE ipoint_entries
+        SET points = ?, occurred_on = ?, reason = ?
+        WHERE id = ?
+        """,
+        (points, occurred_on, reason, entry_id),
+    )
+
+
+def stage_delete_ipoint_entry(conn: sqlite3.Connection, entry_id: int) -> None:
+    """Stages one I-Point Entry removal on the open transaction; it does not commit.
+
+    The prior state survives in the I-Point Audit row written beside this
+    delete in the same transaction.
+    """
+    conn.execute("DELETE FROM ipoint_entries WHERE id = ?", (entry_id,))
+
+
 def stage_ipoint_audit(
     conn: sqlite3.Connection,
     entity_type: str,
@@ -1131,6 +1163,22 @@ def _ipoint_entry_from_row(row) -> IPointEntry:
         reason=row[4],
         recorded_at=row[5],
     )
+
+
+def get_ipoint_entry(
+    conn: sqlite3.Connection, entry_id: int
+) -> IPointEntry | None:
+    """Returns one I-Point Entry by id, or None when it is absent."""
+    cursor = conn.execute(
+        """
+        SELECT id, normalized_name, points, occurred_on, reason, recorded_at
+        FROM ipoint_entries
+        WHERE id = ?
+        """,
+        (entry_id,),
+    )
+    row = cursor.fetchone()
+    return _ipoint_entry_from_row(row) if row is not None else None
 
 
 def list_ipoint_entries(

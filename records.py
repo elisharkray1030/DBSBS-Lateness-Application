@@ -263,11 +263,21 @@ class IPointAudit:
 
 
 @dataclass
+class IPointAuditNote:
+    """One human-readable line of a boarder's I-Point Audit History."""
+
+    action: str
+    changed_at: str
+    description: str
+
+
+@dataclass
 class IPointSummary:
     """One boarder's derived I-Points position for the I-Points view.
 
     ``balance`` is derived from the ledger, never stored; ``entries`` powers
-    the per-boarder ledger listing without a second read.
+    the per-boarder ledger listing and ``audits`` the audit history, without
+    a second read.
     """
 
     normalized_name: str
@@ -275,3 +285,4 @@ class IPointSummary:
     bed: str
     balance: int
     entries: list[IPointEntry] = field(default_factory=list)
+    audits: list[IPointAuditNote] = field(default_factory=list)

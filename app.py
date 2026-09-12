@@ -1195,6 +1195,66 @@ def log_ipoint_entry():
     )
 
 
+@bp.route('/ipoints/entries/<int:entry_id>/edit', methods=['POST'])
+def edit_ipoint_entry(entry_id):
+    points = request.form.get('points', '').strip()
+    occurred_on = request.form.get('occurred_on', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.edit_entry(
+                conn,
+                entry_id,
+                points=points,
+                occurred_on=occurred_on,
+                reason=reason,
+            )
+
+        if isinstance(outcome, EntryRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Edited I-Point Entry %s", entry_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "edit the I-Point Entry",
+        attempt,
+        _busy_redirect,
+        "I-Point Entry edit hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/entries/<int:entry_id>/remove', methods=['POST'])
+def remove_ipoint_entry(entry_id):
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.remove_entry(conn, entry_id)
+
+        if isinstance(outcome, EntryRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Removed I-Point Entry %s", entry_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "remove the I-Point Entry",
+        attempt,
+        _busy_redirect,
+        "I-Point Entry removal hit sustained contention",
+    )
+
+
 @bp.route('/statistics')
 def statistics():
     """Renders the House Dashboard: the Statistics tab's home.

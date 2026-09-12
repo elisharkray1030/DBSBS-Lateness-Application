@@ -53,6 +53,7 @@
                     {{ summary.display_name }}{% if summary.bed %} (Bed {{ summary.bed }}){% endif %}
                     <span class="ipoint-balance-badge">Balance: {{ summary.balance }}</span>
                 </h3>
+                {% if summary.entries %}
                 <div class="table-scroll">
                     <table class="ipoints-table">
                         <thead>
@@ -60,19 +61,78 @@
                                 <th scope="col">Date</th>
                                 <th scope="col">Points</th>
                                 <th scope="col">Reason</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for entry in summary.entries %}
                             <tr data-entry-id="{{ entry.id }}">
-                                <td>{{ entry.occurred_on }}</td>
-                                <td>{{ entry.points }}</td>
-                                <td>{{ entry.reason }}</td>
+                                <td>
+                                    <input type="date" name="occurred_on"
+                                           form="ipoint-edit-{{ entry.id }}"
+                                           value="{{ entry.occurred_on }}"
+                                           aria-label="Date for entry {{ entry.id }}" required>
+                                </td>
+                                <td>
+                                    <input type="number" name="points"
+                                           form="ipoint-edit-{{ entry.id }}"
+                                           min="1" step="1" value="{{ entry.points }}"
+                                           aria-label="Points for entry {{ entry.id }}" required>
+                                </td>
+                                <td>
+                                    <input type="text" name="reason"
+                                           form="ipoint-edit-{{ entry.id }}"
+                                           value="{{ entry.reason }}"
+                                           aria-label="Reason for entry {{ entry.id }}" required>
+                                </td>
+                                <td class="ipoint-row-actions">
+                                    <form id="ipoint-edit-{{ entry.id }}"
+                                          action="/ipoints/entries/{{ entry.id }}/edit" method="post">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    </form>
+                                    <form id="ipoint-remove-{{ entry.id }}" class="ipoint-remove-form"
+                                          action="/ipoints/entries/{{ entry.id }}/remove" method="post"
+                                          data-boarder="{{ summary.display_name }}"
+                                          data-date="{{ entry.occurred_on }}">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    </form>
+                                    <button type="submit" form="ipoint-edit-{{ entry.id }}"
+                                            class="btn btn-primary btn-sm">Save</button>
+                                    <button type="submit" form="ipoint-remove-{{ entry.id }}"
+                                            class="btn btn-danger btn-sm"
+                                            aria-label="Remove entry from {{ entry.occurred_on }}">Remove</button>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
+                {% endif %}
+                {% if summary.audits %}
+                <details class="ipoints-audit">
+                    <summary>Audit History</summary>
+                    <div class="table-scroll">
+                        <table class="ipoints-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Action</th>
+                                    <th scope="col">When</th>
+                                    <th scope="col">Change</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for note in summary.audits %}
+                                <tr>
+                                    <td>{{ note.action }}</td>
+                                    <td>{{ note.changed_at }}</td>
+                                    <td>{{ note.description }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+                {% endif %}
             </div>
             {% endfor %}
         {% else %}
@@ -82,4 +142,8 @@
             </div>
         {% endif %}
     </section>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}
