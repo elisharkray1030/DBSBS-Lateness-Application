@@ -169,8 +169,9 @@ Important behavior:
   month-close logic lives — a pure function taking an injected `today` —
   returning a pending Redemption at the largest tier at or below the
   Balance (5/10/15, capped at 15), locked at creation. `pending_redemptions(conn, today)`
-  detects the rows to write and `materialise_pending_redemptions(conn, today)`
-  persists them idempotently (ADR 0007).
+  detects the rows to write and `materialise_pending_redemptions(conn, today,
+  created_at)` persists them idempotently (ADR 0007); `created_at` injects the
+  stamp so a deterministic caller can pin it.
 - `confirm_redemption(conn, id, ...)` freezes display name and bed, sets the
   Confiscation `active` with its `release_due`, and debits the Balance, refusing
   when the Balance has fallen below the pending's `points_redeemed`.
@@ -219,7 +220,11 @@ Important behavior:
 `seed_demo_data.py` populates the database with deterministic demo data
 (January through August, excluding June) for development or testing. It reads
 the seed Master List, generates synthetic lateness logs, and ingests them
-through the same `ingest_log` path the web Import uses. Run with
+through the same `ingest_log` path the web Import uses. It then seeds I-Point
+data — Entries, both signs of Adjustment, and a Confiscation in every status —
+through the production I-Points lifecycle with fixed stamps, materialising the
+pending Redemptions at a fixed `IPOINT_TODAY` so opening the view writes
+nothing new. Run with
 `python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]`.
 
 ## App layer — `app.py`

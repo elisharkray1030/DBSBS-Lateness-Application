@@ -401,10 +401,18 @@ class TestIPointMatrix:
         conn, _ = seeded
 
         navas = self._summaries(conn)["NAVAS YUEN HIU NOK"]
+        confiscation = next(
+            row
+            for row in storage.list_ipoint_confiscations(conn)
+            if row.normalized_name == "NAVAS YUEN HIU NOK"
+        )
 
         assert navas.balance == 5
         assert navas.display_name == "Navas YUEN Hiu Nok"
         assert navas.bed == "603A"
+        # The confirmed row freezes identity too, not just the live summary.
+        assert confiscation.display_name == "Navas YUEN Hiu Nok"
+        assert confiscation.bed == "603A"
 
     def test_boarder_known_only_through_ipoints_falls_back_to_match_key(self, seeded):
         conn, _ = seeded
@@ -417,41 +425,78 @@ class TestIPointMatrix:
     def test_confiscation_stamps_are_deterministic(self, seeded):
         conn, _ = seeded
 
-        created = {
-            row.created_at
+        by_key = {
+            row.normalized_name: row
             for row in storage.list_ipoint_confiscations(conn)
         }
 
-        assert created == {"2026-09-01T07:00:00+00:00"}
+        assert {row.created_at for row in by_key.values()} == {
+            "2026-09-01T07:00:00+00:00"
+        }
+        assert by_key["JASPER CHAN CHEUK YIN"].confirmed_at == "2026-09-02T09:00:00+00:00"
+        assert by_key["ELVIS WONG YAT SHUN"].confirmed_at == "2026-09-03T09:00:00+00:00"
+        assert by_key["ELVIS WONG YAT SHUN"].released_at == "2026-09-05T09:00:00+00:00"
+        assert by_key["NAVAS YUEN HIU NOK"].confirmed_at == "2026-09-04T09:00:00+00:00"
+        assert by_key["NAVAS YUEN HIU NOK"].voided_at == "2026-09-06T09:00:00+00:00"
 
     def test_reseeding_does_not_duplicate_ipoint_rows(self, tmp_path):
         namelist_path = tmp_path / "namelist.csv"
         write_namelist(namelist_path)
-        conn = sqlite3.connect(":memory:")
+        conn = self._seed_fresh(namelist_path)
         try:
-            storage.create_schema(conn)
-            storage.replace_boarders(
-                conn, parser_module.load_namelist_rows(str(namelist_path))
-            )
-            seed_demo_data.seed(conn, str(namelist_path))
             first = self._row_counts(conn)
             seed_demo_data.seed(conn, str(namelist_path))
             second = self._row_counts(conn)
         finally:
             conn.close()
 
-        assert first == second
-        assert first == {
+        assert first == second == {
             "ipoint_entries": 10,
             "ipoint_adjustments": 2,
             "ipoint_audit": 21,
             "confiscations": 4,
         }
 
+    def test_seed_is_byte_reproducible_across_fresh_databases(self, tmp_path):
+        namelist_path = tmp_path / "namelist.csv"
+        write_namelist(namelist_path)
+        first = self._seed_fresh(namelist_path)
+        second = self._seed_fresh(namelist_path)
+        try:
+            first_rows = self._ipoint_rows(first)
+            second_rows = self._ipoint_rows(second)
+        finally:
+            first.close()
+            second.close()
+
+        # Same starting state gives byte-identical I-Point rows and audit
+        # stamps, so the seed's determinism is asserted, not just its size.
+        assert first_rows == second_rows
+
+    @staticmethod
+    def _seed_fresh(namelist_path):
+        conn = sqlite3.connect(":memory:")
+        storage.create_schema(conn)
+        storage.replace_boarders(
+            conn, parser_module.load_namelist_rows(str(namelist_path))
+        )
+        seed_demo_data.seed(conn, str(namelist_path))
+        return conn
+
     @staticmethod
     def _row_counts(conn):
         return {
             table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "ipoint_entries", "ipoint_adjustments",
+                "ipoint_audit", "confiscations",
+            )
+        }
+
+    @staticmethod
+    def _ipoint_rows(conn):
+        return {
+            table: conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
             for table in (
                 "ipoint_entries", "ipoint_adjustments",
                 "ipoint_audit", "confiscations",
