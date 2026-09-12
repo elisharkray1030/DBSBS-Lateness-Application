@@ -994,6 +994,29 @@ def delete_month(conn: sqlite3.Connection, month_label: str) -> int:
     return cursor.rowcount
 
 
+# Every derived table. The list lives here so the seeder never issues raw SQL
+# and storage stays the sole owner of persistence.
+_DERIVED_DATA_TABLES = (
+    "punishments",
+    "boarder_history",
+    "confiscations",
+    "ipoint_entries",
+    "ipoint_adjustments",
+    "ipoint_audit",
+)
+
+
+def clear_derived_data(conn: sqlite3.Connection) -> None:
+    """Deletes every derived row, keeping the Master List and meta untouched.
+
+    The demo seeder resets through this rather than deleting from tables
+    itself, so schema changes cannot leave it out of step with storage.
+    """
+    for table in _DERIVED_DATA_TABLES:
+        conn.execute(f"DELETE FROM {table}")
+    conn.commit()
+
+
 def assign_punishments(
     conn: sqlite3.Connection,
     month: str,

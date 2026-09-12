@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 from helpers import month_labels, record
-from records import Boarder, boarder_sort_key
+from records import Boarder, IPointAuditDraft, boarder_sort_key
 
 import storage
 
@@ -752,6 +752,62 @@ class TestDeleteMonth:
 
         storage.delete_month(conn, "2026-03")
         assert month_labels(storage.list_months(conn)) == ["2026-04"]
+
+
+class TestClearDerivedData:
+    def _seed_derived(self, conn):
+        storage.replace_boarders(conn, [boarder("ALICE", "Alice", "601A")])
+        storage.set_meta(conn, "seeded", "yes")
+        storage.save_month(conn, [record("ALICE")], "2026-03")
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[record("ALICE", "601A", 2, 5, 7)],
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+        storage.stage_ipoint_entry(
+            conn, "ALICE", 5, "2026-08-01", "x", "2026-08-01T09:00:00+00:00"
+        )
+        storage.stage_ipoint_adjustment(
+            conn, "ALICE", 2, "credit", "2026-08-02T09:00:00+00:00"
+        )
+        storage.stage_ipoint_confiscation(
+            conn, "ALICE", "2026-08", 5, 5, "pending", "2026-08-03T09:00:00+00:00"
+        )
+        storage.stage_ipoint_audit(
+            conn,
+            IPointAuditDraft(
+                entity_type="entry",
+                entity_id=1,
+                normalized_name="ALICE",
+                action="created",
+                before_state=None,
+                after_state="{}",
+                changed_at="2026-08-01T09:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    def test_clears_every_derived_table(self, conn):
+        self._seed_derived(conn)
+
+        storage.clear_derived_data(conn)
+
+        assert storage.list_months(conn) == []
+        assert storage.list_punishments(conn) == []
+        assert storage.list_ipoint_entries(conn) == []
+        assert storage.list_ipoint_adjustments(conn) == []
+        assert storage.list_ipoint_confiscations(conn) == []
+        assert storage.list_ipoint_audit(conn) == []
+
+    def test_keeps_the_master_list_and_meta(self, conn):
+        self._seed_derived(conn)
+
+        storage.clear_derived_data(conn)
+
+        assert [b.normalized_name for b in storage.list_boarders(conn)] == ["ALICE"]
+        assert storage.get_meta(conn, "seeded") == "yes"
 
 
 class TestAssignPunishments:

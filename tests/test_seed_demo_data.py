@@ -118,7 +118,7 @@ class TestSeededMonthsAndCleanup:
             "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-07", "2026-08",
         ]
 
-    def test_clean_slate_removes_fake_rows(self, seeded):
+    def test_seed_removes_fake_derived_rows(self, seeded):
         conn, _ = seeded
 
         leftovers = conn.execute(
