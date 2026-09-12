@@ -55,10 +55,21 @@ Important behavior:
   `BoarderRecord` rows, ordered by the server's single Bed ordering rule
   (numeric part then suffix, lexical fallback). The report table may change
   display order without changing these stored values.
+- `list_all_time_boarders(conn)` derives the All-Time List live: the Master
+  List unioned with the distinct Match Keys found in `boarder_history`,
+  `punishments`, and the I-Point ledger (`ipoint_entries`,
+  `ipoint_adjustments`, `confiscations`, and surviving `ipoint_audit` rows, so
+  audit-only survivors stay discoverable). Identity resolves freshest-first
+  from the current Master List entry or the latest snapshot across Boarder
+  History, Punishments, and confirmed Confiscations (whose frozen display name
+  and bed are absorbed at `(trigger_month, confirmed_at)`, the I-Point analogue
+  of a Punishment's `(month, assigned_at)`); a key known only through I-Points
+  resolves from a confirmed Confiscation's frozen identity when one exists,
+  otherwise its Match Key, and is marked `is_ipoints_only`.
 - `search_boarders(conn, name_query)` performs a partial Match Key match and
   returns one entry per boarder over the All-Time List population (Master List
-  plus Boarder History and Punishments keys), sharing its freshest-first
-  identity resolution and sort order.
+  plus Boarder History, Punishments, and I-Point keys), sharing its
+  freshest-first identity resolution and sort order.
 - `delete_month(conn, month_label)` removes a month and returns the deleted row
   count.
 - `replace_boarders(conn, rows)` replaces the Master List after resolving
@@ -265,10 +276,11 @@ Important behavior:
   trend chart, all punishments, and the boarder's I-Point Balance with their
   Entries, Adjustments, and Confiscations (released and voided included, with
   the Stacked/due flags), plus a quick-log action. The I-Point section renders
-  for a Boarder known only through I-Points — without a fabricated
-  Current/Former badge or zero-valued lateness summary cards — while a Removed
-  Boarder sees frozen history and no quick-log. Reached by clicking a boarder
-  name anywhere in the app or via Find a Boarder search.
+  for a Boarder known only through I-Points, resolving the same freshest-first
+  identity (a Former badge with zero-valued lateness cards, matching a
+  Punishment-only survivor) and keeping the quick-log, while a Removed Boarder
+  sees frozen history and no quick-log. Reached by clicking a boarder name
+  anywhere in the app or via Find a Boarder search.
 - `templates/ipoints.html` is the I-Points view: the log-Entry and
   add-Adjustment forms and the per-boarder ledger with each boarder's Balance,
   pending Redemption (confirm/void), Entries and Adjustments distinguished by a

@@ -127,6 +127,31 @@ def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10"
     return storage.list_punishments(conn)
 
 
+def seed_ipoint_entry(
+    name="ALICE",
+    points=5,
+    occurred_on="2026-08-01",
+    reason="Repeated disruption",
+    recorded_at="2026-08-01T09:00:00+00:00",
+):
+    """Logs one I-Point Entry through the lifecycle, returning the outcome."""
+    import app as app_module
+
+    import ipoints
+
+    with app_module.connect() as conn:
+        outcome = ipoints.log_entry(
+            conn,
+            normalized_name=name,
+            points=points,
+            occurred_on=occurred_on,
+            reason=reason,
+            recorded_at=recorded_at,
+        )
+    assert isinstance(outcome, ipoints.EntrySaved)
+    return outcome
+
+
 def csrf_token(client):
     """Returns the session CSRF token, seeding the session with a GET first."""
     client.get("/")

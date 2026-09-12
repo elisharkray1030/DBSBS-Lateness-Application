@@ -5,32 +5,18 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from helpers import post_csrf, record, seed_punishments, static_dir
+from helpers import (
+    post_csrf,
+    record,
+    seed_ipoint_entry,
+    seed_punishments,
+    static_dir,
+)
 
 import app as app_module
 import ipoints
 import punishments
 import storage
-
-
-def seed_ipoint_entry(
-    name="ALICE",
-    points=5,
-    occurred_on="2026-08-01",
-    reason="Repeated disruption",
-    recorded_at="2026-08-01T09:00:00+00:00",
-):
-    with app_module.connect() as conn:
-        outcome = ipoints.log_entry(
-            conn,
-            normalized_name=name,
-            points=points,
-            occurred_on=occurred_on,
-            reason=reason,
-            recorded_at=recorded_at,
-        )
-    assert isinstance(outcome, ipoints.EntrySaved)
-    return outcome
 
 
 def profile_html(client, key):
@@ -822,7 +808,9 @@ class TestEscalationParityAndLock:
 
 
 class TestProfileIPointsSection:
-    def test_ipoints_only_boarder_shows_balance_and_history(self, fresh_client):
+    def test_ipoints_only_boarder_resolves_former_with_balance_and_quick_log(
+        self, fresh_client
+    ):
         seed_ipoint_entry(name="CHEN WEI", points=5, reason="Repeated disruption")
 
         html = profile_html(fresh_client, "CHEN%20WEI").get_data(as_text=True)
@@ -831,10 +819,50 @@ class TestProfileIPointsSection:
         assert 'id="stat-ipoint-balance">5<' in html
         assert "Repeated disruption" in html
         assert "CHEN WEI" in html
-        # No lateness identity resolves, so no Current/Former badge and no
-        # misleading zero lateness summary cards.
-        assert 'class="status-badge' not in html
-        assert "Total incidents" not in html
+        # The All-Time union resolves I-Points-only keys as Former, matching a
+        # Punishment-only survivor: badge plus zero-filled lateness cards.
+        assert "badge-former" in html
+        assert "Total incidents" in html
+        # A key known only through I-Points is not a Removed Boarder, so it
+        # keeps the quick-log action.
+        assert 'action="/boarder/CHEN%20WEI/ipoints"' in html
+
+    def test_ipoints_only_confiscation_shows_its_frozen_identity(
+        self, fresh_client
+    ):
+        with app_module.connect() as conn:
+            storage.replace_boarders(
+                conn,
+                [storage.Boarder("LENA", "Lena Lovelace", "402")],
+            )
+        seed_ipoint_entry(name="LENA", points=14)
+        with app_module.connect() as conn:
+            ipoints.materialise_pending_redemptions(conn, "2026-09-12")
+            pending = storage.get_open_ipoint_confiscation(conn, "LENA")
+            ipoints.confirm_redemption(
+                conn,
+                pending.id,
+                today="2026-09-15",
+                recorded_at="2026-09-15T09:00:00+00:00",
+            )
+        # Removing the Master List entry leaves only the frozen Confiscation
+        # identity, so the key is now I-Points-only but still loggable.
+        with app_module.connect() as conn:
+            storage.delete_boarder(
+                conn,
+                next(
+                    b.id
+                    for b in storage.list_boarders(conn)
+                    if b.normalized_name == "LENA"
+                ),
+            )
+
+        html = profile_html(fresh_client, "LENA").get_data(as_text=True)
+
+        assert "Lena Lovelace" in html
+        assert "Bed 402" in html
+        assert "badge-former" in html
+        assert 'action="/boarder/LENA/ipoints"' in html
 
     def test_current_boarder_without_ipoints_gets_the_section_and_quick_log(
         self, fresh_client

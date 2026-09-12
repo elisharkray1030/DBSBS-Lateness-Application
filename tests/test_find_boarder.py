@@ -1,6 +1,6 @@
 """Flask-client coverage for the Find-a-Boarder person lookup (#116)."""
 
-from helpers import history_panel_html, record
+from helpers import history_panel_html, record, seed_ipoint_entry
 
 import app as app_module
 import storage
@@ -131,6 +131,15 @@ class TestWidenedMatchPool:
         panel = history_panel_html(fresh_client.get("/?search_name=carol").get_data(as_text=True))
 
         assert 'href="/boarder/CAROL"' in panel
+
+    def test_ipoint_only_boarder_is_found(self, fresh_client):
+        seed_ipoint_entry(name="IVY", points=5)
+
+        panel = history_panel_html(
+            fresh_client.get("/?search_name=ivy").get_data(as_text=True)
+        )
+
+        assert 'href="/boarder/IVY"' in panel
 
 
 class TestResultOrdering:
