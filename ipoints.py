@@ -1098,7 +1098,9 @@ def log_entry(
 
     Points must be a positive whole number and the reason must be present;
     a blank date falls back to the injected (or machine-local) today. A
-    rejected submission writes nothing.
+    rejected submission writes nothing. A Boarder removed from the Master List
+    is refused because Removed Boarders accrue no new Entries; a key known only
+    through I-Points is not Removed, so its first Entry is still allowed.
     """
     name = (normalized_name or "").strip()
     if not name:
@@ -1117,6 +1119,15 @@ def log_entry(
     resolved_date = _resolve_occurred_on(occurred_on, today)
     if resolved_date is None:
         return EntryRejected(reason="Enter a valid date.")
+
+    identity = storage.resolve_boarder_identity(conn, name)
+    if identity is not None and identity.is_removed:
+        return EntryRejected(
+            reason=(
+                f"{identity.display_name} has been removed and cannot accrue "
+                f"new I-Point Entries."
+            )
+        )
 
     stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
     display_name = resolve_display_name(conn, name)

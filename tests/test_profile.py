@@ -877,8 +877,11 @@ class TestProfileIPointsSection:
     def test_removed_boarder_shows_frozen_history_without_a_quick_log(
         self, fresh_client
     ):
-        seed_history("ZED", "Zed", "601Z", [("2026-01", 1, 2, 3)])
+        # Log while the key is known only through I-Points, then add history so
+        # ZED becomes a Removed Boarder holding a frozen Entry (#187 forbids
+        # logging a new Entry after the history exists).
         seed_ipoint_entry(name="ZED", points=7, reason="Frozen entry")
+        seed_history("ZED", "Zed", "601Z", [("2026-01", 1, 2, 3)])
 
         html = profile_html(fresh_client, "ZED").get_data(as_text=True)
 
