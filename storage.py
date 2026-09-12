@@ -12,6 +12,7 @@ from records import (
     DistributionBucket,
     HouseTrendPoint,
     IPointAudit,
+    IPointAuditDraft,
     IPointEntry,
     MonthSummary,
     Punishment,
@@ -1121,14 +1122,7 @@ def stage_delete_ipoint_entry(conn: sqlite3.Connection, entry_id: int) -> None:
 
 
 def stage_ipoint_audit(
-    conn: sqlite3.Connection,
-    entity_type: str,
-    entity_id: int,
-    normalized_name: str,
-    action: str,
-    before_state: str | None,
-    after_state: str | None,
-    changed_at: str,
+    conn: sqlite3.Connection, audit: IPointAuditDraft
 ) -> None:
     """Stages one I-Point Audit row on the open transaction; it does not commit.
 
@@ -1143,15 +1137,43 @@ def stage_ipoint_audit(
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            entity_type,
-            entity_id,
-            normalized_name,
-            action,
-            before_state,
-            after_state,
-            changed_at,
+            audit.entity_type,
+            audit.entity_id,
+            audit.normalized_name,
+            audit.action,
+            audit.before_state,
+            audit.after_state,
+            audit.changed_at,
         ),
     )
+
+
+_IPOINT_ENTRY_COLUMNS = "id, normalized_name, points, occurred_on, reason, recorded_at"
+_IPOINT_AUDIT_COLUMNS = (
+    "id, entity_type, entity_id, normalized_name, action, "
+    "before_state, after_state, changed_at"
+)
+
+
+def _select_ipoint_rows(
+    conn: sqlite3.Connection,
+    columns: str,
+    table: str,
+    order_by: str,
+    normalized_name: str | None = None,
+) -> list:
+    """Fetches every row, or one Match Key's, through the one WHERE shape.
+
+    Column lists and sort order stay with each caller so the shared seam owns
+    only the all-or-filtered clause both I-Point listings repeat.
+    """
+    sql = f"SELECT {columns} FROM {table}"
+    params: tuple[str, ...] = ()
+    if normalized_name is not None:
+        sql += " WHERE normalized_name = ?"
+        params = (normalized_name,)
+    sql += f" ORDER BY {order_by}"
+    return conn.execute(sql, params).fetchall()
 
 
 def _ipoint_entry_from_row(row) -> IPointEntry:
@@ -1170,11 +1192,7 @@ def get_ipoint_entry(
 ) -> IPointEntry | None:
     """Returns one I-Point Entry by id, or None when it is absent."""
     cursor = conn.execute(
-        """
-        SELECT id, normalized_name, points, occurred_on, reason, recorded_at
-        FROM ipoint_entries
-        WHERE id = ?
-        """,
+        f"SELECT {_IPOINT_ENTRY_COLUMNS} FROM ipoint_entries WHERE id = ?",
         (entry_id,),
     )
     row = cursor.fetchone()
@@ -1185,25 +1203,14 @@ def list_ipoint_entries(
     conn: sqlite3.Connection, normalized_name: str | None = None
 ) -> list[IPointEntry]:
     """Lists I-Point Entries chronologically, optionally for one Match Key."""
-    if normalized_name is None:
-        cursor = conn.execute(
-            """
-            SELECT id, normalized_name, points, occurred_on, reason, recorded_at
-            FROM ipoint_entries
-            ORDER BY occurred_on ASC, id ASC
-            """
-        )
-    else:
-        cursor = conn.execute(
-            """
-            SELECT id, normalized_name, points, occurred_on, reason, recorded_at
-            FROM ipoint_entries
-            WHERE normalized_name = ?
-            ORDER BY occurred_on ASC, id ASC
-            """,
-            (normalized_name,),
-        )
-    return [_ipoint_entry_from_row(row) for row in cursor.fetchall()]
+    rows = _select_ipoint_rows(
+        conn,
+        _IPOINT_ENTRY_COLUMNS,
+        "ipoint_entries",
+        "occurred_on ASC, id ASC",
+        normalized_name,
+    )
+    return [_ipoint_entry_from_row(row) for row in rows]
 
 
 def _ipoint_audit_from_row(row) -> IPointAudit:
@@ -1223,24 +1230,7 @@ def list_ipoint_audit(
     conn: sqlite3.Connection, normalized_name: str | None = None
 ) -> list[IPointAudit]:
     """Lists I-Point Audit rows, optionally for one Match Key, newest first."""
-    if normalized_name is None:
-        cursor = conn.execute(
-            """
-            SELECT id, entity_type, entity_id, normalized_name, action,
-                   before_state, after_state, changed_at
-            FROM ipoint_audit
-            ORDER BY id DESC
-            """
-        )
-    else:
-        cursor = conn.execute(
-            """
-            SELECT id, entity_type, entity_id, normalized_name, action,
-                   before_state, after_state, changed_at
-            FROM ipoint_audit
-            WHERE normalized_name = ?
-            ORDER BY id DESC
-            """,
-            (normalized_name,),
-        )
-    return [_ipoint_audit_from_row(row) for row in cursor.fetchall()]
+    rows = _select_ipoint_rows(
+        conn, _IPOINT_AUDIT_COLUMNS, "ipoint_audit", "id DESC", normalized_name
+    )
+    return [_ipoint_audit_from_row(row) for row in rows]
