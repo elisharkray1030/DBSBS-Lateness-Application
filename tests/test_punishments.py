@@ -8,6 +8,7 @@ from punishments import (
     AssignmentRejected,
     AssignmentSaved,
     TransitionRejected,
+    TransitionSaved,
     assign_batch,
     humanized_status,
     last_action_at,
@@ -143,6 +144,31 @@ class TestTransition:
         row = storage.get_punishment(conn, punishment.id)
         assert row.status == "submitted"
         assert row.submitted_at == "2026-04-09T09:00:00+00:00"
+
+    def test_success_message_names_the_boarder_by_display_name(self, conn):
+        punishment = self._assign_one(conn)
+
+        result = transition(
+            conn, punishment.id, "submitted", timestamp="2026-04-09T09:00:00+00:00"
+        )
+
+        assert isinstance(result, TransitionSaved)
+        assert "Alice" in result.message
+        assert "ALICE" not in result.message
+
+    def test_rejection_reason_names_the_boarder_by_display_name(self, conn):
+        punishment = self._assign_one(conn)
+
+        result = transition(
+            conn,
+            punishment.id,
+            "overdue",
+            timestamp="2026-04-09T09:00:00+00:00",
+        )
+
+        assert isinstance(result, TransitionRejected)
+        assert "Alice" in result.reason
+        assert "ALICE" not in result.reason
 
     def test_assigned_can_become_overdue_then_submitted(self, conn):
         punishment = self._assign_one(conn)
