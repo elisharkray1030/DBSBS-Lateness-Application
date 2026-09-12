@@ -1307,9 +1307,10 @@ def stage_void_ipoint_confiscation(
     voided_at: str,
     void_reason: str | None,
 ) -> None:
-    """Stages a pending Confiscation's voidance on the open transaction.
+    """Stages a pending or active Confiscation's voidance on the open transaction.
 
     It does not commit; the prior state survives in the Confiscation's audit row.
+    The lifecycle owns the status guard, so storage only applies the transition.
     """
     conn.execute(
         """
@@ -1321,10 +1322,63 @@ def stage_void_ipoint_confiscation(
     )
 
 
+def stage_release_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    confiscation_id: int,
+    released_at: str,
+) -> None:
+    """Stages an active Confiscation's release on the open transaction.
+
+    Records when the phone was returned; the status moves from ``active`` to
+    ``released``. It does not commit; the lifecycle owns the commit.
+    """
+    conn.execute(
+        """
+        UPDATE confiscations
+        SET status = 'released', released_at = ?
+        WHERE id = ?
+        """,
+        (released_at, confiscation_id),
+    )
+
+
+def stage_update_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    confiscation_id: int,
+    points_redeemed: int,
+    tier: int,
+    release_due: str,
+) -> None:
+    """Stages an edit of an active Confiscation's redeemable amount and period.
+
+    The tier fixes both ``points_redeemed`` and the recomputed ``release_due``;
+    the frozen display name and bed are not touched. It does not commit.
+    """
+    conn.execute(
+        """
+        UPDATE confiscations
+        SET points_redeemed = ?, tier = ?, release_due = ?
+        WHERE id = ?
+        """,
+        (points_redeemed, tier, release_due, confiscation_id),
+    )
+
+
+def stage_delete_ipoint_confiscation(
+    conn: sqlite3.Connection, confiscation_id: int
+) -> None:
+    """Hard-deletes a live Confiscation on the open transaction.
+
+    The prior state survives in the Confiscation's audit row; it does not commit.
+    """
+    conn.execute("DELETE FROM confiscations WHERE id = ?", (confiscation_id,))
+
+
 class _IPointListing(NamedTuple):
     columns: str
     table: str
     order_by: str
+    status_column: str | None = None
 
 
 _IPOINT_ENTRY_LISTING = _IPointListing(
@@ -1349,6 +1403,7 @@ _IPOINT_CONFISCATION_LISTING = _IPointListing(
     "voided_at, void_reason",
     "confiscations",
     "id ASC",
+    status_column="status",
 )
 
 
@@ -1356,20 +1411,31 @@ def _select_ipoint_rows(
     conn: sqlite3.Connection,
     listing: _IPointListing,
     normalized_name: str | None = None,
+    statuses: tuple[str, ...] | None = None,
 ) -> list[tuple]:
-    """Fetches every row, or one Match Key's, through the one WHERE shape.
+    """Fetches rows through the one WHERE shape every I-Point listing repeats.
 
-    Columns, table, and sort order travel together in the listing, so the
-    shared seam owns only the all-or-filtered clause both I-Point listings
-    repeat.
+    Columns, table, sort order, and whether the table has a status column
+    travel together in the listing, so this seam owns the optional Match Key
+    equality and the optional status set membership. Passing ``statuses`` for a
+    listing that declares no status column is a programming error.
     """
-    sql = f"SELECT {listing.columns} FROM {listing.table}"
-    params: tuple[str, ...] = ()
+    if statuses is not None and listing.status_column is None:
+        raise ValueError(f"{listing.table} has no status column to filter on")
+    clauses: list[str] = []
+    params: list[str] = []
     if normalized_name is not None:
-        sql += " WHERE normalized_name = ?"
-        params = (normalized_name,)
+        clauses.append("normalized_name = ?")
+        params.append(normalized_name)
+    if statuses is not None:
+        placeholders = ", ".join("?" for _ in statuses)
+        clauses.append(f"{listing.status_column} IN ({placeholders})")
+        params.extend(statuses)
+    sql = f"SELECT {listing.columns} FROM {listing.table}"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += f" ORDER BY {listing.order_by}"
-    return conn.execute(sql, params).fetchall()
+    return conn.execute(sql, tuple(params)).fetchall()
 
 
 def _ipoint_entry_from_row(row) -> IPointEntry:
@@ -1508,9 +1574,13 @@ def get_open_ipoint_confiscation(
 def list_ipoint_confiscations(
     conn: sqlite3.Connection,
     normalized_name: str | None = None,
+    statuses: tuple[str, ...] | None = None,
 ) -> list[Confiscation]:
-    """Lists Confiscations, optionally for one Match Key, oldest first."""
+    """Lists Confiscations, optionally for one Match Key and/or a status set.
+
+    Oldest first; ``statuses=None`` lists every status.
+    """
     rows = _select_ipoint_rows(
-        conn, _IPOINT_CONFISCATION_LISTING, normalized_name
+        conn, _IPOINT_CONFISCATION_LISTING, normalized_name, statuses
     )
     return [_ipoint_confiscation_from_row(row) for row in rows]

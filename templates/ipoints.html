@@ -72,6 +72,112 @@
             </form>
         </div>
 
+        <div class="upload-panel" id="confiscations">
+            <h3 class="upload-title">Phone Confiscations</h3>
+            <form action="/ipoints" method="get" class="ipoint-filter-form">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="confiscation-status"><strong>Status</strong></label>
+                        <select id="confiscation-status" name="confiscation_status">
+                            {% for value, label in confiscation_filter_options %}
+                            <option value="{{ value }}" {% if value == confiscation_filter %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+                    </div>
+                </div>
+            </form>
+            {% if confiscations %}
+            <div class="table-scroll">
+                <table class="ipoints-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Boarder</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Redeemed</th>
+                            <th scope="col">Due back</th>
+                            <th scope="col">Flags</th>
+                            <th scope="col">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for confiscation in confiscations %}
+                        {% set who = confiscation.display_name or confiscation.normalized_name %}
+                        <tr data-confiscation-id="{{ confiscation.id }}">
+                            <td>{{ who }}{% if confiscation.bed %} (Bed {{ confiscation.bed }}){% endif %}</td>
+                            <td>{{ confiscation.status|capitalize }}</td>
+                            <td>{{ confiscation.points_redeemed }} I-Points (tier {{ confiscation.tier }})</td>
+                            <td>
+                                {{ confiscation.release_due or '—' }}
+                                {% if confiscation.released_at %}<br>Returned {{ confiscation.released_at }}{% endif %}
+                                {% if confiscation.void_reason %}<br>Voided: {{ confiscation.void_reason }}{% endif %}
+                            </td>
+                            <td>
+                                {% if confiscation.stacked %}<span class="ipoint-flag ipoint-flag-stacked">Stacked</span>{% endif %}
+                                {% if confiscation.is_due %}<span class="ipoint-flag ipoint-flag-due">Due for release</span>{% endif %}
+                            </td>
+                            <td class="ipoint-row-actions">
+                                {% if confiscation.status == 'active' %}
+                                <form id="ipoint-confiscation-release-{{ confiscation.id }}"
+                                      class="ipoint-confirm-form"
+                                      action="/ipoints/confiscations/{{ confiscation.id }}/release" method="post"
+                                      data-confirm-title="Release Confiscation?"
+                                      data-confirm-message="Mark the Confiscation for {{ who }} released? The phone is recorded as returned{% if confiscation.stacked %}, but it stays held until the lateness Punishment is submitted{% endif %}.">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                </form>
+                                <button type="submit" form="ipoint-confiscation-release-{{ confiscation.id }}"
+                                        class="btn btn-primary btn-sm"
+                                        aria-label="Release the Confiscation for {{ who }}">Release</button>
+                                <form id="ipoint-confiscation-edit-{{ confiscation.id }}"
+                                      action="/ipoints/confiscations/{{ confiscation.id }}/edit" method="post">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                </form>
+                                <select name="tier" form="ipoint-confiscation-edit-{{ confiscation.id }}"
+                                        aria-label="Tier for {{ who }}'s Confiscation">
+                                    {% for tier in tiers %}
+                                    <option value="{{ tier }}" {% if tier == confiscation.tier %}selected{% endif %}>{{ tier }} ({{ tier_period_labels[tier] }})</option>
+                                    {% endfor %}
+                                </select>
+                                <button type="submit" form="ipoint-confiscation-edit-{{ confiscation.id }}"
+                                        class="btn btn-primary btn-sm"
+                                        aria-label="Save the tier for {{ who }}'s Confiscation">Save</button>
+                                <form id="ipoint-confiscation-void-{{ confiscation.id }}"
+                                      action="/ipoints/confiscations/{{ confiscation.id }}/void" method="post">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <label for="confiscation-void-reason-{{ confiscation.id }}">Reason</label>
+                                    <input type="text" id="confiscation-void-reason-{{ confiscation.id }}"
+                                           name="void_reason" required
+                                           aria-label="Reason for voiding the Confiscation for {{ who }}">
+                                </form>
+                                <button type="submit" form="ipoint-confiscation-void-{{ confiscation.id }}"
+                                        class="btn btn-danger btn-sm"
+                                        aria-label="Void the Confiscation for {{ who }}">Void</button>
+                                {% endif %}
+                                <form id="ipoint-confiscation-remove-{{ confiscation.id }}"
+                                      class="ipoint-remove-form"
+                                      action="/ipoints/confiscations/{{ confiscation.id }}/remove" method="post"
+                                      data-remove-title="Remove Confiscation?"
+                                      data-remove-message="Remove the Confiscation for {{ who }}? It leaves the list but stays in the Audit History.">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                </form>
+                                <button type="submit" form="ipoint-confiscation-remove-{{ confiscation.id }}"
+                                        class="btn btn-danger btn-sm"
+                                        aria-label="Remove the Confiscation for {{ who }}">Remove</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>No {{ confiscation_filter }} Phone Confiscations.</p>
+            </div>
+            {% endif %}
+        </div>
+
         {% if ipoint_summaries %}
             {% for summary in ipoint_summaries %}
             <div class="ipoints-group">
@@ -110,17 +216,6 @@
                     </div>
                 </div>
                 {% endif %}
-                {% for confiscation in summary.confiscations if confiscation.status != 'pending' %}
-                <div class="ipoint-confiscation">
-                    <p>
-                        <strong>Phone Confiscation:</strong>
-                        {{ confiscation.status }}{% if confiscation.release_due %},
-                        due back {{ confiscation.release_due }}{% endif %}
-                        ({{ confiscation.points_redeemed }} I-Points,
-                        {{ confiscation.trigger_month }}).
-                    </p>
-                </div>
-                {% endfor %}
                 {% if summary.entries or summary.adjustments %}
                 <div class="table-scroll">
                     <table class="ipoints-table">

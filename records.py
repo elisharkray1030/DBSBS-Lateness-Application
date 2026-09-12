@@ -307,6 +307,9 @@ class Confiscation:
     not debit the Balance until staff confirm it. Confirming freezes
     ``display_name`` and ``bed`` (blank while pending) and sets
     ``confirmed_at``/``release_due``; a pending row may instead be voided.
+
+    ``is_due`` and ``stacked`` are derived display flags, computed per read
+    with an injected today and never stored.
     """
 
     id: int
@@ -323,6 +326,8 @@ class Confiscation:
     released_at: str | None = None
     voided_at: str | None = None
     void_reason: str | None = None
+    is_due: bool = False
+    stacked: bool = False
 
 
 @dataclass

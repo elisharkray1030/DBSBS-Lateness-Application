@@ -12,21 +12,26 @@ from datetime import date
 
 import pytest
 
-from helpers import post_csrf
+from helpers import post_csrf, record, seed_punishments
 
 import app as app_module
 import ipoints
+import punishments
 import storage
 from ipoints import (
     AdjustmentEdited,
     AdjustmentRejected,
     AdjustmentRemoved,
     AdjustmentSaved,
+    ConfiscationEdited,
+    ConfiscationRejected,
+    ConfiscationReleased,
+    ConfiscationRemoved,
+    ConfiscationVoided,
     EntryRejected,
     EntrySaved,
     RedemptionConfirmed,
     RedemptionRejected,
-    RedemptionVoided,
     evaluate_month_close,
     log_entry,
     release_due_for,
@@ -1605,7 +1610,7 @@ class TestMonthCloseEvaluation:
         seed_entry(conn, points=14)
         _materialise(conn)
         row = _open_row(conn)
-        ipoints.void_redemption(
+        ipoints.void_confiscation(
             conn,
             row.id,
             reason="logged in error",
@@ -1728,14 +1733,15 @@ class TestVoidRedemption:
         _materialise(conn)
         row = _open_row(conn)
 
-        outcome = ipoints.void_redemption(
+        outcome = ipoints.void_confiscation(
             conn,
             row.id,
             reason="logged in error",
             recorded_at="2026-09-13T09:00:00+00:00",
         )
 
-        assert isinstance(outcome, RedemptionVoided)
+        assert isinstance(outcome, ConfiscationVoided)
+        assert outcome.was_pending is True
         stored = storage.get_ipoint_confiscation(conn, row.id)
         assert stored.status == "voided"
         assert stored.void_reason == "logged in error"
@@ -1745,15 +1751,18 @@ class TestVoidRedemption:
         )
         assert alice.balance == 14
 
-    def test_void_rejects_a_confirmed_row(self, conn):
+    def test_void_rejects_a_settled_row(self, conn):
         seed_entry(conn, points=14)
         _materialise(conn)
         row = _open_row(conn)
         ipoints.confirm_redemption(conn, row.id, today="2026-09-15")
+        ipoints.release_confiscation(
+            conn, row.id, released_at="2026-09-20T09:00:00+00:00"
+        )
 
-        outcome = ipoints.void_redemption(conn, row.id)
+        outcome = ipoints.void_confiscation(conn, row.id, reason="too late")
 
-        assert isinstance(outcome, RedemptionRejected)
+        assert isinstance(outcome, ConfiscationRejected)
 
 
 class TestRedemptionRoutes:
@@ -1893,3 +1902,708 @@ class TestRedemptionBrowser:
         void.focus()
         page.keyboard.press("Enter")
         assert page.evaluate("() => window.__voidAction").endswith("/void")
+
+
+# --- #180 Phone Confiscation lifecycle and Stacked flag ---------------------
+
+
+def _seed_active(
+    conn,
+    name="ALICE",
+    points=14,
+    confirmed_on="2026-09-15",
+    recorded_at="2026-09-15T10:00:00+00:00",
+):
+    """Logs points and confirms the open pending Redemption into active."""
+    seed_entry(conn, name=name, points=points)
+    _materialise(conn)
+    row = _open_row(conn, name)
+    outcome = ipoints.confirm_redemption(
+        conn, row.id, today=confirmed_on, recorded_at=recorded_at
+    )
+    assert isinstance(outcome, RedemptionConfirmed)
+    return storage.get_ipoint_confiscation(conn, row.id)
+
+
+def _balance(conn, name="ALICE"):
+    return next(
+        s.balance
+        for s in ipoints.boarder_balances(conn)
+        if s.normalized_name == name
+    )
+
+
+def _hold_phone(conn, name="ALICE"):
+    """Drives a lateness Punishment for ``name`` to ``phone_held``."""
+    rows = seed_punishments(
+        conn,
+        boarders=[record(name, "101", 2, 5, 7)],
+        month="2026-03",
+        deadline="2026-03-10",
+    )
+    punishment = rows[0]
+    punishments.transition(
+        conn, punishment.id, "overdue", timestamp="2026-03-11T09:00:00+00:00"
+    )
+    punishments.transition(
+        conn, punishment.id, "phone_held", timestamp="2026-03-12T09:00:00+00:00"
+    )
+    return storage.get_punishment(conn, punishment.id)
+
+
+def _phone_is_held(conn, name="ALICE"):
+    """The two-gate return condition: held while either gate remains open."""
+    active = any(
+        row.status == ipoints.STATUS_ACTIVE
+        for row in storage.list_ipoint_confiscations(conn, name)
+    )
+    lateness = any(
+        row.status == "phone_held" and row.normalized_name == name
+        for row in storage.list_punishments(conn, statuses=("phone_held",))
+    )
+    return active or lateness
+
+
+class TestReleaseConfiscation:
+    def test_release_records_when_the_phone_returned(self, conn):
+        active = _seed_active(conn)
+
+        outcome = ipoints.release_confiscation(
+            conn, active.id, released_at="2026-09-18T09:00:00+00:00"
+        )
+
+        assert isinstance(outcome, ConfiscationReleased)
+        stored = storage.get_ipoint_confiscation(conn, active.id)
+        assert stored.status == "released"
+        assert stored.released_at == "2026-09-18T09:00:00+00:00"
+
+    def test_release_is_allowed_before_the_due_date(self, conn):
+        active = _seed_active(conn, confirmed_on="2026-09-15")  # due 2026-09-22
+
+        outcome = ipoints.release_confiscation(
+            conn, active.id, released_at="2026-09-16T09:00:00+00:00"
+        )
+
+        assert isinstance(outcome, ConfiscationReleased)
+        assert storage.get_ipoint_confiscation(conn, active.id).status == "released"
+
+    def test_release_keeps_the_points_debited(self, conn):
+        active = _seed_active(conn)
+        assert _balance(conn) == 4
+
+        ipoints.release_confiscation(conn, active.id)
+
+        assert _balance(conn) == 4
+
+    def test_release_writes_an_audit_row(self, conn):
+        active = _seed_active(conn)
+
+        ipoints.release_confiscation(conn, active.id)
+
+        audits = [
+            audit
+            for audit in storage.list_ipoint_audit(conn, "ALICE")
+            if audit.entity_type == "confiscation"
+        ]
+        assert [audit.action for audit in audits] == [
+            "released",
+            "confirmed",
+            "created",
+        ]
+
+    def test_release_rejects_a_pending_row(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+
+        outcome = ipoints.release_confiscation(conn, row.id)
+
+        assert isinstance(outcome, ConfiscationRejected)
+        assert storage.get_ipoint_confiscation(conn, row.id).status == "pending"
+
+    def test_release_rejects_an_already_released_row(self, conn):
+        active = _seed_active(conn)
+        ipoints.release_confiscation(conn, active.id)
+
+        outcome = ipoints.release_confiscation(conn, active.id)
+
+        assert isinstance(outcome, ConfiscationRejected)
+
+
+class TestConfiscationDueFlag:
+    def test_due_on_the_release_date(self, conn):
+        _seed_active(conn, confirmed_on="2026-09-15")  # due 2026-09-22
+
+        on_due = ipoints.confiscation_list(
+            conn, statuses=("active",), today="2026-09-22"
+        )
+        before = ipoints.confiscation_list(
+            conn, statuses=("active",), today="2026-09-21"
+        )
+
+        assert on_due[0].is_due is True
+        assert before[0].is_due is False
+
+    def test_due_after_the_release_date(self, conn):
+        _seed_active(conn, confirmed_on="2026-09-15")
+
+        rows = ipoints.confiscation_list(
+            conn, statuses=("active",), today="2026-09-30"
+        )
+
+        assert rows[0].is_due is True
+
+    def test_released_rows_are_never_due(self, conn):
+        active = _seed_active(conn, confirmed_on="2026-09-15")
+        ipoints.release_confiscation(conn, active.id)
+
+        rows = ipoints.confiscation_list(
+            conn, statuses=("released",), today="2026-10-30"
+        )
+
+        assert rows[0].is_due is False
+
+    def test_pending_rows_are_never_due(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+
+        rows = ipoints.confiscation_list(
+            conn, statuses=("pending",), today="2026-10-30"
+        )
+
+        assert rows[0].is_due is False
+
+
+class TestStackedFlag:
+    def test_active_confiscation_with_a_phone_hold_is_stacked(self, conn):
+        _seed_active(conn)
+        _hold_phone(conn)
+
+        rows = ipoints.confiscation_list(conn, statuses=("active",))
+
+        assert rows[0].stacked is True
+
+    def test_phone_hold_without_a_confiscation_flags_nothing(self, conn):
+        _hold_phone(conn)
+
+        assert ipoints.confiscation_list(conn, statuses=("active",)) == []
+
+    def test_submitting_the_punishment_clears_stacked(self, conn):
+        _seed_active(conn)
+        punishment = _hold_phone(conn)
+        punishments.transition(
+            conn, punishment.id, "submitted", timestamp="2026-03-13T09:00:00+00:00"
+        )
+
+        rows = ipoints.confiscation_list(conn, statuses=("active",))
+
+        assert rows[0].stacked is False
+
+    def test_releasing_the_confiscation_clears_stacked(self, conn):
+        active = _seed_active(conn)
+        _hold_phone(conn)
+        ipoints.release_confiscation(conn, active.id)
+
+        rows = ipoints.confiscation_list(conn, statuses=("released",))
+
+        assert rows[0].stacked is False
+
+    def test_assigned_punishment_is_not_a_phone_hold(self, conn):
+        _seed_active(conn)
+        seed_punishments(
+            conn,
+            boarders=[record("ALICE", "101", 2, 5, 7)],
+            month="2026-03",
+            deadline="2026-03-10",
+        )
+
+        rows = ipoints.confiscation_list(conn, statuses=("active",))
+
+        assert rows[0].stacked is False
+
+    def test_two_gate_return_waits_for_both_to_clear(self, conn):
+        _seed_active(conn)
+        punishment = _hold_phone(conn)
+        assert _phone_is_held(conn) is True
+
+        punishments.transition(
+            conn, punishment.id, "submitted", timestamp="2026-03-13T09:00:00+00:00"
+        )
+        assert _phone_is_held(conn) is True  # the Confiscation still holds it
+
+        active = storage.get_open_ipoint_confiscation(conn, "ALICE")
+        ipoints.release_confiscation(conn, active.id)
+        assert _phone_is_held(conn) is False
+
+    def test_due_confiscation_still_waits_for_the_lateness_gate(self, conn):
+        _seed_active(conn, confirmed_on="2026-09-15")
+        _hold_phone(conn)
+
+        rows = ipoints.confiscation_list(
+            conn, statuses=("active",), today="2026-09-30"
+        )
+
+        assert rows[0].is_due is True
+        assert rows[0].stacked is True
+        assert _phone_is_held(conn) is True
+
+
+class TestVoidActiveConfiscation:
+    def test_void_active_requires_a_reason(self, conn):
+        active = _seed_active(conn)
+
+        outcome = ipoints.void_confiscation(conn, active.id)
+
+        assert isinstance(outcome, ConfiscationRejected)
+        assert storage.get_ipoint_confiscation(conn, active.id).status == "active"
+
+    def test_void_active_returns_the_points(self, conn):
+        active = _seed_active(conn)
+        assert _balance(conn) == 4
+
+        outcome = ipoints.void_confiscation(
+            conn,
+            active.id,
+            reason="recorded in error",
+            recorded_at="2026-09-16T09:00:00+00:00",
+        )
+
+        assert isinstance(outcome, ConfiscationVoided)
+        assert outcome.was_pending is False
+        stored = storage.get_ipoint_confiscation(conn, active.id)
+        assert stored.status == "voided"
+        assert stored.void_reason == "recorded in error"
+        assert _balance(conn) == 14
+
+    def test_void_pending_allows_a_blank_reason(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+
+        outcome = ipoints.void_confiscation(conn, row.id)
+
+        assert isinstance(outcome, ConfiscationVoided)
+        assert outcome.was_pending is True
+
+
+class TestEditConfiscation:
+    def test_edit_lowers_the_tier_and_recomputes_the_period(self, conn):
+        active = _seed_active(conn, points=20, confirmed_on="2026-09-15")
+        assert active.tier == 15
+        assert active.release_due == "2026-10-15"
+
+        outcome = ipoints.edit_confiscation(conn, active.id, 5)
+
+        assert isinstance(outcome, ConfiscationEdited)
+        stored = storage.get_ipoint_confiscation(conn, active.id)
+        assert stored.tier == 5
+        assert stored.points_redeemed == 5
+        assert stored.release_due == "2026-09-16"
+        assert _balance(conn) == 15  # 20 - 5
+
+    def test_edit_recomputes_from_the_confirmation_date(self, conn):
+        active = _seed_active(conn, points=20, confirmed_on="2026-09-15")
+
+        ipoints.edit_confiscation(conn, active.id, 10)
+
+        stored = storage.get_ipoint_confiscation(conn, active.id)
+        assert stored.release_due == "2026-09-22"
+        assert stored.points_redeemed == 10
+
+    def test_edit_up_is_refused_when_it_would_go_below_zero(self, conn):
+        active = _seed_active(conn)  # 14 - 10 = 4
+        assert _balance(conn) == 4
+
+        outcome = ipoints.edit_confiscation(conn, active.id, 15)
+
+        assert isinstance(outcome, ConfiscationRejected)
+        assert "below zero" in outcome.reason
+        assert storage.get_ipoint_confiscation(conn, active.id).tier == 10
+
+    def test_edit_keeps_the_frozen_display_name_and_bed(self, conn):
+        storage.replace_boarders(
+            conn,
+            [
+                storage.Boarder(
+                    normalized_name="ALICE", display_name="Alice", bed="601A"
+                )
+            ],
+        )
+        active = _seed_active(conn, points=20)
+
+        ipoints.edit_confiscation(conn, active.id, 5)
+
+        stored = storage.get_ipoint_confiscation(conn, active.id)
+        assert stored.display_name == "Alice"
+        assert stored.bed == "601A"
+
+    def test_edit_rejects_a_pending_row(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+
+        outcome = ipoints.edit_confiscation(conn, row.id, 5)
+
+        assert isinstance(outcome, ConfiscationRejected)
+        assert storage.get_ipoint_confiscation(conn, row.id).tier == 10
+
+    def test_edit_rejects_an_unknown_tier(self, conn):
+        active = _seed_active(conn)
+
+        outcome = ipoints.edit_confiscation(conn, active.id, 7)
+
+        assert isinstance(outcome, ConfiscationRejected)
+
+    def test_edit_writes_an_audit_row(self, conn):
+        active = _seed_active(conn, points=20)
+
+        ipoints.edit_confiscation(conn, active.id, 5)
+
+        audits = [
+            audit
+            for audit in storage.list_ipoint_audit(conn, "ALICE")
+            if audit.entity_type == "confiscation"
+        ]
+        assert [audit.action for audit in audits] == [
+            "edited",
+            "confirmed",
+            "created",
+        ]
+
+
+class TestRemoveConfiscation:
+    def test_remove_active_returns_the_points(self, conn):
+        active = _seed_active(conn)
+        assert _balance(conn) == 4
+
+        outcome = ipoints.remove_confiscation(conn, active.id)
+
+        assert isinstance(outcome, ConfiscationRemoved)
+        assert storage.get_ipoint_confiscation(conn, active.id) is None
+        assert _balance(conn) == 14
+
+    def test_remove_pending_leaves_the_balance_untouched(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+
+        outcome = ipoints.remove_confiscation(conn, row.id)
+
+        assert isinstance(outcome, ConfiscationRemoved)
+        assert storage.get_ipoint_confiscation(conn, row.id) is None
+        assert _balance(conn) == 14
+
+    def test_remove_released_returns_the_points(self, conn):
+        active = _seed_active(conn)
+        ipoints.release_confiscation(conn, active.id)
+
+        outcome = ipoints.remove_confiscation(conn, active.id)
+
+        assert isinstance(outcome, ConfiscationRemoved)
+        assert _balance(conn) == 14
+
+    def test_removed_pending_month_is_not_recreated(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+        ipoints.remove_confiscation(conn, row.id)
+
+        assert ipoints.pending_redemptions(conn, "2026-09-20") == []
+
+    def test_removed_active_month_is_not_recreated(self, conn):
+        active = _seed_active(conn)
+        ipoints.remove_confiscation(conn, active.id)
+
+        assert ipoints.pending_redemptions(conn, "2026-09-20") == []
+
+    def test_remove_writes_an_audit_row(self, conn):
+        active = _seed_active(conn)
+
+        ipoints.remove_confiscation(conn, active.id)
+
+        audits = [
+            audit
+            for audit in storage.list_ipoint_audit(conn, "ALICE")
+            if audit.entity_type == "confiscation"
+        ]
+        assert audits[0].action == "removed"
+        assert audits[0].after_state is None
+
+    def test_remove_rejects_a_missing_row(self, conn):
+        outcome = ipoints.remove_confiscation(conn, 999)
+
+        assert isinstance(outcome, ConfiscationRejected)
+
+
+class TestRemovedBoarderLifecycle:
+    def test_lifecycle_actions_are_allowed_for_a_removed_boarder(self, conn):
+        storage.replace_boarders(
+            conn,
+            [
+                storage.Boarder(
+                    normalized_name="ALICE", display_name="Alice", bed="601A"
+                )
+            ],
+        )
+        active = _seed_active(conn, points=20)
+        storage.replace_boarders(conn, [])  # drop ALICE from the Master List
+
+        assert isinstance(
+            ipoints.edit_confiscation(conn, active.id, 5), ConfiscationEdited
+        )
+        assert isinstance(
+            ipoints.release_confiscation(conn, active.id), ConfiscationReleased
+        )
+
+
+class TestConfiscationStatusFilter:
+    def test_filter_returns_only_the_requested_status(self, conn):
+        alice = _seed_active(conn, name="ALICE", confirmed_on="2026-09-15")
+        ipoints.release_confiscation(conn, alice.id)
+        bob = _seed_active(conn, name="BOB", confirmed_on="2026-09-16")
+
+        active = ipoints.confiscation_list(conn, statuses=("active",))
+        released = ipoints.confiscation_list(conn, statuses=("released",))
+
+        assert [row.id for row in active] == [bob.id]
+        assert [row.id for row in released] == [alice.id]
+
+    def test_all_statuses_excludes_pending(self, conn):
+        active = _seed_active(conn)
+        ipoints.release_confiscation(conn, active.id)
+        seed_entry(conn, name="BOB", points=5)
+        _materialise(conn)
+
+        rows = ipoints.confiscation_list(
+            conn, statuses=("active", "released", "voided")
+        )
+
+        assert [row.status for row in rows] == ["released"]
+
+
+class TestConfiscationLifecycleRoutes:
+    def _seed_active(self, fresh_client, points=14):
+        with app_module.connect() as conn:
+            ipoints.log_entry(
+                conn,
+                "ALICE",
+                points,
+                "2020-08-01",
+                "Repeated disruption",
+                recorded_at="2020-08-01T09:00:00+00:00",
+            )
+        fresh_client.get("/ipoints")  # materialise the pending
+        with app_module.connect() as conn:
+            row = storage.get_open_ipoint_confiscation(conn, "ALICE")
+        post_csrf(fresh_client, f"/ipoints/confiscations/{row.id}/confirm")
+        with app_module.connect() as conn:
+            stored = storage.get_ipoint_confiscation(conn, row.id)
+        assert stored.status == "active"
+        return row.id
+
+    def test_release_route_marks_the_phone_returned(self, fresh_client):
+        row_id = self._seed_active(fresh_client)
+
+        response = post_csrf(
+            fresh_client, f"/ipoints/confiscations/{row_id}/release"
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get(
+            "/ipoints?confiscation_status=released"
+        ).get_data(as_text=True)
+        assert "banner-success" in html
+        with app_module.connect() as conn:
+            assert storage.get_ipoint_confiscation(conn, row_id).status == "released"
+
+    def test_release_route_requires_csrf(self, fresh_client):
+        row_id = self._seed_active(fresh_client)
+
+        response = fresh_client.post(
+            f"/ipoints/confiscations/{row_id}/release"
+        )
+
+        assert response.status_code == 403
+
+    def test_void_active_route_requires_a_reason(self, fresh_client):
+        row_id = self._seed_active(fresh_client)
+
+        response = post_csrf(
+            fresh_client, f"/ipoints/confiscations/{row_id}/void"
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "reason" in html.lower()
+        with app_module.connect() as conn:
+            assert storage.get_ipoint_confiscation(conn, row_id).status == "active"
+
+    def test_void_active_route_returns_the_points(self, fresh_client):
+        row_id = self._seed_active(fresh_client, points=14)
+
+        response = post_csrf(
+            fresh_client,
+            f"/ipoints/confiscations/{row_id}/void",
+            data={"void_reason": "recorded in error"},
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-success" in html
+        assert "Balance: 14" in html
+        with app_module.connect() as conn:
+            assert storage.get_ipoint_confiscation(conn, row_id).status == "voided"
+
+    def test_edit_route_lowers_the_tier(self, fresh_client):
+        row_id = self._seed_active(fresh_client, points=20)
+
+        response = post_csrf(
+            fresh_client,
+            f"/ipoints/confiscations/{row_id}/edit",
+            data={"tier": "5"},
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-success" in html
+        with app_module.connect() as conn:
+            stored = storage.get_ipoint_confiscation(conn, row_id)
+        assert (stored.tier, stored.points_redeemed) == (5, 5)
+
+    def test_edit_route_surfaces_an_overdraw_refusal(self, fresh_client):
+        row_id = self._seed_active(fresh_client, points=14)
+
+        response = post_csrf(
+            fresh_client,
+            f"/ipoints/confiscations/{row_id}/edit",
+            data={"tier": "15"},
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "below zero" in html.lower()
+        with app_module.connect() as conn:
+            assert storage.get_ipoint_confiscation(conn, row_id).tier == 10
+
+    def test_edit_route_requires_csrf(self, fresh_client):
+        row_id = self._seed_active(fresh_client)
+
+        response = fresh_client.post(
+            f"/ipoints/confiscations/{row_id}/edit", data={"tier": "5"}
+        )
+
+        assert response.status_code == 403
+
+    def test_remove_route_removes_the_row(self, fresh_client):
+        row_id = self._seed_active(fresh_client)
+
+        response = post_csrf(
+            fresh_client, f"/ipoints/confiscations/{row_id}/remove"
+        )
+
+        assert response.status_code == 302
+        with app_module.connect() as conn:
+            assert storage.get_ipoint_confiscation(conn, row_id) is None
+
+    def test_removed_confiscation_is_not_re_materialised(self, fresh_client):
+        row_id = self._seed_active(fresh_client)
+        post_csrf(fresh_client, f"/ipoints/confiscations/{row_id}/remove")
+
+        fresh_client.get("/ipoints")
+
+        with app_module.connect() as conn:
+            assert storage.get_open_ipoint_confiscation(conn, "ALICE") is None
+
+    def test_status_filter_defaults_to_active(self, fresh_client):
+        row_id = self._seed_active(fresh_client)
+        post_csrf(fresh_client, f"/ipoints/confiscations/{row_id}/release")
+
+        default_html = fresh_client.get("/ipoints").get_data(as_text=True)
+        released_html = fresh_client.get(
+            "/ipoints?confiscation_status=released"
+        ).get_data(as_text=True)
+
+        assert "No active Phone Confiscations." in default_html
+        assert "Returned" in released_html
+
+    def test_invalid_status_filter_falls_back_to_active(self, fresh_client):
+        self._seed_active(fresh_client)
+
+        html = fresh_client.get(
+            "/ipoints?confiscation_status=bogus"
+        ).get_data(as_text=True)
+
+        assert "No active Phone Confiscations." not in html
+        assert "Due back" in html
+
+    def test_stacked_badge_renders_with_a_phone_hold(self, fresh_client):
+        self._seed_active(fresh_client)
+        with app_module.connect() as conn:
+            _hold_phone(conn)
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        assert "Stacked" in html
+
+    def test_stacked_badge_absent_without_a_phone_hold(self, fresh_client):
+        self._seed_active(fresh_client)
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        assert "Stacked" not in html
+
+    def test_due_flag_renders_for_a_past_release_due(self, fresh_client):
+        with app_module.connect() as conn:
+            ipoints.log_entry(
+                conn,
+                "ALICE",
+                14,
+                "2020-08-01",
+                "Repeated disruption",
+                recorded_at="2020-08-01T09:00:00+00:00",
+            )
+        fresh_client.get("/ipoints")  # materialise the pending
+        with app_module.connect() as conn:
+            row = storage.get_open_ipoint_confiscation(conn, "ALICE")
+            ipoints.confirm_redemption(conn, row.id, today="2020-09-15")
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        assert "Due for release" in html
+
+
+class TestConfiscationLifecycleBrowser:
+    def test_release_control_is_keyboard_operable_with_a_confirm(
+        self, fresh_client, browser_page
+    ):
+        with app_module.connect() as conn:
+            ipoints.log_entry(
+                conn,
+                "ALICE",
+                14,
+                "2020-08-01",
+                "Repeated disruption",
+                recorded_at="2020-08-01T09:00:00+00:00",
+            )
+        fresh_client.get("/ipoints")  # materialise the pending
+        with app_module.connect() as conn:
+            row = storage.get_open_ipoint_confiscation(conn, "ALICE")
+        post_csrf(fresh_client, f"/ipoints/confiscations/{row.id}/confirm")
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        _stub_form_submit(page)
+
+        release = page.locator('button[aria-label^="Release the Confiscation"]')
+        assert release.count() == 1
+        release.focus()
+        page.keyboard.press("Enter")
+
+        assert page.locator("#confirmModal.show").count() == 1
+        message = page.locator("#confirm-modal-message").text_content()
+        assert "ALICE" in message.upper()
+        page.keyboard.press("Enter")
+        assert page.evaluate("() => window.__submitCalled").endswith("/release")
