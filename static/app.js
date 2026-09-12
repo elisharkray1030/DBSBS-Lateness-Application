@@ -165,6 +165,20 @@
         });
     });
 
+    // Removing an I-Point Entry is destructive but audited: route it through
+    // the shared confirm dialog naming the Boarder and date.
+    document.querySelectorAll('form.ipoint-remove-form').forEach(form => {
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            showConfirmModal({
+                title: 'Remove I-Point Entry?',
+                message: `Remove the ${form.dataset.date} I-Point Entry for ${form.dataset.boarder}? It leaves the Balance but stays in the Audit History.`,
+                confirmLabel: 'Remove',
+                onConfirm: () => form.submit()
+            });
+        });
+    });
+
     // Month detail view
     let monthRequestToken = 0;
 

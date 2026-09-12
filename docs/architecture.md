@@ -102,9 +102,9 @@ Important behavior:
 ## I-Points — `ipoints.py`
 
 `ipoints.py` owns the I-Points ledger, standing beside `punishments.py` as the
-second disciplinary lifecycle: it validates and logs Entries, writes each
-ledger row and its audit row in one transaction, and derives every boarder's
-Balance from the stored ledger rather than storing it.
+second disciplinary lifecycle: it validates and logs Entries, edits and removes
+them, writes each ledger row and its audit row in one transaction, and derives
+every boarder's Balance from the stored ledger rather than storing it.
 
 Important behavior:
 
@@ -112,15 +112,21 @@ Important behavior:
   required reason, a valid date) and writes the Entry plus its `created` audit
   row in one connection block; a rejected submission writes nothing. A blank
   date falls back to the injected `today` or the machine-local date.
+- `edit_entry(conn, ...)` and `remove_entry(conn, ...)` validate the same fields
+  and write an `edited`/`removed` audit row in the same connection block. A
+  removal leaves the Balance but its prior state survives in the audit history.
+  Any change that would take the Balance below zero is refused and writes
+  nothing (ADR 0006).
 - `boarder_balances(conn)` derives each boarder's Balance as the sum of their
-  Entries, resolving identity freshest-first through the shared All-Time List
-  and falling back to the Match Key for a boarder known only through I-Points.
-  In this slice the only write is additive, so the Balance cannot fall below
-  zero.
+  live Entries, resolving identity freshest-first through the shared All-Time
+  List and falling back to the Match Key for a boarder known only through
+  I-Points. It also attaches each boarder's newest-first Audit History notes and
+  keeps a boarder whose Entries were all removed in that view.
 - The I-Points tables (`ipoint_entries`, `ipoint_audit`) are created
   idempotently by `create_schema` and re-keyed with the other tables by the
   Match-Key migration.
-- The web routes live in `app.py` (`GET /ipoints`, `POST /ipoints/entries`) and
+- The web routes live in `app.py` (`GET /ipoints`, `POST /ipoints/entries`,
+  `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`) and
   delegate here; the route layer stays a thin adapter.
 
 ## Demo seeding — `seed_demo_data.py`
@@ -146,9 +152,10 @@ Important behavior:
   nothing reads a `DB_PATH` module global inside the storage layer.
 - The Import route forwards the request stream straight into `ingest_log` — no
   temp file on disk.
-- The I-Points routes (`GET /ipoints`, `POST /ipoints/entries`) delegate to
-  `ipoints.py`; the GET opens a read-only connection, the POST the read-write
-  one behind CSRF and the shared mutation-retry wrapper.
+- The I-Points routes (`GET /ipoints`, `POST /ipoints/entries`,
+  `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`)
+  delegate to `ipoints.py`; the GET opens a read-only connection, the POSTs the
+  read-write one behind CSRF and the shared mutation-retry wrapper.
 - `api_month()` returns the month's rows as an ordered collection of explicit
   fields (name, display name, bed, frequency, total minutes, total points), so
   the wire format matches the stored rows and the CSV writer and carries the
@@ -175,8 +182,9 @@ Important behavior:
   trend chart, and all punishments. Reached by clicking a boarder name anywhere
   in the app or via Find a Boarder search.
 - `templates/ipoints.html` is the I-Points view: the log-Entry form and the
-  per-boarder ledger with each boarder's Balance. Reached from a tab-bar entry
-  beside Punishments.
+  per-boarder ledger with each boarder's Balance, inline edit/remove controls
+  for every Entry, and a collapsible per-boarder Audit History. Reached from a
+  tab-bar entry beside Punishments.
 - `templates/macros.html` holds shared Jinja macros (for example, the
   Current/Former status badge).
 - `static/app.js` holds browser-side behavior: table sorting, charts, and

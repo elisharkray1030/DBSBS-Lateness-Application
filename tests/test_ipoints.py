@@ -10,9 +10,32 @@ import json
 
 from helpers import post_csrf
 
+import app as app_module
 import ipoints
 import storage
 from ipoints import EntryRejected, EntrySaved, log_entry
+
+
+def _entry_id(conn, name="ALICE"):
+    return storage.list_ipoint_entries(conn, name)[0].id
+
+
+def _seed_offset(conn, name, points):
+    """Writes a raw negative Entry to stand in for a subtractive Adjustment.
+
+    ADR 0006 ties the non-negative floor to a +N Entry offset by a −N debit.
+    Until Adjustments land (#178) the only way to reach that offsetting state
+    is a direct row, so the floor guard can be exercised now.
+    """
+    conn.execute(
+        """
+        INSERT INTO ipoint_entries
+            (normalized_name, points, occurred_on, reason, recorded_at)
+        VALUES (?, ?, '2026-08-03', 'offset', '2026-08-03T09:00:00+00:00')
+        """,
+        (name, points),
+    )
+    conn.commit()
 
 
 def seed_entry(
@@ -439,3 +462,390 @@ class TestLogEntryRoute:
         assert response.status_code == 403
         html = fresh_client.get("/ipoints").get_data(as_text=True)
         assert "No I-Point Entries" in html
+
+
+class TestEditEntry:
+    def test_edits_points_date_and_reason(self, conn):
+        seed_entry(conn, name="ALICE", points=5, occurred_on="2026-08-01", reason="first")
+        entry_id = _entry_id(conn)
+
+        outcome = ipoints.edit_entry(
+            conn, entry_id, points=3, occurred_on="2026-08-02", reason="corrected"
+        )
+
+        assert not isinstance(outcome, EntryRejected)
+        entry = storage.list_ipoint_entries(conn)[0]
+        assert entry.points == 3
+        assert entry.occurred_on == "2026-08-02"
+        assert entry.reason == "corrected"
+
+    def test_edit_message_names_the_boarder(self, conn):
+        seed_entry(conn, name="ALICE", points=5)
+        entry_id = _entry_id(conn)
+
+        outcome = ipoints.edit_entry(conn, entry_id, 2, "2026-08-05", "corrected")
+
+        assert "ALICE" in outcome.message
+
+    def test_edit_retains_the_prior_state_in_the_audit(self, conn):
+        seed_entry(conn, name="ALICE", points=5, occurred_on="2026-08-01", reason="first")
+        entry_id = _entry_id(conn)
+
+        ipoints.edit_entry(conn, entry_id, points=3, occurred_on="2026-08-02", reason="corrected")
+
+        audits = storage.list_ipoint_audit(conn, "ALICE")
+        assert [audit.action for audit in audits] == ["edited", "created"]
+        edit = audits[0]
+        assert edit.entity_id == entry_id
+        assert json.loads(edit.before_state) == {
+            "points": 5,
+            "occurred_on": "2026-08-01",
+            "reason": "first",
+        }
+        assert json.loads(edit.after_state) == {
+            "points": 3,
+            "occurred_on": "2026-08-02",
+            "reason": "corrected",
+        }
+
+    def test_edit_rejects_non_positive_points_without_writing(self, conn):
+        seed_entry(conn, name="ALICE", points=5)
+        entry_id = _entry_id(conn)
+
+        outcome = ipoints.edit_entry(conn, entry_id, 0, "2026-08-01", "x")
+
+        assert isinstance(outcome, EntryRejected)
+        assert storage.list_ipoint_entries(conn)[0].points == 5
+        assert [audit.action for audit in storage.list_ipoint_audit(conn)] == ["created"]
+
+    def test_edit_rejects_a_blank_reason(self, conn):
+        seed_entry(conn, name="ALICE", points=5)
+        entry_id = _entry_id(conn)
+
+        outcome = ipoints.edit_entry(conn, entry_id, 3, "2026-08-01", "  ")
+
+        assert isinstance(outcome, EntryRejected)
+        assert storage.list_ipoint_entries(conn)[0].points == 5
+
+    def test_edit_rejects_an_invalid_date(self, conn):
+        seed_entry(conn, name="ALICE", points=5)
+        entry_id = _entry_id(conn)
+
+        outcome = ipoints.edit_entry(conn, entry_id, 3, "not-a-date", "x")
+
+        assert isinstance(outcome, EntryRejected)
+        assert storage.list_ipoint_entries(conn)[0].occurred_on == "2026-08-01"
+
+    def test_edit_unknown_entry_rejected(self, conn):
+        outcome = ipoints.edit_entry(conn, 999, 5, "2026-08-01", "x")
+
+        assert isinstance(outcome, EntryRejected)
+        assert storage.list_ipoint_audit(conn) == []
+
+    def test_edit_that_would_go_negative_is_refused(self, conn):
+        seed_entry(conn, name="ALICE", points=5)
+        _seed_offset(conn, "ALICE", -5)
+        target = next(
+            entry
+            for entry in storage.list_ipoint_entries(conn, "ALICE")
+            if entry.points == 5
+        )
+
+        outcome = ipoints.edit_entry(conn, target.id, 1, "2026-08-01", "x")
+
+        assert isinstance(outcome, EntryRejected)
+        assert "below zero" in outcome.reason.lower()
+        assert target.id in [entry.id for entry in storage.list_ipoint_entries(conn, "ALICE")]
+        assert [audit.action for audit in storage.list_ipoint_audit(conn, "ALICE")] == ["created"]
+
+
+class TestRemoveEntry:
+    def test_remove_deletes_the_entry_and_its_points(self, conn):
+        seed_entry(conn, name="ALICE", points=5)
+        entry_id = _entry_id(conn)
+
+        outcome = ipoints.remove_entry(conn, entry_id)
+
+        assert not isinstance(outcome, EntryRejected)
+        assert storage.list_ipoint_entries(conn) == []
+
+    def test_remove_retains_the_prior_state_in_the_audit(self, conn):
+        seed_entry(conn, name="ALICE", points=5, occurred_on="2026-08-01", reason="first")
+        entry_id = _entry_id(conn)
+
+        ipoints.remove_entry(conn, entry_id)
+
+        audits = storage.list_ipoint_audit(conn, "ALICE")
+        assert audits[0].action == "removed"
+        assert audits[0].entity_id == entry_id
+        assert audits[0].after_state is None
+        assert json.loads(audits[0].before_state)["reason"] == "first"
+
+    def test_remove_message_names_the_boarder(self, conn):
+        seed_entry(conn, name="ALICE", points=5)
+        entry_id = _entry_id(conn)
+
+        outcome = ipoints.remove_entry(conn, entry_id)
+
+        assert "ALICE" in outcome.message
+
+    def test_remove_unknown_entry_rejected(self, conn):
+        outcome = ipoints.remove_entry(conn, 999)
+
+        assert isinstance(outcome, EntryRejected)
+        assert storage.list_ipoint_audit(conn) == []
+
+    def test_remove_that_would_go_negative_is_refused(self, conn):
+        seed_entry(conn, name="ALICE", points=5)
+        _seed_offset(conn, "ALICE", -5)
+        target = next(
+            entry
+            for entry in storage.list_ipoint_entries(conn, "ALICE")
+            if entry.points == 5
+        )
+
+        outcome = ipoints.remove_entry(conn, target.id)
+
+        assert isinstance(outcome, EntryRejected)
+        assert len(storage.list_ipoint_entries(conn, "ALICE")) == 2
+
+
+class TestAuditHistory:
+    def test_summary_carries_newest_first_audit_notes(self, conn):
+        seed_entry(conn, name="ALICE", points=5, reason="first")
+        entry_id = _entry_id(conn)
+        ipoints.edit_entry(conn, entry_id, 3, "2026-08-02", "corrected")
+
+        summary = next(
+            s for s in ipoints.boarder_balances(conn) if s.normalized_name == "ALICE"
+        )
+
+        assert [note.action for note in summary.audits] == ["Edited", "Created"]
+        assert "first" in summary.audits[0].description
+        assert "corrected" in summary.audits[0].description
+
+    def test_removed_entry_keeps_the_boarder_in_the_audit_view(self, conn):
+        seed_entry(conn, name="ALICE", points=5, reason="first")
+        ipoints.remove_entry(conn, _entry_id(conn))
+
+        summary = next(
+            s for s in ipoints.boarder_balances(conn) if s.normalized_name == "ALICE"
+        )
+
+        assert summary.entries == []
+        assert summary.balance == 0
+        assert summary.audits[0].action == "Removed"
+        assert "first" in summary.audits[0].description
+
+    def test_no_entries_or_audits_yields_no_summaries(self, conn):
+        assert ipoints.boarder_balances(conn) == []
+
+
+class TestEditEntryRoute:
+    def _seed(self, fresh_client):
+        post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Alice",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "Repeated disruption",
+            },
+        )
+        with app_module.connect() as conn:
+            return _entry_id(conn)
+
+    def test_edit_updates_the_entry_and_flashes_success(self, fresh_client):
+        entry_id = self._seed(fresh_client)
+
+        response = post_csrf(
+            fresh_client,
+            f"/ipoints/entries/{entry_id}/edit",
+            data={"points": "2", "occurred_on": "2026-08-09", "reason": "corrected"},
+        )
+
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/ipoints")
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert 'value="corrected"' in html
+        assert "Balance: 2" in html
+        assert "banner-success" in html
+
+    def test_edit_shows_the_prior_state_in_the_audit_view(self, fresh_client):
+        entry_id = self._seed(fresh_client)
+
+        post_csrf(
+            fresh_client,
+            f"/ipoints/entries/{entry_id}/edit",
+            data={"points": "2", "occurred_on": "2026-08-09", "reason": "corrected"},
+        )
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "Audit History" in html
+        assert "Repeated disruption" in html
+        assert "corrected" in html
+
+    def test_edit_invalid_points_shows_error_and_keeps_the_entry(self, fresh_client):
+        entry_id = self._seed(fresh_client)
+
+        post_csrf(
+            fresh_client,
+            f"/ipoints/entries/{entry_id}/edit",
+            data={"points": "0", "occurred_on": "2026-08-01", "reason": "x"},
+        )
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert 'value="Repeated disruption"' in html
+
+    def test_edit_without_csrf_is_rejected(self, fresh_client):
+        entry_id = self._seed(fresh_client)
+
+        response = fresh_client.post(
+            f"/ipoints/entries/{entry_id}/edit",
+            data={"points": "2", "occurred_on": "2026-08-09", "reason": "corrected"},
+        )
+
+        assert response.status_code == 403
+        with app_module.connect() as conn:
+            assert storage.list_ipoint_entries(conn)[0].points == 5
+
+
+class TestRemoveEntryRoute:
+    def _seed(self, fresh_client):
+        post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Alice",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "Repeated disruption",
+            },
+        )
+        with app_module.connect() as conn:
+            return _entry_id(conn)
+
+    def test_remove_deletes_the_entry_and_keeps_the_audit(self, fresh_client):
+        entry_id = self._seed(fresh_client)
+
+        response = post_csrf(
+            fresh_client, f"/ipoints/entries/{entry_id}/remove"
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "Balance: 0" in html
+        assert "Audit History" in html
+        assert "Removed" in html
+        assert "Repeated disruption" in html
+
+    def test_remove_without_csrf_is_rejected(self, fresh_client):
+        entry_id = self._seed(fresh_client)
+
+        response = fresh_client.post(f"/ipoints/entries/{entry_id}/remove")
+
+        assert response.status_code == 403
+        with app_module.connect() as conn:
+            assert len(storage.list_ipoint_entries(conn)) == 1
+
+    def test_overdraw_refusal_is_surfaced_as_page_feedback(self, fresh_client):
+        entry_id = self._seed(fresh_client)
+        with app_module.connect() as conn:
+            _seed_offset(conn, "ALICE", -5)
+
+        post_csrf(fresh_client, f"/ipoints/entries/{entry_id}/remove")
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "below zero" in html.lower()
+        with app_module.connect() as conn:
+            assert len(storage.list_ipoint_entries(conn, "ALICE")) == 2
+
+
+class TestIPointsEditingControls:
+    def test_page_renders_labelled_edit_and_remove_controls(self, fresh_client):
+        post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Alice",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "Repeated disruption",
+            },
+        )
+        with app_module.connect() as conn:
+            entry_id = _entry_id(conn)
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        assert f'action="/ipoints/entries/{entry_id}/edit"' in html
+        assert f'action="/ipoints/entries/{entry_id}/remove"' in html
+        assert f'form="ipoint-edit-{entry_id}"' in html
+        assert f'form="ipoint-remove-{entry_id}"' in html
+        assert 'aria-label="Reason for entry' in html
+        assert 'aria-label="Remove entry from' in html
+
+
+def _stub_form_submit(page):
+    page.evaluate(
+        """() => {
+            window.__submitCalled = null;
+            HTMLFormElement.prototype.submit = function() {
+                window.__submitCalled = this.getAttribute('action');
+            };
+        }"""
+    )
+
+
+class TestIPointsEditRemoveBrowser:
+    def test_inline_edit_and_remove_are_keyboard_operable(self, fresh_client, browser_page):
+        post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Alice",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "Repeated disruption",
+            },
+        )
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        _stub_form_submit(page)
+        page.evaluate(
+            """() => {
+                window.__editPayload = null;
+                window.__editAction = null;
+                document.querySelector('form[id^="ipoint-edit-"]').addEventListener('submit', event => {
+                    event.preventDefault();
+                    const form = event.target;
+                    window.__editAction = form.getAttribute('action');
+                    window.__editPayload = Object.fromEntries(new FormData(form).entries());
+                });
+            }"""
+        )
+
+        reason = page.locator('input[aria-label^="Reason for entry"]')
+        reason.fill("corrected")
+        page.locator('button[form^="ipoint-edit-"]').focus()
+        page.keyboard.press("Enter")
+
+        payload = page.evaluate("() => window.__editPayload")
+        assert payload is not None
+        assert payload["reason"] == "corrected"
+        assert payload["points"] == "5"
+        assert page.evaluate("() => window.__editAction").endswith("/edit")
+
+        page.locator('button[form^="ipoint-remove-"]').focus()
+        page.keyboard.press("Enter")
+
+        assert page.locator("#confirmModal.show").count() == 1
+        message = page.locator("#confirm-modal-message").text_content()
+        assert "ALICE" in message.upper()
+        page.keyboard.press("Enter")
+        assert page.evaluate("() => window.__submitCalled").endswith("/remove")
