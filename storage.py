@@ -10,6 +10,7 @@ from records import (
     BoarderIdentity,
     BoarderMonth,
     BoarderRecord,
+    Confiscation,
     DistributionBucket,
     HouseTrendPoint,
     IPointAudit,
@@ -138,9 +139,36 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS confiscations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_name TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            bed TEXT NOT NULL DEFAULT '',
+            trigger_month TEXT NOT NULL,
+            points_redeemed INTEGER NOT NULL,
+            tier INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            confirmed_at TEXT,
+            release_due TEXT,
+            released_at TEXT,
+            voided_at TEXT,
+            void_reason TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_punishments_active
         ON punishments(normalized_name, month)
         WHERE status != 'voided'
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_confiscations_open
+        ON confiscations(normalized_name)
+        WHERE status IN ('pending', 'active')
         """
     )
     _migrate_boarders_bed_unique(conn)
@@ -167,6 +195,7 @@ def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
         "ipoint_entries",
         "ipoint_adjustments",
         "ipoint_audit",
+        "confiscations",
     ):
         rows = conn.execute(
             f"SELECT id, normalized_name FROM {table} ORDER BY id"
@@ -1220,6 +1249,78 @@ def stage_ipoint_audit(
     )
 
 
+def stage_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    trigger_month: str,
+    points_redeemed: int,
+    tier: int,
+    status: str,
+    created_at: str,
+) -> int:
+    """Stages one Confiscation row on the open transaction; it does not commit.
+
+    The I-Points lifecycle owns the commit so the row and its audit row are
+    written together; a standalone caller must commit the connection.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO confiscations (
+            normalized_name, trigger_month, points_redeemed, tier, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (normalized_name, trigger_month, points_redeemed, tier, status, created_at),
+    )
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("Insert succeeded but no row id was returned.")
+    return lastrowid
+
+
+def stage_confirm_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    confiscation_id: int,
+    display_name: str,
+    bed: str,
+    confirmed_at: str,
+    release_due: str,
+) -> None:
+    """Stages a pending Confiscation's confirmation on the open transaction.
+
+    Freezes the Boarder's display name and bed and records the fixed release
+    date; the status moves from ``pending`` to ``active``. It does not commit.
+    """
+    conn.execute(
+        """
+        UPDATE confiscations
+        SET status = 'active', display_name = ?, bed = ?,
+            confirmed_at = ?, release_due = ?
+        WHERE id = ?
+        """,
+        (display_name, bed, confirmed_at, release_due, confiscation_id),
+    )
+
+
+def stage_void_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    confiscation_id: int,
+    voided_at: str,
+    void_reason: str | None,
+) -> None:
+    """Stages a pending Confiscation's voidance on the open transaction.
+
+    It does not commit; the prior state survives in the Confiscation's audit row.
+    """
+    conn.execute(
+        """
+        UPDATE confiscations
+        SET status = 'voided', voided_at = ?, void_reason = ?
+        WHERE id = ?
+        """,
+        (voided_at, void_reason, confiscation_id),
+    )
+
+
 class _IPointListing(NamedTuple):
     columns: str
     table: str
@@ -1241,6 +1342,13 @@ _IPOINT_AUDIT_LISTING = _IPointListing(
     "before_state, after_state, changed_at",
     "ipoint_audit",
     "id DESC",
+)
+_IPOINT_CONFISCATION_LISTING = _IPointListing(
+    "id, normalized_name, display_name, bed, trigger_month, points_redeemed, "
+    "tier, status, created_at, confirmed_at, release_due, released_at, "
+    "voided_at, void_reason",
+    "confiscations",
+    "id ASC",
 )
 
 
@@ -1344,3 +1452,65 @@ def list_ipoint_audit(
     """Lists I-Point Audit rows, optionally for one Match Key, newest first."""
     rows = _select_ipoint_rows(conn, _IPOINT_AUDIT_LISTING, normalized_name)
     return [_ipoint_audit_from_row(row) for row in rows]
+
+
+def _ipoint_confiscation_from_row(row) -> Confiscation:
+    return Confiscation(
+        id=row[0],
+        normalized_name=row[1],
+        display_name=row[2],
+        bed=row[3],
+        trigger_month=row[4],
+        points_redeemed=row[5],
+        tier=row[6],
+        status=row[7],
+        created_at=row[8],
+        confirmed_at=row[9],
+        release_due=row[10],
+        released_at=row[11],
+        voided_at=row[12],
+        void_reason=row[13],
+    )
+
+
+def get_ipoint_confiscation(
+    conn: sqlite3.Connection, confiscation_id: int
+) -> Confiscation | None:
+    """Returns one Confiscation by id, or None when it is absent."""
+    cursor = conn.execute(
+        f"SELECT {_IPOINT_CONFISCATION_LISTING.columns} "
+        "FROM confiscations WHERE id = ?",
+        (confiscation_id,),
+    )
+    row = cursor.fetchone()
+    return _ipoint_confiscation_from_row(row) if row is not None else None
+
+
+def get_open_ipoint_confiscation(
+    conn: sqlite3.Connection, normalized_name: str
+) -> Confiscation | None:
+    """Returns a Match Key's open Confiscation (pending or active), if any.
+
+    The partial unique index guarantees at most one; this returns the oldest
+    should a legacy database carry more.
+    """
+    cursor = conn.execute(
+        f"SELECT {_IPOINT_CONFISCATION_LISTING.columns} "
+        "FROM confiscations "
+        "WHERE normalized_name = ? AND status IN ('pending', 'active') "
+        "ORDER BY id ASC LIMIT 1",
+        (normalized_name,),
+    )
+    row = cursor.fetchone()
+    return _ipoint_confiscation_from_row(row) if row is not None else None
+
+
+def list_ipoint_confiscations(
+    conn: sqlite3.Connection,
+    normalized_name: str | None = None,
+) -> list[Confiscation]:
+    """Lists Confiscations, optionally for one Match Key, oldest first."""
+    rows = _select_ipoint_rows(
+        conn, _IPOINT_CONFISCATION_LISTING, normalized_name
+    )
+    return [_ipoint_confiscation_from_row(row) for row in rows]

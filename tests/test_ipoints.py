@@ -7,6 +7,10 @@ the lifecycle so no separate storage seam is introduced.
 """
 
 import json
+import sqlite3
+from datetime import date
+
+import pytest
 
 from helpers import post_csrf
 
@@ -20,8 +24,14 @@ from ipoints import (
     AdjustmentSaved,
     EntryRejected,
     EntrySaved,
+    RedemptionConfirmed,
+    RedemptionRejected,
+    RedemptionVoided,
+    evaluate_month_close,
     log_entry,
+    release_due_for,
 )
+from records import IPointEntry
 
 
 def _entry_id(conn, name="ALICE"):
@@ -1413,3 +1423,473 @@ class TestAdjustmentBrowser:
         assert "ALICE" in message.upper()
         page.keyboard.press("Enter")
         assert page.evaluate("() => window.__submitCalled").endswith("/remove")
+
+
+# --- #179 Pending Redemption and Phone Confiscation confirmation -------------
+
+
+def _materialise(conn, today="2026-09-12"):
+    """Runs the month-close materialisation with an injected local date."""
+    return ipoints.materialise_pending_redemptions(conn, today)
+
+
+def _open_row(conn, name="ALICE"):
+    return storage.get_open_ipoint_confiscation(conn, name)
+
+
+class TestMonthCloseEvaluation:
+    def _entry(
+        self,
+        points=14,
+        occurred_on="2026-08-10",
+        recorded_at="2026-08-10T09:00:00+00:00",
+    ):
+        return IPointEntry(
+            id=1,
+            normalized_name="ALICE",
+            points=points,
+            occurred_on=occurred_on,
+            reason="x",
+            recorded_at=recorded_at,
+        )
+
+    def test_below_the_lowest_tier_yields_no_pending(self, conn):
+        seed_entry(conn, points=4)
+
+        assert _materialise(conn) == 0
+        assert _open_row(conn) is None
+
+    def test_balance_at_the_lowest_tier_yields_a_pending(self, conn):
+        seed_entry(conn, points=5)
+
+        assert _materialise(conn) == 1
+        row = _open_row(conn)
+        assert row is not None
+        assert row.status == "pending"
+        assert row.tier == 5
+        assert row.points_redeemed == 5
+
+    @pytest.mark.parametrize(
+        ("balance", "tier"),
+        [(4, None), (5, 5), (9, 5), (10, 10), (14, 10), (15, 15), (20, 15), (99, 15)],
+    )
+    def test_tier_is_largest_at_or_below_balance_capped_at_15(self, balance, tier):
+        pending = evaluate_month_close(
+            [self._entry(points=balance)], [], [], "2026-09-12"
+        )
+
+        assert (pending.tier if pending else None) == tier
+
+    def test_pending_does_not_debit_the_balance(self, conn):
+        seed_entry(conn, points=14)
+
+        _materialise(conn)
+
+        alice = next(
+            s for s in ipoints.boarder_balances(conn) if s.normalized_name == "ALICE"
+        )
+        assert alice.balance == 14
+        assert alice.pending is not None
+        assert alice.pending.points_redeemed == 10
+
+    def test_materialisation_is_idempotent(self, conn):
+        seed_entry(conn, points=14)
+
+        assert _materialise(conn) == 1
+        assert _materialise(conn) == 0
+        assert len(storage.list_ipoint_confiscations(conn, "ALICE")) == 1
+
+    def test_locked_tier_does_not_escalate_as_points_accrue(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        seed_entry(
+            conn,
+            points=8,
+            occurred_on="2026-09-02",
+            recorded_at="2026-09-02T09:00:00+00:00",
+        )
+
+        assert _materialise(conn, today="2026-10-05") == 0
+        row = _open_row(conn)
+        assert row is not None
+        assert row.tier == 10
+
+    def test_no_second_pending_while_one_is_open(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        seed_entry(
+            conn,
+            points=9,
+            occurred_on="2026-09-02",
+            recorded_at="2026-09-02T09:00:00+00:00",
+        )
+
+        assert ipoints.pending_redemptions(conn, "2026-10-05") == []
+
+    def test_trigger_month_is_the_latest_closed_month(self, conn):
+        seed_entry(conn, points=5)
+
+        assert (
+            ipoints.pending_redemptions(conn, "2026-09-01")[0][1].trigger_month
+            == "2026-08"
+        )
+        assert (
+            ipoints.pending_redemptions(conn, "2026-09-30")[0][1].trigger_month
+            == "2026-08"
+        )
+        assert (
+            ipoints.pending_redemptions(conn, "2026-10-01")[0][1].trigger_month
+            == "2026-09"
+        )
+
+    def test_backdated_entry_never_reopens_a_closed_month(self, conn):
+        seed_entry(conn, points=3)
+        assert _materialise(conn, today="2026-09-12") == 0
+
+        # An August incident entered after August closed.
+        seed_entry(
+            conn,
+            points=5,
+            occurred_on="2026-08-15",
+            recorded_at="2026-09-05T09:00:00+00:00",
+        )
+
+        assert ipoints.pending_redemptions(conn, "2026-09-12") == []
+
+    def test_backdated_entry_is_picked_up_at_the_next_close(self, conn):
+        seed_entry(conn, points=3)
+        seed_entry(
+            conn,
+            points=5,
+            occurred_on="2026-08-15",
+            recorded_at="2026-09-05T09:00:00+00:00",
+        )
+
+        pending = ipoints.pending_redemptions(conn, "2026-10-05")
+
+        assert pending[0][1].trigger_month == "2026-09"
+        assert pending[0][1].tier == 5
+
+    def test_remainder_carries_forward(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+        assert isinstance(
+            ipoints.confirm_redemption(
+                conn,
+                row.id,
+                today="2026-09-15",
+                recorded_at="2026-09-15T09:00:00+00:00",
+            ),
+            RedemptionConfirmed,
+        )
+        # Release it (as #180 will offer) so the next close can be evaluated.
+        conn.execute(
+            "UPDATE confiscations SET status = 'released', released_at = ? WHERE id = ?",
+            ("2026-09-20T09:00:00+00:00", row.id),
+        )
+        conn.commit()
+        seed_entry(
+            conn,
+            points=6,
+            occurred_on="2026-09-10",
+            recorded_at="2026-09-10T09:00:00+00:00",
+        )
+
+        pending = ipoints.pending_redemptions(conn, "2026-10-05")
+
+        assert pending[0][1].trigger_month == "2026-09"
+        assert pending[0][1].tier == 10
+
+    def test_a_voided_month_is_not_recreated(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+        ipoints.void_redemption(
+            conn,
+            row.id,
+            reason="logged in error",
+            recorded_at="2026-09-13T09:00:00+00:00",
+        )
+
+        assert ipoints.pending_redemptions(conn, "2026-09-20") == []
+
+
+class TestConfiscationIndex:
+    def test_one_open_confiscation_per_boarder_is_enforced(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+
+        with pytest.raises(sqlite3.IntegrityError):
+            with conn:
+                storage.stage_ipoint_confiscation(
+                    conn,
+                    "ALICE",
+                    "2026-09",
+                    5,
+                    5,
+                    "pending",
+                    "2026-10-01T09:00:00+00:00",
+                )
+
+        assert len(storage.list_ipoint_confiscations(conn, "ALICE")) == 1
+
+
+class TestConfirmRedemption:
+    def test_confirm_creates_an_active_confiscation_and_debits(self, conn):
+        storage.replace_boarders(
+            conn,
+            [storage.Boarder(normalized_name="ALICE", display_name="Alice", bed="601A")],
+        )
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+
+        outcome = ipoints.confirm_redemption(
+            conn,
+            row.id,
+            today="2026-09-15",
+            recorded_at="2026-09-15T10:00:00+00:00",
+        )
+
+        assert isinstance(outcome, RedemptionConfirmed)
+        stored = storage.get_ipoint_confiscation(conn, row.id)
+        assert stored.status == "active"
+        assert stored.display_name == "Alice"
+        assert stored.bed == "601A"
+        assert stored.confirmed_at == "2026-09-15T10:00:00+00:00"
+        assert stored.release_due == "2026-09-22"
+        assert stored.points_redeemed == 10
+        alice = next(
+            s for s in ipoints.boarder_balances(conn) if s.normalized_name == "ALICE"
+        )
+        assert alice.balance == 4
+
+    def test_confirm_is_refused_when_it_would_go_below_zero(self, conn):
+        seed_entry(conn, points=10)
+        _materialise(conn)
+        row = _open_row(conn)
+        ipoints.add_adjustment(
+            conn,
+            "ALICE",
+            -6,
+            "offset",
+            recorded_at="2026-09-01T09:00:00+00:00",
+        )
+
+        outcome = ipoints.confirm_redemption(conn, row.id, today="2026-09-15")
+
+        assert isinstance(outcome, RedemptionRejected)
+        assert "below zero" in outcome.reason
+        assert storage.get_ipoint_confiscation(conn, row.id).status == "pending"
+
+    def test_confirm_rejects_a_non_pending_row(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+        ipoints.confirm_redemption(conn, row.id, today="2026-09-15")
+
+        again = ipoints.confirm_redemption(conn, row.id, today="2026-09-16")
+
+        assert isinstance(again, RedemptionRejected)
+
+    def test_confirm_writes_an_audit_row(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+        ipoints.confirm_redemption(
+            conn,
+            row.id,
+            today="2026-09-15",
+            recorded_at="2026-09-15T10:00:00+00:00",
+        )
+
+        audits = [
+            audit
+            for audit in storage.list_ipoint_audit(conn, "ALICE")
+            if audit.entity_type == "confiscation"
+        ]
+        assert [audit.action for audit in audits] == ["confirmed", "created"]
+
+
+class TestReleaseDue:
+    def test_each_tier_has_its_fixed_period(self):
+        assert release_due_for(5, date(2026, 9, 15)).isoformat() == "2026-09-16"
+        assert release_due_for(10, date(2026, 9, 15)).isoformat() == "2026-09-22"
+        assert release_due_for(15, date(2026, 9, 15)).isoformat() == "2026-10-15"
+
+    def test_one_month_clamps_to_the_shorter_month(self):
+        assert release_due_for(15, date(2026, 1, 31)).isoformat() == "2026-02-28"
+
+
+class TestVoidRedemption:
+    def test_void_cancels_without_debiting(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+
+        outcome = ipoints.void_redemption(
+            conn,
+            row.id,
+            reason="logged in error",
+            recorded_at="2026-09-13T09:00:00+00:00",
+        )
+
+        assert isinstance(outcome, RedemptionVoided)
+        stored = storage.get_ipoint_confiscation(conn, row.id)
+        assert stored.status == "voided"
+        assert stored.void_reason == "logged in error"
+        assert stored.voided_at == "2026-09-13T09:00:00+00:00"
+        alice = next(
+            s for s in ipoints.boarder_balances(conn) if s.normalized_name == "ALICE"
+        )
+        assert alice.balance == 14
+
+    def test_void_rejects_a_confirmed_row(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+        row = _open_row(conn)
+        ipoints.confirm_redemption(conn, row.id, today="2026-09-15")
+
+        outcome = ipoints.void_redemption(conn, row.id)
+
+        assert isinstance(outcome, RedemptionRejected)
+
+
+class TestRedemptionRoutes:
+    def _seed_pending(self, fresh_client, points=14):
+        with app_module.connect() as conn:
+            outcome = ipoints.log_entry(
+                conn,
+                "ALICE",
+                points,
+                "2020-08-01",
+                "Repeated disruption",
+                recorded_at="2020-08-01T09:00:00+00:00",
+            )
+        assert isinstance(outcome, EntrySaved)
+        fresh_client.get("/ipoints")  # materialises the pending
+        return fresh_client.get("/ipoints").get_data(as_text=True)
+
+    def _open_id(self):
+        with app_module.connect() as conn:
+            row = storage.get_open_ipoint_confiscation(conn, "ALICE")
+        assert row is not None
+        return row.id
+
+    def test_get_materialises_a_pending_redemption(self, fresh_client):
+        html = self._seed_pending(fresh_client)
+
+        assert "Pending redemption" in html
+        assert "Balance: 14" in html
+
+    def test_confirm_route_activates_the_confiscation_and_debits(self, fresh_client):
+        self._seed_pending(fresh_client)
+        row_id = self._open_id()
+
+        response = post_csrf(
+            fresh_client, f"/ipoints/confiscations/{row_id}/confirm"
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-success" in html
+        assert "Phone Confiscation" in html
+        assert "Balance: 4" in html
+
+    def test_void_route_cancels_the_pending(self, fresh_client):
+        self._seed_pending(fresh_client)
+        row_id = self._open_id()
+
+        response = post_csrf(
+            fresh_client,
+            f"/ipoints/confiscations/{row_id}/void",
+            data={"void_reason": "logged in error"},
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-success" in html
+        assert "Balance: 14" in html
+        with app_module.connect() as conn:
+            stored = storage.get_ipoint_confiscation(conn, row_id)
+        assert stored.status == "voided"
+        assert stored.void_reason == "logged in error"
+
+    def test_confirm_route_requires_csrf(self, fresh_client):
+        self._seed_pending(fresh_client)
+        row_id = self._open_id()
+
+        response = fresh_client.post(f"/ipoints/confiscations/{row_id}/confirm")
+
+        assert response.status_code == 403
+
+    def test_confirm_route_surfaces_an_overdraw_refusal(self, fresh_client):
+        self._seed_pending(fresh_client, points=10)
+        row_id = self._open_id()
+        with app_module.connect() as conn:
+            ipoints.add_adjustment(
+                conn,
+                "ALICE",
+                -6,
+                "offset",
+                recorded_at="2026-09-01T09:00:00+00:00",
+            )
+
+        response = post_csrf(
+            fresh_client, f"/ipoints/confiscations/{row_id}/confirm"
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "below zero" in html
+        with app_module.connect() as conn:
+            assert storage.get_ipoint_confiscation(conn, row_id).status == "pending"
+
+
+class TestRedemptionBrowser:
+    def test_pending_redemption_confirm_and_void_are_keyboard_operable(
+        self, fresh_client, browser_page
+    ):
+        with app_module.connect() as conn:
+            ipoints.log_entry(
+                conn,
+                "ALICE",
+                14,
+                "2020-08-01",
+                "Repeated disruption",
+                recorded_at="2020-08-01T09:00:00+00:00",
+            )
+        fresh_client.get("/ipoints")  # materialises the pending
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        _stub_form_submit(page)
+        page.evaluate(
+            """() => {
+                window.__voidAction = null;
+                document.querySelector('form.ipoint-void-form').addEventListener('submit', event => {
+                    event.preventDefault();
+                    window.__voidAction = event.target.getAttribute('action');
+                });
+            }"""
+        )
+
+        confirm = page.locator('button[aria-label^="Confirm redemption"]')
+        assert confirm.count() == 1
+        confirm.focus()
+        page.keyboard.press("Enter")
+
+        assert page.locator("#confirmModal.show").count() == 1
+        message = page.locator("#confirm-modal-message").text_content()
+        assert "ALICE" in message.upper()
+        page.keyboard.press("Enter")
+        assert page.evaluate("() => window.__submitCalled").endswith("/confirm")
+
+        void = page.locator('button[aria-label^="Void redemption"]')
+        assert void.count() == 1
+        void.focus()
+        page.keyboard.press("Enter")
+        assert page.evaluate("() => window.__voidAction").endswith("/void")

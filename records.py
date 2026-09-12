@@ -299,12 +299,41 @@ class IPointAdjustment:
 
 
 @dataclass
+class Confiscation:
+    """One Phone Confiscation, from pending through released or voided.
+
+    A pending Redemption is a Confiscation with ``status == "pending"``: it
+    carries the tier locked at creation and the points it reserves, but does
+    not debit the Balance until staff confirm it. Confirming freezes
+    ``display_name`` and ``bed`` (blank while pending) and sets
+    ``confirmed_at``/``release_due``; a pending row may instead be voided.
+    """
+
+    id: int
+    normalized_name: str
+    trigger_month: str
+    points_redeemed: int
+    tier: int
+    status: str
+    created_at: str
+    display_name: str = ""
+    bed: str = ""
+    confirmed_at: str | None = None
+    release_due: str | None = None
+    released_at: str | None = None
+    voided_at: str | None = None
+    void_reason: str | None = None
+
+
+@dataclass
 class IPointSummary:
     """One boarder's derived I-Points position for the I-Points view.
 
     ``balance`` is derived from the ledger, never stored; ``entries`` and
     ``adjustments`` power the per-boarder ledger listing and ``audits`` the
-    audit history, without a second read.
+    audit history, without a second read. ``pending`` is the boarder's open
+    pending Redemption, if any, and ``confiscations`` their full Confiscation
+    history.
     """
 
     normalized_name: str
@@ -314,3 +343,5 @@ class IPointSummary:
     entries: list[IPointEntry] = field(default_factory=list)
     adjustments: list[IPointAdjustment] = field(default_factory=list)
     audits: list[IPointAuditNote] = field(default_factory=list)
+    pending: Confiscation | None = None
+    confiscations: list[Confiscation] = field(default_factory=list)

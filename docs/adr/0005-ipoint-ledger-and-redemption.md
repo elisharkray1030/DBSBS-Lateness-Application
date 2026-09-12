@@ -1,5 +1,10 @@
 # I-Point ledger and month-end redemption
 
+> Status: the "pending is derived, never stored" decision below is **superseded
+> by [ADR 0007](0007-persisted-pending-confiscation.md)**, which persists a
+> pending Redemption as a `confiscations` row with `status = 'pending'`. The rest
+> of this ADR still stands.
+
 Added Irregularity Points (I-Points) as a second, persisting disciplinary
 currency alongside monthly lateness Points. Staff log I-Point Entries (boarder,
 points, date, reason); at each local month's close a boarder whose I-Point
