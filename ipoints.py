@@ -55,6 +55,12 @@ _CONFIRMED_STATUSES = (STATUS_ACTIVE, STATUS_RELEASED)
 # A pending or active Confiscation is "open": it blocks a second Redemption.
 _OPEN_STATUSES = (STATUS_PENDING, STATUS_ACTIVE)
 
+# A lateness Punishment in this status makes an active Confiscation "Stacked":
+# the phone is held for both reasons (CONTEXT.md, "Stacked"). Mirrors the
+# `phone_held` vocabulary owned by punishments.py without importing it, keeping
+# the two lifecycles parallel.
+_PHONE_HELD_PUNISHMENT = "phone_held"
+
 
 def points_phrase(points: int) -> str:
     """Words a point count with its singular/plural I-Point noun."""
@@ -165,8 +171,60 @@ class RedemptionConfirmed:
 
 
 @dataclass
-class RedemptionVoided:
-    """A pending Redemption was voided."""
+class ConfiscationVoided:
+    """A pending Redemption or active Confiscation was voided."""
+
+    normalized_name: str
+    display_name: str
+    points_redeemed: int
+    was_pending: bool = False
+
+    @property
+    def message(self) -> str:
+        subject = "pending redemption" if self.was_pending else "Confiscation"
+        return (
+            f"Voided the {subject} of "
+            f"{points_phrase(self.points_redeemed)} for {self.display_name}."
+        )
+
+
+@dataclass
+class ConfiscationReleased:
+    """An active Confiscation was marked released."""
+
+    normalized_name: str
+    display_name: str
+    points_redeemed: int
+    released_at: str
+
+    @property
+    def message(self) -> str:
+        return (
+            f"Marked the Confiscation of {points_phrase(self.points_redeemed)} "
+            f"for {self.display_name} released."
+        )
+
+
+@dataclass
+class ConfiscationEdited:
+    """An active Confiscation's tier, and so its period, was corrected."""
+
+    normalized_name: str
+    display_name: str
+    tier: int
+    release_due: str
+
+    @property
+    def message(self) -> str:
+        return (
+            f"Updated {self.display_name}'s Confiscation to tier {self.tier} "
+            f"(phone due back {self.release_due})."
+        )
+
+
+@dataclass
+class ConfiscationRemoved:
+    """A Confiscation was removed; its prior state stays in the audit."""
 
     normalized_name: str
     display_name: str
@@ -175,14 +233,19 @@ class RedemptionVoided:
     @property
     def message(self) -> str:
         return (
-            f"Voided the pending redemption of "
-            f"{points_phrase(self.points_redeemed)} for {self.display_name}."
+            f"Removed {self.display_name}'s Confiscation of "
+            f"{points_phrase(self.points_redeemed)}."
         )
 
 
 @dataclass
 class RedemptionRejected(ChangeRejected):
     """The pending Redemption could not be confirmed or voided."""
+
+
+@dataclass
+class ConfiscationRejected(ChangeRejected):
+    """A Confiscation lifecycle change could not be applied."""
 
 
 @dataclass(frozen=True)
@@ -491,13 +554,18 @@ def evaluate_month_close(
     adjustments: list[IPointAdjustment],
     confiscations: list[Confiscation],
     today: str,
+    recorded_months: "frozenset[str]" = frozenset(),
 ) -> "PendingRedemption | None":
     """Pure month-close evaluation for one boarder, with ``today`` injected.
 
     Inspects the latest fully-elapsed local calendar month. When the Balance as
-    of that month's end is at least 5, and no open or already-recorded
-    Redemption exists for it, returns the largest tier at or below the Balance
-    (capped at 15), locked at creation. Otherwise returns None.
+    of that month's end is at least 5, and no open Redemption exists and the
+    month has never had one recorded, returns the largest tier at or below the
+    Balance (capped at 15), locked at creation. Otherwise returns None.
+
+    ``recorded_months`` carries the trigger months this Boarder has ever had a
+    Redemption created for, read from the audit ledger so a removed
+    Confiscation's month cannot be re-created (the live row is gone).
     """
     month_end = _last_closed_month_end(_as_date(today))
     trigger_month = month_end.strftime("%Y-%m")
@@ -507,7 +575,7 @@ def evaluate_month_close(
         for confiscation in confiscations
     ):
         return None
-    if any(
+    if trigger_month in recorded_months or any(
         confiscation.trigger_month == trigger_month
         for confiscation in confiscations
     ):
@@ -546,6 +614,25 @@ def _ledger_by_boarder(conn) -> dict[str, _BoarderLedger]:
     return grouped
 
 
+def _recorded_trigger_months(conn) -> dict[str, "frozenset[str]"]:
+    """Maps each Match Key to the trigger months it ever had a Redemption for.
+
+    Read from the audit ledger rather than the live rows, so a Removed
+    Confiscation's month stays recorded and cannot be materialised afresh by a
+    later read (story 27's "remove freely"; the audit preserves the prior state).
+    """
+    recorded: dict[str, set[str]] = {}
+    for audit in storage.list_ipoint_audit(conn):
+        if audit.entity_type != "confiscation" or audit.action != "created":
+            continue
+        if not audit.after_state:
+            continue
+        month = json.loads(audit.after_state).get("trigger_month")
+        if month:
+            recorded.setdefault(audit.normalized_name, set()).add(month)
+    return {name: frozenset(months) for name, months in recorded.items()}
+
+
 def pending_redemptions(
     conn, today: str | None = None
 ) -> list[tuple[str, PendingRedemption]]:
@@ -557,10 +644,15 @@ def pending_redemptions(
     """
     if today is None:
         today = today_iso()
+    recorded = _recorded_trigger_months(conn)
     candidates: list[tuple[str, PendingRedemption]] = []
     for name, ledger in _ledger_by_boarder(conn).items():
         pending = evaluate_month_close(
-            ledger.entries, ledger.adjustments, ledger.confiscations, today
+            ledger.entries,
+            ledger.adjustments,
+            ledger.confiscations,
+            today,
+            recorded.get(name, frozenset()),
         )
         if pending is not None:
             candidates.append((name, pending))
@@ -684,26 +776,35 @@ def confirm_redemption(
     )
 
 
-def void_redemption(
+def void_confiscation(
     conn,
     confiscation_id: int,
     reason: str | None = None,
     recorded_at: str | None = None,
-) -> "RedemptionVoided | RedemptionRejected":
-    """Voids a pending Redemption, writing nothing to the Balance.
+) -> "ConfiscationVoided | ConfiscationRejected":
+    """Voids a pending Redemption or an active Confiscation.
 
-    A pending row never debited the Balance, so voiding simply cancels it;
-    the stored record and its audit row preserve that a month's Redemption was
-    considered and dismissed.
+    A pending row never debited the Balance, so voiding it merely cancels the
+    reservation. An active row did debit, so voiding it returns its points to
+    the Balance — a purely additive change, so no floor check is needed. A void
+    of an active Confiscation requires a reason (story 26); a pending
+    Redemption's reason stays optional.
     """
     confiscation = storage.get_ipoint_confiscation(conn, confiscation_id)
     if confiscation is None:
-        return RedemptionRejected(reason="That redemption no longer exists.")
-    if confiscation.status != STATUS_PENDING:
-        return RedemptionRejected(reason="That redemption is no longer pending.")
+        return ConfiscationRejected(reason="That Confiscation no longer exists.")
+    if confiscation.status not in _OPEN_STATUSES:
+        return ConfiscationRejected(
+            reason="That Confiscation is no longer pending or active."
+        )
+
+    clean_reason = (reason or "").strip() or None
+    if confiscation.status == STATUS_ACTIVE and clean_reason is None:
+        return ConfiscationRejected(
+            reason="A reason is required to void a Confiscation."
+        )
 
     stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    clean_reason = (reason or "").strip() or None
     display_name = resolve_display_name(conn, confiscation.normalized_name)
 
     after = _confiscation_state(confiscation)
@@ -728,7 +829,179 @@ def void_redemption(
             ),
         )
 
-    return RedemptionVoided(
+    return ConfiscationVoided(
+        normalized_name=confiscation.normalized_name,
+        display_name=display_name,
+        points_redeemed=confiscation.points_redeemed,
+        was_pending=confiscation.status == STATUS_PENDING,
+    )
+
+
+def release_confiscation(
+    conn,
+    confiscation_id: int,
+    released_at: str | None = None,
+) -> "ConfiscationReleased | ConfiscationRejected":
+    """Marks an active Confiscation released, recording when the phone returned.
+
+    Release is allowed at any time, including before ``release_due`` (story 25),
+    and never blocks on the lateness gate: a Stacked Confiscation can be
+    released, but the phone stays held while a lateness Phone Hold remains. The
+    points stay debited (``released`` is still a confirmed status).
+    """
+    confiscation = storage.get_ipoint_confiscation(conn, confiscation_id)
+    if confiscation is None:
+        return ConfiscationRejected(reason="That Confiscation no longer exists.")
+    if confiscation.status != STATUS_ACTIVE:
+        return ConfiscationRejected(
+            reason="Only an active Confiscation can be released."
+        )
+
+    stamp = released_at or datetime.now(tz=timezone.utc).isoformat()
+    display_name = resolve_display_name(conn, confiscation.normalized_name)
+
+    after = _confiscation_state(confiscation)
+    after.update({"status": STATUS_RELEASED, "released_at": stamp})
+
+    with conn:
+        storage.stage_release_ipoint_confiscation(conn, confiscation_id, stamp)
+        storage.stage_ipoint_audit(
+            conn,
+            _audit_draft(
+                "confiscation",
+                confiscation_id,
+                confiscation.normalized_name,
+                "released",
+                _confiscation_state(confiscation),
+                after,
+                stamp,
+            ),
+        )
+
+    return ConfiscationReleased(
+        normalized_name=confiscation.normalized_name,
+        display_name=display_name,
+        points_redeemed=confiscation.points_redeemed,
+        released_at=stamp,
+    )
+
+
+def edit_confiscation(
+    conn,
+    confiscation_id: int,
+    tier,
+    recorded_at: str | None = None,
+) -> "ConfiscationEdited | ConfiscationRejected":
+    """Corrects an active Confiscation's tier, and so its fixed period.
+
+    The tier fixes both the redeemed points and the period (story 21), so the
+    edit recomputes ``points_redeemed`` and ``release_due`` from the original
+    ``confirmed_at`` date; the frozen display name and bed are untouched, and a
+    pending row's locked tier (story 16) can never be edited. Raising the tier
+    debits more and is refused when it would take the Balance below zero
+    (ADR 0006); lowering it is always safe.
+    """
+    confiscation = storage.get_ipoint_confiscation(conn, confiscation_id)
+    if confiscation is None:
+        return ConfiscationRejected(reason="That Confiscation no longer exists.")
+    if confiscation.status != STATUS_ACTIVE:
+        return ConfiscationRejected(
+            reason="Only an active Confiscation can be edited."
+        )
+
+    tier_value = _coerce_points(tier)
+    if tier_value not in TIERS:
+        return ConfiscationRejected(
+            reason="Confiscation tier must be one of 5, 10, or 15."
+        )
+
+    if confiscation.confirmed_at is None:
+        return ConfiscationRejected(reason="That Confiscation was never confirmed.")
+
+    release_due = release_due_for(
+        tier_value, _as_date(confiscation.confirmed_at)
+    ).isoformat()
+    # The active row is already subtracted from the Balance, so replacing its
+    # debit means adding the old amount back before subtracting the new one.
+    projected = (
+        _balance_for(conn, confiscation.normalized_name)
+        + confiscation.points_redeemed
+        - tier_value
+    )
+    if projected < 0:
+        return ConfiscationRejected(reason=_OVERDRAW)
+
+    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
+    display_name = resolve_display_name(conn, confiscation.normalized_name)
+
+    after = _confiscation_state(confiscation)
+    after.update(
+        {
+            "tier": tier_value,
+            "points_redeemed": tier_value,
+            "release_due": release_due,
+        }
+    )
+
+    with conn:
+        storage.stage_update_ipoint_confiscation(
+            conn, confiscation_id, tier_value, tier_value, release_due
+        )
+        storage.stage_ipoint_audit(
+            conn,
+            _audit_draft(
+                "confiscation",
+                confiscation_id,
+                confiscation.normalized_name,
+                "edited",
+                _confiscation_state(confiscation),
+                after,
+                stamp,
+            ),
+        )
+
+    return ConfiscationEdited(
+        normalized_name=confiscation.normalized_name,
+        display_name=display_name,
+        tier=tier_value,
+        release_due=release_due,
+    )
+
+
+def remove_confiscation(
+    conn,
+    confiscation_id: int,
+    recorded_at: str | None = None,
+) -> "ConfiscationRemoved | ConfiscationRejected":
+    """Hard-deletes a Confiscation of any status, auditing the prior state.
+
+    Removing a confirmed (``active`` or ``released``) row returns its points to
+    the Balance — additive, so no floor check is needed. The prior state
+    survives in the I-Point Audit History.
+    """
+    confiscation = storage.get_ipoint_confiscation(conn, confiscation_id)
+    if confiscation is None:
+        return ConfiscationRejected(reason="That Confiscation no longer exists.")
+
+    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
+    display_name = resolve_display_name(conn, confiscation.normalized_name)
+
+    with conn:
+        storage.stage_delete_ipoint_confiscation(conn, confiscation_id)
+        storage.stage_ipoint_audit(
+            conn,
+            _audit_draft(
+                "confiscation",
+                confiscation_id,
+                confiscation.normalized_name,
+                "removed",
+                _confiscation_state(confiscation),
+                None,
+                stamp,
+            ),
+        )
+
+    return ConfiscationRemoved(
         normalized_name=confiscation.normalized_name,
         display_name=display_name,
         points_redeemed=confiscation.points_redeemed,
@@ -1084,8 +1357,25 @@ def _describe_change(action: str, before, after, entity_type: str) -> str:
             )
         if action == "voided":
             reason = (after or {}).get("void_reason")
-            base = "Voided the pending redemption"
+            was_pending = (before or {}).get("status") == STATUS_PENDING
+            base = "Voided the pending redemption" if was_pending else (
+                "Voided the Confiscation"
+            )
             return f"{base}: {reason}" if reason else base
+        if action == "released" and after:
+            return (
+                f"Released the Confiscation of {after['points_redeemed']} points "
+                f"({after.get('released_at') or ''})"
+            )
+        if action == "edited" and before and after:
+            return (
+                f"Tier {before['tier']} -> {after['tier']}; "
+                f"phone due {before.get('release_due')} -> {after.get('release_due')}"
+            )
+        if action == "removed" and before:
+            return (
+                f"Removed the Confiscation of {before['points_redeemed']} points"
+            )
         return action
     if entity_type == "adjustment":
         if action == "created" and after:
@@ -1122,7 +1412,82 @@ def _audit_note(audit: IPointAudit) -> IPointAuditNote:
     )
 
 
-def boarder_balances(conn) -> list[IPointSummary]:
+def phone_held_keys(conn) -> set[str]:
+    """Returns the Match Keys whose lateness Punishment currently holds a phone.
+
+    The single read that feeds the Stacked predicate; keeping it here means the
+    I-Points lifecycle never imports the Punishments module.
+    """
+    return {
+        punishment.normalized_name
+        for punishment in storage.list_punishments(
+            conn, statuses=(_PHONE_HELD_PUNISHMENT,)
+        )
+    }
+
+
+def attach_confiscation_flags(
+    confiscations: list[Confiscation],
+    phone_held_keys: set[str],
+    today: str,
+) -> list[Confiscation]:
+    """Attaches computed ``is_due``/``stacked`` flags to each Confiscation.
+
+    A pure function with ``today`` and the phone-held Match Keys injected, so
+    the boundary is deterministic in tests (the pattern the Punishments module
+    uses). ``is_due`` marks an active Confiscation on or after its
+    ``release_due``; ``stacked`` marks one whose Boarder also has a lateness
+    Phone Hold. Both are display flags — the app never releases on its own.
+    """
+    today_date = _as_date(today)
+    for confiscation in confiscations:
+        active = confiscation.status == STATUS_ACTIVE
+        confiscation.is_due = (
+            active
+            and confiscation.release_due is not None
+            and _as_date(confiscation.release_due) <= today_date
+        )
+        confiscation.stacked = (
+            active and confiscation.normalized_name in phone_held_keys
+        )
+    return confiscations
+
+
+# Active Confiscations lead the list; released then voided follow.
+_CONFISCATION_STATUS_RANK = {
+    STATUS_ACTIVE: 0,
+    STATUS_RELEASED: 1,
+    STATUS_VOIDED: 2,
+}
+
+
+def confiscation_list(
+    conn,
+    statuses: tuple[str, ...] | None = None,
+    today: str | None = None,
+) -> list[Confiscation]:
+    """Lists Confiscations across Boarders for the filterable management list.
+
+    ``statuses`` narrows the query (``None`` lists every status); rows carry the
+    derived due/Stacked flags, and sort active-first by release date.
+    """
+    if today is None:
+        today = today_iso()
+    rows = storage.list_ipoint_confiscations(conn, statuses=statuses)
+    attach_confiscation_flags(rows, phone_held_keys(conn), today)
+    return sorted(
+        rows,
+        key=lambda row: (
+            _CONFISCATION_STATUS_RANK.get(row.status, 99),
+            row.release_due or "",
+            row.id,
+        ),
+    )
+
+
+def boarder_balances(
+    conn, today: str | None = None
+) -> list[IPointSummary]:
     """Derives each boarder's I-Point Balance and Confiscation state.
 
     Balance is that Match Key's Entries plus Adjustments minus confirmed
@@ -1132,8 +1497,11 @@ def boarder_balances(conn) -> list[IPointSummary]:
     Match Key for a boarder known only through I-Points. Summaries sort by the
     shared Bed rule then name.
     """
+    if today is None:
+        today = today_iso()
     ledgers = _ledger_by_boarder(conn)
     identity = storage.freshest_identity_map(conn)
+    held = phone_held_keys(conn)
 
     grouped_audits: dict[str, list[IPointAudit]] = {}
     for audit in storage.list_ipoint_audit(conn):
@@ -1161,7 +1529,9 @@ def boarder_balances(conn) -> list[IPointSummary]:
                 adjustments=ledger.adjustments,
                 audits=[_audit_note(audit) for audit in grouped_audits.get(key, [])],
                 pending=pending,
-                confiscations=ledger.confiscations,
+                confiscations=attach_confiscation_flags(
+                    ledger.confiscations, held, today
+                ),
             )
         )
     summaries.sort(key=lambda summary: (bed_sort_key(summary.bed), summary.display_name))

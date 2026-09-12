@@ -46,3 +46,8 @@ reachable path when the Balance falls after materialisation.
 - The month-close evaluator is a pure function with an injected `today`; the
   materialisation it feeds is idempotent, so repeated reads cannot duplicate a
   pending.
+- Once active, a Confiscation can be released (including early), voided with a
+  reason, edited (tier only), or removed; release and remove return the phone
+  without recomputing anything, while void and remove return its points to the
+  Balance. See [ADR 0008](0008-confiscation-edit-semantics.md) for the edit
+  semantics and the two-gate Stacked flag.

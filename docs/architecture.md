@@ -65,14 +65,17 @@ Important behavior:
   duplicate normalized names last-row-wins and validating that no two different
   boarders share a Bed, raising a `ValueError` otherwise.
 - `stage_ipoint_entry(conn, ...)`, `stage_ipoint_adjustment(conn, ...)`,
-  `stage_ipoint_confiscation(conn, ...)`, and `stage_ipoint_audit(conn, audit)`
-  stage one I-Point ledger row and one audit row on the open transaction; the
-  I-Points lifecycle owns the commit, so the ledger row and its audit travel
-  together or not at all.
+  `stage_ipoint_confiscation(conn, ...)`, `stage_confirm_ipoint_confiscation`,
+  `stage_release_ipoint_confiscation`, `stage_void_ipoint_confiscation`,
+  `stage_update_ipoint_confiscation`, `stage_delete_ipoint_confiscation`, and
+  `stage_ipoint_audit(conn, audit)` stage one I-Point ledger row and one audit
+  row on the open transaction; the I-Points lifecycle owns the commit, so the
+  ledger row and its audit travel together or not at all.
 - `list_ipoint_entries(conn[, name])`, `list_ipoint_adjustments(conn[, name])`,
-  `list_ipoint_confiscations(conn[, name])`, and
+  `list_ipoint_confiscations(conn[, name][, statuses])`, and
   `list_ipoint_audit(conn[, name])` read the ledger and its history, optionally
-  for one Match Key.
+  for one Match Key and — for Confiscations — a status set. The shared
+  `_select_ipoint_rows` seam owns the optional filters.
 - `freshest_identity_map(conn)` maps every known Match Key to its freshest-first
   identity, derived from the All-Time List and shared by the House Dashboard and
   the I-Point Balance.
@@ -113,9 +116,11 @@ Important behavior:
 `ipoints.py` owns the I-Points ledger, standing beside `punishments.py` as the
 second disciplinary lifecycle: it validates and logs Entries, edits and removes
 them, adds, edits, and removes signed Adjustments, evaluates month-close
-Redemptions, confirms them into Phone Confiscations, writes each ledger row and
-its audit row in one transaction, and derives every boarder's Balance from the
-stored ledger rather than storing it.
+Redemptions, confirms them into Phone Confiscations, manages the Confiscation
+lifecycle (release, void, edit, remove), writes each ledger row and its audit
+row in one transaction, derives every boarder's Balance from the stored ledger
+rather than storing it, and computes the derived due-for-release and Stacked
+flags.
 
 Important behavior:
 
@@ -135,7 +140,7 @@ Important behavior:
   current Balance so it can never take the Balance below zero (ADR 0006). Each
   change writes its `created`/`edited`/`removed` audit row (entity type
   `adjustment`) in the same connection block.
-- `boarder_balances(conn)` derives each boarder's Balance as the sum of
+- `boarder_balances(conn, today)` derives each boarder's Balance as the sum of
   their live Entries plus Adjustments minus the `points_redeemed` of their
   confirmed (`active` or `released`) Confiscations, resolving identity
   freshest-first through the shared All-Time List and falling back to the Match
@@ -151,9 +156,28 @@ Important behavior:
   persists them idempotently (ADR 0007).
 - `confirm_redemption(conn, id, ...)` freezes display name and bed, sets the
   Confiscation `active` with its `release_due`, and debits the Balance, refusing
-  when the Balance has fallen below the pending's `points_redeemed`; `void_redemption`
-  cancels a pending row. Each writes a `confirmed`/`voided` audit row
-  (entity type `confiscation`) in the same connection block.
+  when the Balance has fallen below the pending's `points_redeemed`.
+- `release_confiscation(conn, id, ...)` marks an `active` Confiscation
+  `released`, recording when the phone returned; release is allowed early, and
+  never waits on the lateness gate. `void_confiscation(conn, id, reason, ...)`
+  cancels a pending Redemption (reason optional) or voids an active
+  Confiscation (reason required), returning its points to the Balance.
+  `edit_confiscation(conn, id, tier, ...)` corrects an active row's tier, and so
+  its `points_redeemed` and period, recomputing `release_due` from the original
+  `confirmed_at` and refusing a rise that would take the Balance below zero;
+  the frozen display name and bed are untouched, and a pending row's locked tier
+  cannot be edited. `remove_confiscation(conn, id, ...)` hard-deletes any
+  Confiscation, returning a confirmed row's points. Each writes its
+  `confirmed`/`released`/`voided`/`edited`/`removed` audit row (entity type
+  `confiscation`) in the same connection block.
+- `attach_confiscation_flags(confiscations, phone_held_keys, today)` is the pure
+  seam for the derived display flags: `is_due` marks an active Confiscation on
+  or after its `release_due`, and `stacked` marks one whose Boarder also has a
+  `phone_held` lateness Punishment. `phone_held_keys(conn)` supplies the
+  phone-held Match Keys without importing `punishments.py`; the flags are
+  attached in `boarder_balances(conn, today)` and `confiscation_list(conn,
+  statuses, today)`. The app never releases on its own (ADR 0005), and the phone
+  returns only once both gates clear.
 - The I-Points tables (`ipoint_entries`, `ipoint_adjustments`, `confiscations`,
   `ipoint_audit`) are created idempotently by `create_schema` and re-keyed with
   the other tables by the Match-Key migration. A partial unique index keeps one
@@ -163,9 +187,14 @@ Important behavior:
   `POST /ipoints/adjustments`, `POST /ipoints/adjustments/<id>/edit`,
   `POST /ipoints/adjustments/<id>/remove`,
   `POST /ipoints/confiscations/<id>/confirm`,
-  `POST /ipoints/confiscations/<id>/void`) and delegate here; the route layer
+  `POST /ipoints/confiscations/<id>/release`,
+  `POST /ipoints/confiscations/<id>/void`,
+  `POST /ipoints/confiscations/<id>/edit`,
+  `POST /ipoints/confiscations/<id>/remove`) and delegate here; the route layer
   stays a thin adapter. The GET opens a read-only connection, materialising due
-  pending Redemptions through a read-write pass only when needed (ADR 0007).
+  pending Redemptions through a read-write pass only when needed (ADR 0007), and
+  renders the Confiscation management list filtered by the
+  `confiscation_status` query parameter (default `active`).
 
 ## Demo seeding — `seed_demo_data.py`
 
@@ -195,10 +224,14 @@ Important behavior:
   `POST /ipoints/adjustments`, `POST /ipoints/adjustments/<id>/edit`,
   `POST /ipoints/adjustments/<id>/remove`,
   `POST /ipoints/confiscations/<id>/confirm`,
-  `POST /ipoints/confiscations/<id>/void`)
+  `POST /ipoints/confiscations/<id>/release`,
+  `POST /ipoints/confiscations/<id>/void`,
+  `POST /ipoints/confiscations/<id>/edit`,
+  `POST /ipoints/confiscations/<id>/remove`)
   delegate to `ipoints.py`; the GET opens a read-only connection (materialising
-  due pending Redemptions through a read-write pass only when needed), the POSTs
-  the read-write one behind CSRF and the shared mutation-retry wrapper.
+  due pending Redemptions through a read-write pass only when needed) and filters
+  the Confiscation list by `confiscation_status`, the POSTs the read-write one
+  behind CSRF and the shared mutation-retry wrapper.
 - `api_month()` returns the month's rows as an ordered collection of explicit
   fields (name, display name, bed, frequency, total minutes, total points), so
   the wire format matches the stored rows and the CSV writer and carries the
