@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 
 from records import (
     IPointAudit,
+    IPointAuditDraft,
     IPointAuditNote,
     IPointEntry,
     IPointSummary,
@@ -146,6 +147,31 @@ def _entry_state(entry: IPointEntry) -> dict[str, object]:
     return _entry_fields(entry.points, entry.occurred_on, entry.reason)
 
 
+def _dump_state(state: dict[str, object] | None) -> str | None:
+    """Encodes one auditable snapshot as sort-keyed JSON, or None when absent."""
+    return json.dumps(state, sort_keys=True) if state is not None else None
+
+
+def _audit_draft(
+    entry_id: int,
+    normalized_name: str,
+    action: str,
+    before_state: dict[str, object] | None,
+    after_state: dict[str, object] | None,
+    changed_at: str,
+) -> IPointAuditDraft:
+    """Builds one Entry Audit draft, encoding both snapshots as JSON."""
+    return IPointAuditDraft(
+        entity_type="entry",
+        entity_id=entry_id,
+        normalized_name=normalized_name,
+        action=action,
+        before_state=_dump_state(before_state),
+        after_state=_dump_state(after_state),
+        changed_at=changed_at,
+    )
+
+
 def _balance_for(conn, normalized_name: str) -> int:
     """Derives one boarder's current I-Point Balance from the ledger."""
     return sum(
@@ -195,20 +221,14 @@ def log_entry(
         )
         storage.stage_ipoint_audit(
             conn,
-            entity_type="entry",
-            entity_id=entry_id,
-            normalized_name=name,
-            action="created",
-            before_state=None,
-            after_state=json.dumps(
-                {
-                    "points": points_value,
-                    "occurred_on": resolved_date,
-                    "reason": clean_reason,
-                },
-                sort_keys=True,
+            _audit_draft(
+                entry_id,
+                name,
+                "created",
+                None,
+                _entry_fields(points_value, resolved_date, clean_reason),
+                stamp,
             ),
-            changed_at=stamp,
         )
 
     return EntrySaved(
@@ -262,16 +282,14 @@ def edit_entry(
         )
         storage.stage_ipoint_audit(
             conn,
-            entity_type="entry",
-            entity_id=entry_id,
-            normalized_name=entry.normalized_name,
-            action="edited",
-            before_state=json.dumps(_entry_state(entry), sort_keys=True),
-            after_state=json.dumps(
+            _audit_draft(
+                entry_id,
+                entry.normalized_name,
+                "edited",
+                _entry_state(entry),
                 _entry_fields(points_value, resolved_date, clean_reason),
-                sort_keys=True,
+                stamp,
             ),
-            changed_at=stamp,
         )
 
     return EntryEdited(
@@ -307,13 +325,14 @@ def remove_entry(
         storage.stage_delete_ipoint_entry(conn, entry_id)
         storage.stage_ipoint_audit(
             conn,
-            entity_type="entry",
-            entity_id=entry_id,
-            normalized_name=entry.normalized_name,
-            action="removed",
-            before_state=json.dumps(_entry_state(entry), sort_keys=True),
-            after_state=None,
-            changed_at=stamp,
+            _audit_draft(
+                entry_id,
+                entry.normalized_name,
+                "removed",
+                _entry_state(entry),
+                None,
+                stamp,
+            ),
         )
 
     return EntryRemoved(

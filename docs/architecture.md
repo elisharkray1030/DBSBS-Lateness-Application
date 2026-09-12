@@ -81,8 +81,9 @@ also holds the `Boarder` Master List row and the `UnparsedTimeRow` record, and
 the `bed_sort_key` rule that orders Monthly Report rows.
 
 It also carries the I-Point records: `IPointEntry` (one logged occasion),
-`IPointAudit` (one retained change with its prior state), and `IPointSummary`
-(one boarder's derived Balance plus their Entries).
+`IPointAuditDraft` (the fields of one retained change, before its id, staged
+into storage), `IPointAudit` (a stored change with its prior state), and
+`IPointSummary` (one boarder's derived Balance plus their Entries).
 
 ## Punishments — `punishments.py`
 

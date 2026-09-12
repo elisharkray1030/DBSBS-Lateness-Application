@@ -249,10 +249,13 @@ class IPointEntry:
 
 
 @dataclass
-class IPointAudit:
-    """One retained change to a boarder's I-Points, with its prior state."""
+class IPointAuditDraft:
+    """An I-Point Audit row waiting to be staged, minus its database id.
 
-    id: int
+    The seven fields travel as one carrier from the I-Points lifecycle into
+    storage, so the write-side shape of an Audit row has a single home.
+    """
+
     entity_type: str
     entity_id: int
     normalized_name: str
@@ -260,6 +263,16 @@ class IPointAudit:
     before_state: str | None
     after_state: str | None
     changed_at: str
+
+
+@dataclass
+class IPointAudit(IPointAuditDraft):
+    """One retained change to a boarder's I-Points, with its prior state.
+
+    A stored Audit row: the fields a draft carries, plus its database id.
+    """
+
+    id: int
 
 
 @dataclass
