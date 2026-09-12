@@ -284,6 +284,82 @@ class TestBalance:
         assert ipoints.boarder_balances(conn) == []
 
 
+class TestBoarderSummary:
+    def test_unknown_key_has_no_summary(self, conn):
+        assert ipoints.boarder_summary(conn, "NOBODY") is None
+
+    def test_summarizes_only_the_requested_boarder(self, conn):
+        seed_entry(conn, name="ALICE", points=2)
+        seed_entry(conn, name="ALICE", points=3, occurred_on="2026-08-02")
+        seed_entry(conn, name="BOB", points=7)
+
+        summary = ipoints.boarder_summary(conn, "ALICE")
+
+        assert summary is not None
+        assert summary.normalized_name == "ALICE"
+        assert summary.balance == 5
+        assert [entry.points for entry in summary.entries] == [2, 3]
+
+    def test_display_name_falls_back_to_match_key_for_ipoints_only(self, conn):
+        seed_entry(conn, name="CHEN WEI", points=5)
+
+        summary = ipoints.boarder_summary(conn, "CHEN WEI")
+
+        assert summary is not None
+        assert summary.display_name == "CHEN WEI"
+        assert summary.bed == ""
+
+    def test_resolves_master_list_identity(self, conn):
+        storage.replace_boarders(
+            conn,
+            [
+                storage.Boarder(
+                    normalized_name="ALICE", display_name="Alice", bed="601A"
+                )
+            ],
+        )
+        seed_entry(conn, name="ALICE", points=5)
+
+        summary = ipoints.boarder_summary(conn, "ALICE")
+
+        assert summary is not None
+        assert summary.display_name == "Alice"
+        assert summary.bed == "601A"
+
+    def test_pending_redemption_does_not_debit_the_balance(self, conn):
+        seed_entry(conn, points=14)
+        _materialise(conn)
+
+        summary = ipoints.boarder_summary(conn, "ALICE")
+
+        assert summary is not None
+        assert summary.pending is not None
+        assert summary.pending.tier == 10
+        assert summary.balance == 14
+
+    def test_confiscations_carry_injected_due_and_stacked_flags(self, conn):
+        _seed_active(conn, confirmed_on="2026-09-15")
+        _hold_phone(conn)
+
+        summary = ipoints.boarder_summary(conn, "ALICE", today="2026-09-30")
+
+        assert summary is not None
+        assert len(summary.confiscations) == 1
+        assert summary.confiscations[0].is_due is True
+        assert summary.confiscations[0].stacked is True
+
+    def test_audit_only_key_still_yields_a_summary(self, conn):
+        seed_entry(conn, points=5)
+        ipoints.remove_entry(conn, _entry_id(conn))
+
+        summary = ipoints.boarder_summary(conn, "ALICE")
+
+        assert summary is not None
+        assert summary.balance == 0
+        assert summary.entries == []
+        assert len(summary.audits) == 2
+
+
 class TestMatchKeyMigration:
     def test_migration_rekeys_ipoint_tables(self, conn):
         conn.execute(

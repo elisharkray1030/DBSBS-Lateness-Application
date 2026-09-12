@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from records import (
+    BoarderIdentity,
     Confiscation,
     IPointAdjustment,
     IPointAudit,
@@ -1485,6 +1486,40 @@ def confiscation_list(
     )
 
 
+def _summary_for(
+    key: str,
+    ledger: _BoarderLedger,
+    who: BoarderIdentity | None,
+    held: set[str],
+    audits: list[IPointAudit],
+    today: str,
+) -> IPointSummary:
+    """Builds one boarder's I-Point Summary from an already-read ledger.
+
+    The single owner of the derived shape: Balance, chronologically ordered
+    entries, the open pending Redemption, and Confiscation display flags. Both
+    :func:`boarder_balances` and :func:`boarder_summary` call it, so the
+    arithmetic and flag logic cannot drift between the list and one profile.
+    """
+    pending = next(
+        (row for row in ledger.confiscations if row.status == STATUS_PENDING),
+        None,
+    )
+    return IPointSummary(
+        normalized_name=key,
+        display_name=who.display_name if who else key,
+        bed=who.bed if who else "",
+        balance=_net_balance(
+            ledger.entries, ledger.adjustments, ledger.confiscations
+        ),
+        entries=sorted(ledger.entries, key=lambda row: (row.occurred_on, row.id)),
+        adjustments=ledger.adjustments,
+        audits=[_audit_note(audit) for audit in audits],
+        pending=pending,
+        confiscations=attach_confiscation_flags(ledger.confiscations, held, today),
+    )
+
+
 def boarder_balances(
     conn, today: str | None = None
 ) -> list[IPointSummary]:
@@ -1507,32 +1542,46 @@ def boarder_balances(
     for audit in storage.list_ipoint_audit(conn):
         grouped_audits.setdefault(audit.normalized_name, []).append(audit)
 
-    summaries: list[IPointSummary] = []
-    for key in ledgers.keys() | grouped_audits.keys():
-        ledger = ledgers.get(key, _BoarderLedger())
-        who = identity.get(key)
-        pending = next(
-            (row for row in ledger.confiscations if row.status == STATUS_PENDING),
-            None,
+    summaries = [
+        _summary_for(
+            key,
+            ledgers.get(key, _BoarderLedger()),
+            identity.get(key),
+            held,
+            grouped_audits.get(key, []),
+            today,
         )
-        summaries.append(
-            IPointSummary(
-                normalized_name=key,
-                display_name=who.display_name if who else key,
-                bed=who.bed if who else "",
-                balance=_net_balance(
-                    ledger.entries, ledger.adjustments, ledger.confiscations
-                ),
-                entries=sorted(
-                    ledger.entries, key=lambda row: (row.occurred_on, row.id)
-                ),
-                adjustments=ledger.adjustments,
-                audits=[_audit_note(audit) for audit in grouped_audits.get(key, [])],
-                pending=pending,
-                confiscations=attach_confiscation_flags(
-                    ledger.confiscations, held, today
-                ),
-            )
-        )
+        for key in ledgers.keys() | grouped_audits.keys()
+    ]
     summaries.sort(key=lambda summary: (bed_sort_key(summary.bed), summary.display_name))
     return summaries
+
+
+def boarder_summary(
+    conn, normalized_name: str, today: str | None = None
+) -> IPointSummary | None:
+    """Derives one boarder's I-Points position for the Boarder Profile.
+
+    The scoped counterpart to :func:`boarder_balances`: it reads only the one
+    Match Key's ledger and audit rows, rather than every Boarder's. ``None``
+    means the key is unknown to I-Points — it has no row of any kind — so the
+    profile can fall back to its own empty state. Identity resolves
+    freshest-first, falling back to the Match Key for a Boarder known only
+    through I-Points; Balance, pending, and Confiscation flags come from the
+    shared :func:`_summary_for`, so they cannot drift from the full list.
+    """
+    if today is None:
+        today = today_iso()
+    entries = storage.list_ipoint_entries(conn, normalized_name)
+    adjustments = storage.list_ipoint_adjustments(conn, normalized_name)
+    confiscations = storage.list_ipoint_confiscations(conn, normalized_name)
+    audits = storage.list_ipoint_audit(conn, normalized_name)
+    if not (entries or adjustments or confiscations or audits):
+        return None
+    ledger = _BoarderLedger(
+        entries=entries, adjustments=adjustments, confiscations=confiscations
+    )
+    who = storage.freshest_identity_map(conn).get(normalized_name)
+    return _summary_for(
+        normalized_name, ledger, who, phone_held_keys(conn), audits, today
+    )

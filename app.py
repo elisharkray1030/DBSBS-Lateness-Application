@@ -1642,6 +1642,11 @@ def _escalation_rows(series, live_punishments):
     return [rows[month] for month in sorted(rows)]
 
 
+def _boarder_profile_url(normalized: str) -> str:
+    """Builds the canonical, URL-quoted Boarder Profile path for a Match Key."""
+    return f"/boarder/{quote(normalized)}"
+
+
 @bp.route('/boarder/<path:key>')
 def boarder_profile(key):
     """Renders one boarder's profile, addressed by URL-encoded Match Key.
@@ -1656,6 +1661,8 @@ def boarder_profile(key):
     identity = None
     series = []
     punishments = []
+    ipoint_summary = None
+    today = ipoints.today_iso()
     with connect(read_only=True) as conn:
         if normalized:
             identity = storage.resolve_boarder_identity(conn, normalized)
@@ -1663,11 +1670,23 @@ def boarder_profile(key):
             punishments = attach_display_flags(
                 storage.list_boarder_punishments(conn, normalized)
             )
+            ipoint_summary = ipoints.boarder_summary(conn, normalized, today)
     live_punishments = [p for p in punishments if p.status != 'voided']
     voided_punishments = [p for p in punishments if p.status == 'voided']
     escalation_rows = _escalation_rows(series, live_punishments)
 
+    profile_url = _boarder_profile_url(normalized) if normalized else ""
+    show_ipoints = identity is not None or ipoint_summary is not None
+    # Only a boarder known to the roster/history (and no longer current) is a
+    # Removed Boarder; an I-Points-only key has no resolved identity and stays
+    # eligible until #187 owns the write-path rule.
+    can_log_ipoints = identity is None or identity.is_current
+
+    message, error = _consume_flashes()
+
     return render_template('boarder.html', **_page_context(
+        message=message,
+        error=error,
         identity=identity,
         series=series,
         summary=build_profile_summary(series),
@@ -1680,7 +1699,58 @@ def boarder_profile(key):
         live_punishments=live_punishments,
         voided_punishments=voided_punishments,
         escalation_rows=escalation_rows,
+        ipoint_summary=ipoint_summary,
+        show_ipoints=show_ipoints,
+        can_log_ipoints=can_log_ipoints,
+        ipoint_action=f"{profile_url}/ipoints",
+        today=today,
     ))
+
+
+@bp.route('/boarder/<path:key>/ipoints', methods=['POST'])
+def log_profile_ipoint(key):
+    """Logs an I-Point Entry from a Boarder's profile, then returns to it.
+
+    The Match Key is the URL, not a form field, so the submitted Entry can
+    only land on the Boarder whose profile was posted from; the shared
+    ``ipoints.log_entry`` validator owns the rules. Feedback travels in a
+    flash, never the URL.
+    """
+    normalized = normalize_name(key)
+    points = request.form.get('points', '').strip()
+    occurred_on = request.form.get('occurred_on', '').strip()
+    reason = request.form.get('reason', '').strip()
+    destination = _boarder_profile_url(normalized)
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.log_entry(
+                conn,
+                normalized_name=normalized,
+                points=points,
+                occurred_on=occurred_on,
+                reason=reason,
+            )
+
+        if isinstance(outcome, EntryRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info(
+                "Logged I-Point Entry for %s", outcome.normalized_name
+            )
+            flash(outcome.message, "success")
+        return redirect(destination)
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect(destination)
+
+    return _mutate_with_retry(
+        "log the I-Point Entry",
+        attempt,
+        _busy_redirect,
+        "Boarder Profile I-Point Entry logging hit sustained contention",
+    )
 
 
 def _punishments_redirect():
