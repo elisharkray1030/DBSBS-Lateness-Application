@@ -20,6 +20,14 @@ hand-authored persona matrix then makes each implemented feature observable:
   stored figure (ADR 0001 freeze).
 - One quiet boarder is Removed afterwards so Current/Former views have a
   Former entry.
+- Deterministic I-Point data: Entries spread across personas (multi-entry
+  balances, a single-entry balance, a removed boarder's frozen history, and one
+  boarder known only through I-Points), a positive and a negative Adjustment,
+  and a Confiscation in every status — pending, active (due for release),
+  released, and voided — so the I-Points view, its filters, and the Boarder
+  Profile section all have data. Every write uses a fixed stamp, and the
+  pending Redemptions are materialised at a fixed ``IPOINT_TODAY`` so opening
+  the view never writes surprise rows.
 
 Run: python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]
 """
@@ -32,14 +40,23 @@ import sqlite3
 from dataclasses import dataclass, field
 
 import app as app_module
+import ipoints
 import parser as parser_module
 import punishments
 import storage
-from records import BoarderRecord, WatchlistEntry, normalize_name
+from records import BoarderRecord, IPointSummary, WatchlistEntry, normalize_name
 
 MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-07", "2026-08"]
 REMOVED_BED = "603A"
 INCIDENT_DAYS = [3, 9, 17, 23]
+
+# The fixed "today" the I-Point seed resolves month-close against: it makes
+# 2026-08 the final closed month and keeps every pending Redemption the seeder
+# materialises in step with what opening the I-Points view would compute.
+IPOINT_TODAY = "2026-09-15"
+# The one stamp every materialised pending Redemption shares, so a reseed is
+# byte-reproducible rather than carrying the wall clock.
+IPOINT_MATERIALISED_AT = "2026-09-01T07:00:00+00:00"
 
 # display name -> month -> (incident count, total minutes late). Everyone
 # absent stays at zero lateness; the parser still saves their zero row.
@@ -129,6 +146,42 @@ class PunishmentMove:
     void_reason: str | None = None
 
 
+@dataclass(frozen=True)
+class IPointSeed:
+    """One deterministic I-Point Entry the seeder logs."""
+
+    display_name: str
+    points: int
+    occurred_on: str
+    reason: str
+    recorded_at: str
+
+
+@dataclass(frozen=True)
+class AdjustmentSeed:
+    """One deterministic signed I-Point Adjustment the seeder adds."""
+
+    display_name: str
+    points: int
+    reason: str
+    recorded_at: str
+
+
+@dataclass(frozen=True)
+class ConfiscationSeed:
+    """One materialised pending Redemption, then its lifecycle transitions.
+
+    Confirming always happens; ``void_at`` or ``release_at`` may follow, and a
+    seed with neither stays active.
+    """
+
+    display_name: str
+    confirm_at: str
+    release_at: str | None = None
+    void_at: str | None = None
+    void_reason: str | None = None
+
+
 @dataclass
 class SeedReport:
     """Summary of one seeding run, for the operator to eyeball."""
@@ -136,6 +189,7 @@ class SeedReport:
     month_outcomes: list[MonthOutcome]
     watchlist: list[WatchlistEntry]
     removed_display_name: str | None
+    ipoint_balances: list[IPointSummary]
 
 
 def _minutes_split(total_minutes: int, incidents: int) -> list[int]:
@@ -272,6 +326,49 @@ _TRANSITIONS = [
     PunishmentMove("Jasper CHAN Cheuk Yin", "2026-04", "submitted", "2026-05-20T09:00:00+00:00"),
 ]
 
+# I-Point Entries carry across months and are independent of Monthly Log
+# imports, so a June entry sits alongside months that have no report. Jason
+# and Jasper hold multi-entry balances; Navas keeps a frozen entry after the
+# removal; the last boarder is known only through I-Points, proving the
+# Match-Key fallback and the Boarder Name datalist union.
+_IPOINT_PLAN = [
+    IPointSeed("Jason FONG Pak Hin", 3, "2026-01-15", "Used phone after lights-out", "2026-01-15T21:10:00+00:00"),
+    IPointSeed("Jason FONG Pak Hin", 2, "2026-02-20", "Disruptive in study hall", "2026-02-20T19:45:00+00:00"),
+    IPointSeed("Jason FONG Pak Hin", 5, "2026-07-05", "Left dorm without signing out", "2026-07-05T22:30:00+00:00"),
+    IPointSeed("Jasper CHAN Cheuk Yin", 2, "2026-03-02", "Skipped assigned duty", "2026-03-02T18:00:00+00:00"),
+    IPointSeed("Jasper CHAN Cheuk Yin", 1, "2026-03-18", "Back-chat to duty staff", "2026-03-18T20:15:00+00:00"),
+    IPointSeed("Jasper CHAN Cheuk Yin", 4, "2026-04-10", "Repeated late return", "2026-04-10T23:05:00+00:00"),
+    IPointSeed("Elvis WONG Yat Shun", 6, "2026-08-21", "Bullying incident", "2026-08-21T17:20:00+00:00"),
+    IPointSeed("Melvin YEUNG Cheng Ye Melvin", 1, "2026-05-09", "Untidy bed space", "2026-05-09T08:30:00+00:00"),
+    IPointSeed("Navas YUEN Hiu Nok", 5, "2026-01-08", "Property damage", "2026-01-08T16:40:00+00:00"),
+    IPointSeed("Theo LAM Chi Hang", 3, "2026-06-12", "Unapproved guest in room", "2026-06-12T21:55:00+00:00"),
+]
+
+# Both signs of Adjustment: Melvin gains a credit, and Theo's correction takes
+# his single 3-point Entry to exactly 0 — the floor boundary ADR 0006 permits,
+# never below. Both land before the August close, so neither disturbs the four
+# Boarders whose balances qualify for a pending Redemption.
+_ADJUSTMENT_PLAN = [
+    AdjustmentSeed("Melvin YEUNG Cheng Ye Melvin", 2, "Good-conduct credit", "2026-08-25T09:00:00+00:00"),
+    AdjustmentSeed("Theo LAM Chi Hang", -3, "Duplicate Entry correction", "2026-08-26T09:00:00+00:00"),
+]
+
+# Four Boarders clear the tier at the 2026-08 close (Jason 10, Jasper 5,
+# Elvis 5, Navas 5 after the Adjustments). Jason's pending is left for the
+# grouped-pending demo; Jasper is an active Confiscation past its release due,
+# Elvis is released, and Navas — Removed — is confirmed then voided, proving a
+# Removed Boarder's frozen identity still supports the lifecycle (story 44).
+_CONFISCATION_PLAN = [
+    ConfiscationSeed("Jasper CHAN Cheuk Yin", "2026-09-02T09:00:00+00:00"),
+    ConfiscationSeed("Elvis WONG Yat Shun", "2026-09-03T09:00:00+00:00", release_at="2026-09-05T09:00:00+00:00"),
+    ConfiscationSeed(
+        "Navas YUEN Hiu Nok",
+        "2026-09-04T09:00:00+00:00",
+        void_at="2026-09-06T09:00:00+00:00",
+        void_reason="Staff reversed the confiscation",
+    ),
+]
+
 
 def _punishment_id(conn: sqlite3.Connection, key: str, month: str) -> int | None:
     row = conn.execute(
@@ -306,6 +403,76 @@ def _apply_punishments(conn, master_list) -> None:
             raise ValueError(outcome.reason)
 
 
+def _apply_ipoints(conn: sqlite3.Connection) -> None:
+    """Logs the deterministic I-Point Entries through the production lifecycle."""
+    for seed in _IPOINT_PLAN:
+        outcome = ipoints.log_entry(
+            conn,
+            normalized_name=normalize_name(seed.display_name),
+            points=seed.points,
+            occurred_on=seed.occurred_on,
+            reason=seed.reason,
+            recorded_at=seed.recorded_at,
+        )
+        if isinstance(outcome, ipoints.EntryRejected):
+            raise ValueError(
+                f"I-Point Entry for {seed.display_name} was rejected: {outcome.reason}"
+            )
+
+
+def _apply_adjustments(conn: sqlite3.Connection) -> None:
+    """Adds the deterministic signed I-Point Adjustments."""
+    for seed in _ADJUSTMENT_PLAN:
+        outcome = ipoints.add_adjustment(
+            conn,
+            normalized_name=normalize_name(seed.display_name),
+            points=seed.points,
+            reason=seed.reason,
+            recorded_at=seed.recorded_at,
+        )
+        if isinstance(outcome, ipoints.AdjustmentRejected):
+            raise ValueError(
+                f"Adjustment for {seed.display_name} was rejected: {outcome.reason}"
+            )
+
+
+def _apply_confiscations(conn: sqlite3.Connection) -> None:
+    """Materialises the pendings at the fixed today, then runs the transitions."""
+    ipoints.materialise_pending_redemptions(
+        conn, today=IPOINT_TODAY, created_at=IPOINT_MATERIALISED_AT
+    )
+    for seed in _CONFISCATION_PLAN:
+        key = normalize_name(seed.display_name)
+        pending = storage.get_open_ipoint_confiscation(conn, key)
+        if pending is None:
+            raise ValueError(f"No pending Redemption found for {seed.display_name}.")
+        # Confirm on the stamp's own date so the fixed release period is
+        # computed from the real confirmation day, not the view's today.
+        confirmed = ipoints.confirm_redemption(
+            conn,
+            pending.id,
+            today=seed.confirm_at[:10],
+            recorded_at=seed.confirm_at,
+        )
+        if isinstance(confirmed, ipoints.RedemptionRejected):
+            raise ValueError(confirmed.reason)
+        if seed.void_at is not None:
+            voided = ipoints.void_confiscation(
+                conn,
+                pending.id,
+                reason=seed.void_reason,
+                recorded_at=seed.void_at,
+            )
+            if isinstance(voided, ipoints.ConfiscationRejected):
+                raise ValueError(voided.reason)
+        elif seed.release_at is not None:
+            released = ipoints.release_confiscation(
+                conn, pending.id, released_at=seed.release_at
+            )
+            if isinstance(released, ipoints.ConfiscationRejected):
+                raise ValueError(released.reason)
+
+
 def _remove_demo_former(conn: sqlite3.Connection) -> str | None:
     match = next(
         (b for b in storage.list_boarders(conn) if b.bed == REMOVED_BED), None
@@ -320,6 +487,10 @@ def clean_slate(conn: sqlite3.Connection) -> None:
     """Drops every derived row, keeping the Master List untouched."""
     conn.execute("DELETE FROM punishments")
     conn.execute("DELETE FROM boarder_history")
+    conn.execute("DELETE FROM confiscations")
+    conn.execute("DELETE FROM ipoint_entries")
+    conn.execute("DELETE FROM ipoint_adjustments")
+    conn.execute("DELETE FROM ipoint_audit")
     conn.commit()
 
 
@@ -355,6 +526,11 @@ def seed(
         raise ValueError(f"Could not load a Master List from '{namelist_path}'.")
     _require_personas(master_list)
 
+    # Regenerate the Master List too, so the seed is self-contained on a fresh
+    # database and a reseed restores a boarder the previous run removed (a
+    # Removed Boarder is refused new I-Point Entries, #187).
+    storage.replace_boarders(conn, list(master_list.values()))
+
     clean_slate(conn)
 
     month_outcomes: list[MonthOutcome] = []
@@ -365,6 +541,8 @@ def seed(
         month_outcomes.append(_ingest_month(conn, master_list, month, text, log_dir))
 
     _apply_punishments(conn, master_list)
+    _apply_ipoints(conn)
+    _apply_adjustments(conn)
 
     # The corrected July re-import happens after July's punishment was
     # frozen, demonstrating that assignment snapshots never change.
@@ -372,6 +550,10 @@ def seed(
     _ingest_month(conn, master_list, "2026-07", corrected, log_dir)
 
     removed_display_name = _remove_demo_former(conn)
+
+    # After the removal, so Navas's pending Redemption exercises the
+    # Removed-Boarder path and freezes his Former identity.
+    _apply_confiscations(conn)
 
     watchlist = storage.repeat_offenders(
         conn,
@@ -382,6 +564,7 @@ def seed(
         month_outcomes=month_outcomes,
         watchlist=watchlist,
         removed_display_name=removed_display_name,
+        ipoint_balances=ipoints.boarder_balances(conn, IPOINT_TODAY),
     )
 
 
@@ -405,6 +588,11 @@ def main() -> int:
     for entry in report.watchlist:
         print(f"  - {entry.display_name}: {len(entry.months)} months")
     if not report.watchlist:
+        print("  (none)")
+    print("I-Point balances preview:")
+    for summary in report.ipoint_balances:
+        print(f"  - {summary.display_name}: {summary.balance}")
+    if not report.ipoint_balances:
         print("  (none)")
     if report.removed_display_name:
         print(f"Removed for the Former demo: {report.removed_display_name}")

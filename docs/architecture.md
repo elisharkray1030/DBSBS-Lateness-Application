@@ -2,9 +2,11 @@
 
 The app is a Flask dashboard over one SQLite database. Two seams carry the
 data: ingestion (`parser.py`) and storage (`storage.py`). A typed boarder
-record (`records.py`) crosses both. The app layer (`app.py`) is a thin adapter
-that opens a connection per request and renders outcomes; templates and
-`static/app.js` are the browser surface.
+record (`records.py`) crosses both. Two parallel lifecycle modules sit on the
+storage seam — `punishments.py` and `ipoints.py` — each owning its domain's
+validation, derived figures, and transitions without importing the other. The
+app layer (`app.py`) is a thin adapter that opens a connection per request and
+renders outcomes; templates and `static/app.js` are the browser surface.
 
 See [CONTEXT.md](../CONTEXT.md) for domain vocabulary and [docs/adr/](adr/) for
 the decisions behind these boundaries.
@@ -45,8 +47,9 @@ in-memory (`:memory:`) connection in tests. No storage function reads a
 
 Important behavior:
 
-- `create_schema(conn)` creates the `boarder_history` table if it does not
-  exist.
+- `create_schema(conn)` creates the app's tables if they do not exist,
+  including `boarder_history`, `ipoint_entries`, `ipoint_adjustments`,
+  `ipoint_audit`, and `confiscations`.
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
 - `list_months(conn)` returns the month summaries used in the UI (month label,
   boarder count, total minutes late), ordered newest-first.
@@ -54,15 +57,41 @@ Important behavior:
   `BoarderRecord` rows, ordered by the server's single Bed ordering rule
   (numeric part then suffix, lexical fallback). The report table may change
   display order without changing these stored values.
+- `list_all_time_boarders(conn)` derives the All-Time List live: the Master
+  List unioned with the distinct Match Keys found in `boarder_history`,
+  `punishments`, and the I-Point ledger (`ipoint_entries`,
+  `ipoint_adjustments`, `confiscations`, and surviving `ipoint_audit` rows, so
+  audit-only survivors stay discoverable). Identity resolves freshest-first
+  from the current Master List entry or the latest snapshot across Boarder
+  History, Punishments, and confirmed Confiscations (whose frozen display name
+  and bed are absorbed at `(trigger_month, confirmed_at)`, the I-Point analogue
+  of a Punishment's `(month, assigned_at)`); a key known only through I-Points
+  resolves from a confirmed Confiscation's frozen identity when one exists,
+  otherwise its Match Key, and is marked `is_ipoints_only`.
 - `search_boarders(conn, name_query)` performs a partial Match Key match and
   returns one entry per boarder over the All-Time List population (Master List
-  plus Boarder History and Punishments keys), sharing its freshest-first
-  identity resolution and sort order.
+  plus Boarder History, Punishments, and I-Point keys), sharing its
+  freshest-first identity resolution and sort order.
 - `delete_month(conn, month_label)` removes a month and returns the deleted row
   count.
 - `replace_boarders(conn, rows)` replaces the Master List after resolving
   duplicate normalized names last-row-wins and validating that no two different
   boarders share a Bed, raising a `ValueError` otherwise.
+- `stage_ipoint_entry(conn, ...)`, `stage_ipoint_adjustment(conn, ...)`,
+  `stage_ipoint_confiscation(conn, ...)`, `stage_confirm_ipoint_confiscation`,
+  `stage_release_ipoint_confiscation`, `stage_void_ipoint_confiscation`,
+  `stage_update_ipoint_confiscation`, `stage_delete_ipoint_confiscation`, and
+  `stage_ipoint_audit(conn, audit)` stage one I-Point ledger row and one audit
+  row on the open transaction; the I-Points lifecycle owns the commit, so the
+  ledger row and its audit travel together or not at all.
+- `list_ipoint_entries(conn[, name])`, `list_ipoint_adjustments(conn[, name])`,
+  `list_ipoint_confiscations(conn[, name][, statuses])`, and
+  `list_ipoint_audit(conn[, name])` read the ledger and its history, optionally
+  for one Match Key and — for Confiscations — a status set. The shared
+  `_select_ipoint_rows` seam owns the optional filters.
+- `freshest_identity_map(conn)` maps every known Match Key to its freshest-first
+  identity, derived from the All-Time List and shared by the House Dashboard and
+  the I-Point Balance.
 
 ## Records — `records.py`
 
@@ -71,6 +100,14 @@ display name, bed, frequency, total minutes late, total points) once, shared by
 the ingestion module, the CSV writer, the storage module, and the JSON body. It
 also holds the `Boarder` Master List row and the `UnparsedTimeRow` record, and
 the `bed_sort_key` rule that orders Monthly Report rows.
+
+It also carries the I-Point records: `IPointEntry` (one logged occasion),
+`IPointAdjustment` (one signed, manual correction), `Confiscation` (one Phone
+Confiscation, pending through released or voided), `IPointAuditDraft` (the
+fields of one retained change, before its id, staged into storage),
+`IPointAudit` (a stored change with its prior state), and `IPointSummary` (one
+boarder's derived Balance plus their Entries, Adjustments, pending Redemption,
+and Audit History).
 
 ## Punishments — `punishments.py`
 
@@ -87,22 +124,127 @@ Important behavior:
 - The Assign Punishments flow lives in `app.py` (`/assign/<month>`) and
   delegates to this module.
 
+## I-Points — `ipoints.py`
+
+`ipoints.py` owns the I-Points ledger, standing beside `punishments.py` as the
+second disciplinary lifecycle: it validates and logs Entries, edits and removes
+them, adds, edits, and removes signed Adjustments, evaluates month-close
+Redemptions, confirms them into Phone Confiscations, manages the Confiscation
+lifecycle (release, void, edit, remove), writes each ledger row and its audit
+row in one transaction, derives every boarder's Balance from the stored ledger
+rather than storing it, and computes the derived due-for-release and Stacked
+flags.
+
+Important behavior:
+
+- `log_entry(conn, ...)` validates a submission (positive whole points, a
+  required reason, a valid date) and writes the Entry plus its `created` audit
+  row in one connection block; a rejected submission writes nothing. A blank
+  date falls back to the injected `today` or the machine-local date. A Boarder
+  removed from the Master List is refused (a Removed Boarder accrues no new
+  Entries), while a key known only through I-Points still may accrue its first
+  Entry.
+- `edit_entry(conn, ...)` and `remove_entry(conn, ...)` validate the same fields
+  and write an `edited`/`removed` audit row in the same connection block. A
+  removal leaves the Balance but its prior state survives in the audit history.
+  Any change that would take the Balance below zero is refused and writes
+  nothing (ADR 0006).
+- `add_adjustment(conn, ...)`, `edit_adjustment(conn, ...)`, and
+  `remove_adjustment(conn, ...)` manage the signed Adjustments that rebalance a
+  boarder without rewriting history. Points must be a non-zero whole number; a
+  positive Adjustment adds to the Balance, and a subtraction is capped at the
+  current Balance so it can never take the Balance below zero (ADR 0006). Each
+  change writes its `created`/`edited`/`removed` audit row (entity type
+  `adjustment`) in the same connection block.
+- `boarder_balances(conn, today)` derives each boarder's Balance as the sum of
+  their live Entries plus Adjustments minus the `points_redeemed` of their
+  confirmed (`active` or `released`) Confiscations, resolving identity
+  freshest-first through the shared All-Time List and falling back to the Match
+  Key for a boarder known only through I-Points. It also attaches each boarder's
+  live Entries and Adjustments, their pending Redemption, and their newest-first
+  Audit History notes, and keeps a boarder whose Entries were all removed in
+  that view.
+- `boarder_summary(conn, normalized_name, today)` is the profile-scoped
+  counterpart to `boarder_balances(conn, today)`: it reads only one Match Key's
+  ledger and audit rows, returning `None` when the key has no I-Point row of any
+  kind, and otherwise the same derived Summary. Both share one private builder,
+  so the Balance/pending/flag arithmetic cannot drift between the list and one
+  profile.
+- `evaluate_month_close(entries, adjustments, confiscations, today)` is where
+  month-close logic lives — a pure function taking an injected `today` —
+  returning a pending Redemption at the largest tier at or below the
+  Balance (5/10/15, capped at 15), locked at creation. `pending_redemptions(conn, today)`
+  detects the rows to write and `materialise_pending_redemptions(conn, today,
+  created_at)` persists them idempotently (ADR 0007); `created_at` injects the
+  stamp so a deterministic caller can pin it.
+- `confirm_redemption(conn, id, ...)` freezes display name and bed, sets the
+  Confiscation `active` with its `release_due`, and debits the Balance, refusing
+  when the Balance has fallen below the pending's `points_redeemed`.
+- `release_confiscation(conn, id, ...)` marks an `active` Confiscation
+  `released`, recording when the phone returned; release is allowed early, and
+  never waits on the lateness gate. `void_confiscation(conn, id, reason, ...)`
+  cancels a pending Redemption (reason optional) or voids an active
+  Confiscation (reason required), returning its points to the Balance.
+  `edit_confiscation(conn, id, tier, ...)` corrects an active row's tier, and so
+  its `points_redeemed` and period, recomputing `release_due` from the original
+  `confirmed_at` and refusing a rise that would take the Balance below zero;
+  the frozen display name and bed are untouched, and a pending row's locked tier
+  cannot be edited. `remove_confiscation(conn, id, ...)` hard-deletes any
+  Confiscation, returning a confirmed row's points. Each writes its
+  `confirmed`/`released`/`voided`/`edited`/`removed` audit row (entity type
+  `confiscation`) in the same connection block.
+- `attach_confiscation_flags(confiscations, phone_held_keys, today)` is the pure
+  seam for the derived display flags: `is_due` marks an active Confiscation on
+  or after its `release_due`, and `stacked` marks one whose Boarder also has a
+  `phone_held` lateness Punishment. `phone_held_keys(conn)` supplies the
+  phone-held Match Keys without importing `punishments.py`; the flags are
+  attached in `boarder_balances(conn, today)` and `confiscation_list(conn,
+  statuses, today)`. The app never releases on its own (ADR 0005), and the phone
+  returns only once both gates clear.
+- The I-Point ledger is four tables, created idempotently by `create_schema` and
+  re-keyed with the other tables by the Match-Key migration: `ipoint_entries`
+  holds one logged Entry, `ipoint_adjustments` one signed Adjustment,
+  `confiscations` one Redemption that becomes a Phone Confiscation from pending
+  through released or voided, and `ipoint_audit` one retained change with its
+  prior state. A partial unique index keeps one open (`pending` or `active`)
+  Confiscation per Match Key.
+- The web routes live in `app.py` (`GET /ipoints`, `POST /ipoints/entries`,
+  `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`,
+  `POST /ipoints/adjustments`, `POST /ipoints/adjustments/<id>/edit`,
+  `POST /ipoints/adjustments/<id>/remove`,
+  `POST /ipoints/confiscations/<id>/confirm`,
+  `POST /ipoints/confiscations/<id>/release`,
+  `POST /ipoints/confiscations/<id>/void`,
+  `POST /ipoints/confiscations/<id>/edit`,
+  `POST /ipoints/confiscations/<id>/remove`, and the profile-scoped
+  `POST /boarder/<path:key>/ipoints`) and delegate here; the route layer
+  stays a thin adapter. The GET opens a read-only connection, materialising due
+  pending Redemptions through a read-write pass only when needed (ADR 0007), and
+  renders the Confiscation management list filtered by the
+  `confiscation_status` query parameter (default `active`).
+
 ## Demo seeding — `seed_demo_data.py`
 
 `seed_demo_data.py` populates the database with deterministic demo data
 (January through August, excluding June) for development or testing. It reads
-the seed Master List, generates synthetic lateness logs, and ingests them
-through the same `ingest_log` path the web Import uses. Run with
+the seed Master List and rewrites the database Master List from it, so the seed
+is self-contained on a fresh database and a reseed restores any Boarder the
+previous run removed. It generates synthetic lateness logs and ingests them
+through the same `ingest_log` path the web Import uses. It then seeds I-Point
+data — Entries, both signs of Adjustment, and a Confiscation in every status —
+through the production I-Points lifecycle with fixed stamps, materialising the
+pending Redemptions at a fixed `IPOINT_TODAY` so opening the view writes
+nothing new. Run with
 `python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]`.
 
 ## App layer — `app.py`
 
 `app.py` exposes the web routes for importing Monthly Logs, searching history,
 rendering the dashboard, returning month JSON data, serving CSV downloads,
-deleting month records, and managing punishments and the Master List. It is a
-thin adapter: each route opens a file-backed connection, delegates to the
-ingestion and storage modules, and renders the outcome. No storage or parsing
-logic lives here.
+deleting month records, and managing punishments, I-Points, and the Master List.
+It is a thin adapter: each route opens a file-backed connection, delegates to
+the ingestion and storage modules, and renders the outcome. No storage or
+parsing logic lives here.
 
 Important behavior:
 
@@ -110,6 +252,19 @@ Important behavior:
   nothing reads a `DB_PATH` module global inside the storage layer.
 - The Import route forwards the request stream straight into `ingest_log` — no
   temp file on disk.
+- The I-Points routes (`GET /ipoints`, `POST /ipoints/entries`,
+  `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`,
+  `POST /ipoints/adjustments`, `POST /ipoints/adjustments/<id>/edit`,
+  `POST /ipoints/adjustments/<id>/remove`,
+  `POST /ipoints/confiscations/<id>/confirm`,
+  `POST /ipoints/confiscations/<id>/release`,
+  `POST /ipoints/confiscations/<id>/void`,
+  `POST /ipoints/confiscations/<id>/edit`,
+  `POST /ipoints/confiscations/<id>/remove`)
+  delegate to `ipoints.py`; the GET opens a read-only connection (materialising
+  due pending Redemptions through a read-write pass only when needed) and filters
+  the Confiscation list by `confiscation_status`, the POSTs the read-write one
+  behind CSRF and the shared mutation-retry wrapper.
 - `api_month()` returns the month's rows as an ordered collection of explicit
   fields (name, display name, bed, frequency, total minutes, total points), so
   the wire format matches the stored rows and the CSV writer and carries the
@@ -133,8 +288,21 @@ Important behavior:
   Top Boarders ranking, repeat-offender watchlist, and Points distribution
   histogram.
 - `templates/boarder.html` is the boarder profile: all-time record, Points
-  trend chart, and all punishments. Reached by clicking a boarder name anywhere
-  in the app or via Find a Boarder search.
+  trend chart, all punishments, and the boarder's I-Point Balance with their
+  Entries, Adjustments, and Confiscations (released and voided included, with
+  the Stacked/due flags), plus a quick-log action. The I-Point section renders
+  for a Boarder known only through I-Points, resolving the same freshest-first
+  identity (a Former badge with zero-valued lateness cards, matching a
+  Punishment-only survivor) and keeping the quick-log, while a Removed Boarder
+  sees frozen history and no quick-log. Reached by clicking a boarder name
+  anywhere in the app or via Find a Boarder search.
+- `templates/ipoints.html` is the I-Points view: the log-Entry and
+  add-Adjustment forms, the per-boarder ledger with each boarder's Balance,
+  pending Redemption (confirm/void), Entries and Adjustments distinguished by a
+  Type column with inline edit/remove controls, and a collapsible per-boarder
+  Audit History, plus the Confiscation management list with status filtering and
+  the Stacked/due-for-release flags. Reached from a tab-bar entry beside
+  Punishments.
 - `templates/macros.html` holds shared Jinja macros (for example, the
   Current/Former status badge).
 - `static/app.js` holds browser-side behavior: table sorting, charts, and
@@ -156,3 +324,10 @@ Important behavior:
   `DB_PATH` global.
 - **No DB writes at import.** Importing the modules opens no database and
   writes nothing; schema creation is an explicit `init-db` step.
+- **Derived I-Point Balance.** A boarder's Balance is computed from the stored
+  ledger on each read — Entries plus Adjustments minus confirmed (`active` or
+  `released`) Confiscations — never stored, so it cannot drift. A pending
+  Redemption is a persisted row (ADR 0007) but does not debit the Balance until
+  confirmed.
+- **Non-negative I-Point Balance.** Every write that can move the Balance
+  refuses a change that would take it below zero (ADR 0006).

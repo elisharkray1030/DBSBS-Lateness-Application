@@ -1,6 +1,7 @@
 import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from typing import NamedTuple
 from uuid import uuid4
 
 from records import (
@@ -9,8 +10,13 @@ from records import (
     BoarderIdentity,
     BoarderMonth,
     BoarderRecord,
+    Confiscation,
     DistributionBucket,
     HouseTrendPoint,
+    IPointAudit,
+    IPointAuditDraft,
+    IPointAdjustment,
+    IPointEntry,
     MonthSummary,
     Punishment,
     TopBoarderEntry,
@@ -96,9 +102,73 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS ipoint_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_name TEXT NOT NULL,
+            points INTEGER NOT NULL,
+            occurred_on TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ipoint_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_name TEXT NOT NULL,
+            points INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ipoint_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER NOT NULL,
+            normalized_name TEXT NOT NULL,
+            action TEXT NOT NULL,
+            before_state TEXT,
+            after_state TEXT,
+            changed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS confiscations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_name TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            bed TEXT NOT NULL DEFAULT '',
+            trigger_month TEXT NOT NULL,
+            points_redeemed INTEGER NOT NULL,
+            tier INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            confirmed_at TEXT,
+            release_due TEXT,
+            released_at TEXT,
+            voided_at TEXT,
+            void_reason TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_punishments_active
         ON punishments(normalized_name, month)
         WHERE status != 'voided'
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_confiscations_open
+        ON confiscations(normalized_name)
+        WHERE status IN ('pending', 'active')
         """
     )
     _migrate_boarders_bed_unique(conn)
@@ -118,7 +188,15 @@ def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
     counted under MIGRATION_SKIPS_KEY so the collision stays visible.
     """
     skipped = 0
-    for table in ("boarders", "boarder_history", "punishments"):
+    for table in (
+        "boarders",
+        "boarder_history",
+        "punishments",
+        "ipoint_entries",
+        "ipoint_adjustments",
+        "ipoint_audit",
+        "confiscations",
+    ):
         rows = conn.execute(
             f"SELECT id, normalized_name FROM {table} ORDER BY id"
         ).fetchall()
@@ -554,7 +632,7 @@ def list_months(conn: sqlite3.Connection) -> list[MonthSummary]:
     ]
 
 
-def _freshest_identity_map(conn: sqlite3.Connection) -> dict[str, BoarderIdentity]:
+def freshest_identity_map(conn: sqlite3.Connection) -> dict[str, BoarderIdentity]:
     """Maps every known Match Key to its freshest-first identity."""
     return {
         entry.normalized_name: BoarderIdentity(
@@ -581,7 +659,7 @@ def top_boarders(
     supplied by the caller so the widget's N lives in one place. Identity
     fields resolve freshest-first like everywhere else in the app.
     """
-    identity = _freshest_identity_map(conn)
+    identity = freshest_identity_map(conn)
     if month is None:
         cursor = conn.execute(
             """
@@ -660,7 +738,7 @@ def repeat_offenders(
     application layer's named constants. Identity fields resolve
     freshest-first.
     """
-    identity = _freshest_identity_map(conn)
+    identity = freshest_identity_map(conn)
     months_above: dict[str, list[str]] = {}
     cursor = conn.execute(
         """
@@ -727,24 +805,64 @@ def house_trend(conn: sqlite3.Connection) -> list[HouseTrendPoint]:
     ]
 
 
+def _ipoint_all_time_sources(
+    conn: sqlite3.Connection,
+) -> tuple[set[str], list[tuple[str, str, str, str, str]]]:
+    """Returns the I-Point ledger's All-Time List contribution.
+
+    The first element is every Match Key known through I-Points: Entries,
+    Adjustments, Confiscations, and surviving Audit rows (audit-only keys stay
+    traceable, mirroring how a voided Punishment keeps its boarder listed).
+    The second is the frozen identity each confirmed Confiscation carries, as
+    ``(key, display_name, bed, trigger_month, confirmed_at)`` — the I-Point
+    analogue of a Punishment's ``(month, assigned_at)`` snapshot. A pending
+    Confiscation freezes no identity yet, so it contributes its key only.
+    """
+    keys: set[str] = set()
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM ipoint_entries")
+    keys.update(row[0] for row in cursor.fetchall())
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM ipoint_adjustments")
+    keys.update(row[0] for row in cursor.fetchall())
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM ipoint_audit")
+    keys.update(row[0] for row in cursor.fetchall())
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM confiscations")
+    keys.update(row[0] for row in cursor.fetchall())
+
+    snapshots: list[tuple[str, str, str, str, str]] = []
+    cursor = conn.execute(
+        """
+        SELECT normalized_name, display_name, bed, trigger_month, confirmed_at
+        FROM confiscations
+        WHERE confirmed_at IS NOT NULL
+          AND (display_name != '' OR bed != '')
+        """
+    )
+    for key, display, bed, month, confirmed_at in cursor.fetchall():
+        snapshots.append((key, display, bed, month, confirmed_at))
+    return keys, snapshots
+
+
 def list_all_time_boarders(conn: sqlite3.Connection) -> list[AllTimeEntry]:
     """Derives the All-Time List: every boarder ever recorded, read-only.
 
     Unions the Master List with the distinct Match Keys found in Boarder
-    History and Punishments (voided included, so audit-only survivors stay
-    traceable). An entry is Current when its key sits on the Master List;
-    otherwise Former. Identity fields resolve freshest-first: the current
-    Master List entry wins; otherwise the freshest snapshot (latest month,
-    tie-broken by latest snapshot timestamp). Seen months and lifetime
-    totals come from history rows only, since Punishments freeze their own
-    points rather than reporting lateness. Current rows sort before Former
-    rows, each group by the shared Bed ordering rule then display name.
+    History, Punishments, and I-Points (voided and audit-only survivors
+    included, so nothing vanishes silently). An entry is Current when its key
+    sits on the Master List; otherwise Former. Identity fields resolve
+    freshest-first: the current Master List entry wins; otherwise the freshest
+    snapshot (latest month, tie-broken by latest snapshot timestamp) across
+    Boarder History, Punishments, and confirmed Confiscations. Seen months and
+    lifetime totals come from history rows only, since Punishments and
+    Confiscations freeze their own points rather than reporting lateness.
+    Current rows sort before Former rows, each group by the shared Bed ordering
+    rule then display name.
     """
     master = {boarder.normalized_name: boarder for boarder in list_boarders(conn)}
 
     seen_months: dict[str, set[str]] = {}
     lifetime: dict[str, list[int]] = {}
     freshest: dict[str, tuple[str, str, str, str]] = {}
+    punished: set[str] = set()
 
     def absorb_snapshot(key: str, display: str, bed: str, month: str, stamp: str) -> None:
         candidate = (month, stamp)
@@ -770,28 +888,41 @@ def list_all_time_boarders(conn: sqlite3.Connection) -> list[AllTimeEntry]:
         "SELECT normalized_name, display_name, bed, month, assigned_at FROM punishments"
     )
     for key, display, bed, month, assigned_at in cursor.fetchall():
+        punished.add(key)
         absorb_snapshot(key, display, bed, month, assigned_at)
 
+    ipoint_keys, ipoint_snapshots = _ipoint_all_time_sources(conn)
+    for key, display, bed, month, confirmed_at in ipoint_snapshots:
+        absorb_snapshot(key, display, bed, month, confirmed_at)
+
     entries: list[AllTimeEntry] = []
-    for key in set(master) | set(freshest):
+    for key in set(master) | set(freshest) | ipoint_keys:
         current = master.get(key)
         if current is not None:
             display, bed = current.display_name, current.bed
-        else:
+        elif key in freshest:
             _, _, display, bed = freshest[key]
+        else:
+            display, bed = key, ""
         months = sorted(seen_months.get(key, ()))
         freq, minutes, points = lifetime.get(key, [0, 0, 0])
+        is_current = current is not None
         entries.append(
             AllTimeEntry(
                 normalized_name=key,
                 display_name=display,
                 bed=bed,
-                is_current=current is not None,
+                is_current=is_current,
                 first_month=months[0] if months else None,
                 last_month=months[-1] if months else None,
                 total_frequency=freq,
                 total_minutes=minutes,
                 total_points=points,
+                is_ipoints_only=(
+                    not is_current
+                    and key not in seen_months
+                    and key not in punished
+                ),
             )
         )
     entries.sort(key=lambda entry: (not entry.is_current, boarder_sort_key(entry)))
@@ -802,10 +933,10 @@ def search_boarders(conn: sqlite3.Connection, name_query: str) -> list[AllTimeEn
     """Returns one entry per Match Key whose key contains the query.
 
     A person lookup, not a history listing: shares the All-Time List's
-    derivation wholesale — same union of Master List, Boarder History and
-    Punishments keys, freshest-first identity resolution, Current/Former
-    status, and sort order — narrowed to keys containing the normalized
-    query substring.
+    derivation wholesale — same union of Master List, Boarder History,
+    Punishments, and I-Point keys, freshest-first identity resolution,
+    Current/Former status, and sort order — narrowed to keys containing the
+    normalized query substring.
     """
     needle = normalize_name(name_query)
     if not needle:
@@ -1024,3 +1155,485 @@ def transition_punishment(
             (status, timestamp, punishment_id),
         )
     conn.commit()
+
+
+def stage_ipoint_entry(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    points: int,
+    occurred_on: str,
+    reason: str,
+    recorded_at: str,
+) -> int:
+    """Stages one I-Point Entry on the open transaction; it does not commit.
+
+    The I-Points lifecycle owns the transaction so an entry and its audit row
+    are written together. A standalone caller must commit the connection, or
+    the staged row is discarded when it closes.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO ipoint_entries (
+            normalized_name, points, occurred_on, reason, recorded_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (normalized_name, points, occurred_on, reason, recorded_at),
+    )
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("Insert succeeded but no row id was returned.")
+    return lastrowid
+
+
+def stage_update_ipoint_entry(
+    conn: sqlite3.Connection,
+    entry_id: int,
+    points: int,
+    occurred_on: str,
+    reason: str,
+) -> None:
+    """Stages one I-Point Entry edit on the open transaction; it does not commit.
+
+    The I-Points lifecycle owns the transaction so the ledger and its audit
+    row are written together. ``recorded_at`` is the logging timestamp and is
+    deliberately left untouched by an edit.
+    """
+    conn.execute(
+        """
+        UPDATE ipoint_entries
+        SET points = ?, occurred_on = ?, reason = ?
+        WHERE id = ?
+        """,
+        (points, occurred_on, reason, entry_id),
+    )
+
+
+def stage_delete_ipoint_entry(conn: sqlite3.Connection, entry_id: int) -> None:
+    """Stages one I-Point Entry removal on the open transaction; it does not commit.
+
+    The prior state survives in the I-Point Audit row written beside this
+    delete in the same transaction.
+    """
+    conn.execute("DELETE FROM ipoint_entries WHERE id = ?", (entry_id,))
+
+
+def stage_ipoint_adjustment(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    points: int,
+    reason: str,
+    recorded_at: str,
+) -> int:
+    """Stages one I-Point Adjustment on the open transaction; it does not commit.
+
+    The I-Points lifecycle owns the transaction so an Adjustment and its audit
+    row are written together. A standalone caller must commit the connection.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO ipoint_adjustments (
+            normalized_name, points, reason, recorded_at
+        ) VALUES (?, ?, ?, ?)
+        """,
+        (normalized_name, points, reason, recorded_at),
+    )
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("Insert succeeded but no row id was returned.")
+    return lastrowid
+
+
+def stage_update_ipoint_adjustment(
+    conn: sqlite3.Connection,
+    adjustment_id: int,
+    points: int,
+    reason: str,
+) -> None:
+    """Stages one I-Point Adjustment edit on the open transaction; it does not commit.
+
+    ``recorded_at`` is the logging timestamp and is deliberately left untouched
+    by an edit.
+    """
+    conn.execute(
+        """
+        UPDATE ipoint_adjustments
+        SET points = ?, reason = ?
+        WHERE id = ?
+        """,
+        (points, reason, adjustment_id),
+    )
+
+
+def stage_delete_ipoint_adjustment(
+    conn: sqlite3.Connection, adjustment_id: int
+) -> None:
+    """Stages one I-Point Adjustment removal on the open transaction; it does not commit.
+
+    The prior state survives in the I-Point Audit row written beside this
+    delete in the same transaction.
+    """
+    conn.execute("DELETE FROM ipoint_adjustments WHERE id = ?", (adjustment_id,))
+
+
+def stage_ipoint_audit(
+    conn: sqlite3.Connection, audit: IPointAuditDraft
+) -> None:
+    """Stages one I-Point Audit row on the open transaction; it does not commit.
+
+    Called beside every ledger mutation so the live ledger and its history
+    share one transaction and cannot diverge; the I-Points lifecycle commits.
+    """
+    conn.execute(
+        """
+        INSERT INTO ipoint_audit (
+            entity_type, entity_id, normalized_name, action,
+            before_state, after_state, changed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            audit.entity_type,
+            audit.entity_id,
+            audit.normalized_name,
+            audit.action,
+            audit.before_state,
+            audit.after_state,
+            audit.changed_at,
+        ),
+    )
+
+
+def stage_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    trigger_month: str,
+    points_redeemed: int,
+    tier: int,
+    status: str,
+    created_at: str,
+) -> int:
+    """Stages one Confiscation row on the open transaction; it does not commit.
+
+    The I-Points lifecycle owns the commit so the row and its audit row are
+    written together; a standalone caller must commit the connection.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO confiscations (
+            normalized_name, trigger_month, points_redeemed, tier, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (normalized_name, trigger_month, points_redeemed, tier, status, created_at),
+    )
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("Insert succeeded but no row id was returned.")
+    return lastrowid
+
+
+def stage_confirm_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    confiscation_id: int,
+    display_name: str,
+    bed: str,
+    confirmed_at: str,
+    release_due: str,
+) -> None:
+    """Stages a pending Confiscation's confirmation on the open transaction.
+
+    Freezes the Boarder's display name and bed and records the fixed release
+    date; the status moves from ``pending`` to ``active``. It does not commit.
+    """
+    conn.execute(
+        """
+        UPDATE confiscations
+        SET status = 'active', display_name = ?, bed = ?,
+            confirmed_at = ?, release_due = ?
+        WHERE id = ?
+        """,
+        (display_name, bed, confirmed_at, release_due, confiscation_id),
+    )
+
+
+def stage_void_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    confiscation_id: int,
+    voided_at: str,
+    void_reason: str | None,
+) -> None:
+    """Stages a pending or active Confiscation's voidance on the open transaction.
+
+    It does not commit; the prior state survives in the Confiscation's audit row.
+    The lifecycle owns the status guard, so storage only applies the transition.
+    """
+    conn.execute(
+        """
+        UPDATE confiscations
+        SET status = 'voided', voided_at = ?, void_reason = ?
+        WHERE id = ?
+        """,
+        (voided_at, void_reason, confiscation_id),
+    )
+
+
+def stage_release_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    confiscation_id: int,
+    released_at: str,
+) -> None:
+    """Stages an active Confiscation's release on the open transaction.
+
+    Records when the phone was returned; the status moves from ``active`` to
+    ``released``. It does not commit; the lifecycle owns the commit.
+    """
+    conn.execute(
+        """
+        UPDATE confiscations
+        SET status = 'released', released_at = ?
+        WHERE id = ?
+        """,
+        (released_at, confiscation_id),
+    )
+
+
+def stage_update_ipoint_confiscation(
+    conn: sqlite3.Connection,
+    confiscation_id: int,
+    points_redeemed: int,
+    tier: int,
+    release_due: str,
+) -> None:
+    """Stages an edit of an active Confiscation's redeemable amount and period.
+
+    The tier fixes both ``points_redeemed`` and the recomputed ``release_due``;
+    the frozen display name and bed are not touched. It does not commit.
+    """
+    conn.execute(
+        """
+        UPDATE confiscations
+        SET points_redeemed = ?, tier = ?, release_due = ?
+        WHERE id = ?
+        """,
+        (points_redeemed, tier, release_due, confiscation_id),
+    )
+
+
+def stage_delete_ipoint_confiscation(
+    conn: sqlite3.Connection, confiscation_id: int
+) -> None:
+    """Hard-deletes a live Confiscation on the open transaction.
+
+    The prior state survives in the Confiscation's audit row; it does not commit.
+    """
+    conn.execute("DELETE FROM confiscations WHERE id = ?", (confiscation_id,))
+
+
+class _IPointListing(NamedTuple):
+    columns: str
+    table: str
+    order_by: str
+    status_column: str | None = None
+
+
+_IPOINT_ENTRY_LISTING = _IPointListing(
+    "id, normalized_name, points, occurred_on, reason, recorded_at",
+    "ipoint_entries",
+    "occurred_on ASC, id ASC",
+)
+_IPOINT_ADJUSTMENT_LISTING = _IPointListing(
+    "id, normalized_name, points, reason, recorded_at",
+    "ipoint_adjustments",
+    "id ASC",
+)
+_IPOINT_AUDIT_LISTING = _IPointListing(
+    "id, entity_type, entity_id, normalized_name, action, "
+    "before_state, after_state, changed_at",
+    "ipoint_audit",
+    "id DESC",
+)
+_IPOINT_CONFISCATION_LISTING = _IPointListing(
+    "id, normalized_name, display_name, bed, trigger_month, points_redeemed, "
+    "tier, status, created_at, confirmed_at, release_due, released_at, "
+    "voided_at, void_reason",
+    "confiscations",
+    "id ASC",
+    status_column="status",
+)
+
+
+def _select_ipoint_rows(
+    conn: sqlite3.Connection,
+    listing: _IPointListing,
+    normalized_name: str | None = None,
+    statuses: tuple[str, ...] | None = None,
+) -> list[tuple]:
+    """Fetches rows through the one WHERE shape every I-Point listing repeats.
+
+    Columns, table, sort order, and whether the table has a status column
+    travel together in the listing, so this seam owns the optional Match Key
+    equality and the optional status set membership. Passing ``statuses`` for a
+    listing that declares no status column is a programming error.
+    """
+    if statuses is not None and listing.status_column is None:
+        raise ValueError(f"{listing.table} has no status column to filter on")
+    clauses: list[str] = []
+    params: list[str] = []
+    if normalized_name is not None:
+        clauses.append("normalized_name = ?")
+        params.append(normalized_name)
+    if statuses is not None:
+        placeholders = ", ".join("?" for _ in statuses)
+        clauses.append(f"{listing.status_column} IN ({placeholders})")
+        params.extend(statuses)
+    sql = f"SELECT {listing.columns} FROM {listing.table}"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += f" ORDER BY {listing.order_by}"
+    return conn.execute(sql, tuple(params)).fetchall()
+
+
+def _ipoint_entry_from_row(row) -> IPointEntry:
+    return IPointEntry(
+        id=row[0],
+        normalized_name=row[1],
+        points=row[2],
+        occurred_on=row[3],
+        reason=row[4],
+        recorded_at=row[5],
+    )
+
+
+def get_ipoint_entry(
+    conn: sqlite3.Connection, entry_id: int
+) -> IPointEntry | None:
+    """Returns one I-Point Entry by id, or None when it is absent."""
+    cursor = conn.execute(
+        f"SELECT {_IPOINT_ENTRY_LISTING.columns} FROM ipoint_entries WHERE id = ?",
+        (entry_id,),
+    )
+    row = cursor.fetchone()
+    return _ipoint_entry_from_row(row) if row is not None else None
+
+
+def list_ipoint_entries(
+    conn: sqlite3.Connection, normalized_name: str | None = None
+) -> list[IPointEntry]:
+    """Lists I-Point Entries chronologically, optionally for one Match Key."""
+    rows = _select_ipoint_rows(conn, _IPOINT_ENTRY_LISTING, normalized_name)
+    return [_ipoint_entry_from_row(row) for row in rows]
+
+
+def _ipoint_adjustment_from_row(row) -> IPointAdjustment:
+    return IPointAdjustment(
+        id=row[0],
+        normalized_name=row[1],
+        points=row[2],
+        reason=row[3],
+        recorded_at=row[4],
+    )
+
+
+def get_ipoint_adjustment(
+    conn: sqlite3.Connection, adjustment_id: int
+) -> IPointAdjustment | None:
+    """Returns one I-Point Adjustment by id, or None when it is absent."""
+    cursor = conn.execute(
+        f"SELECT {_IPOINT_ADJUSTMENT_LISTING.columns} FROM ipoint_adjustments WHERE id = ?",
+        (adjustment_id,),
+    )
+    row = cursor.fetchone()
+    return _ipoint_adjustment_from_row(row) if row is not None else None
+
+
+def list_ipoint_adjustments(
+    conn: sqlite3.Connection, normalized_name: str | None = None
+) -> list[IPointAdjustment]:
+    """Lists I-Point Adjustments, optionally for one Match Key, oldest first."""
+    rows = _select_ipoint_rows(conn, _IPOINT_ADJUSTMENT_LISTING, normalized_name)
+    return [_ipoint_adjustment_from_row(row) for row in rows]
+
+
+def _ipoint_audit_from_row(row) -> IPointAudit:
+    return IPointAudit(
+        id=row[0],
+        entity_type=row[1],
+        entity_id=row[2],
+        normalized_name=row[3],
+        action=row[4],
+        before_state=row[5],
+        after_state=row[6],
+        changed_at=row[7],
+    )
+
+
+def list_ipoint_audit(
+    conn: sqlite3.Connection, normalized_name: str | None = None
+) -> list[IPointAudit]:
+    """Lists I-Point Audit rows, optionally for one Match Key, newest first."""
+    rows = _select_ipoint_rows(conn, _IPOINT_AUDIT_LISTING, normalized_name)
+    return [_ipoint_audit_from_row(row) for row in rows]
+
+
+def _ipoint_confiscation_from_row(row) -> Confiscation:
+    return Confiscation(
+        id=row[0],
+        normalized_name=row[1],
+        display_name=row[2],
+        bed=row[3],
+        trigger_month=row[4],
+        points_redeemed=row[5],
+        tier=row[6],
+        status=row[7],
+        created_at=row[8],
+        confirmed_at=row[9],
+        release_due=row[10],
+        released_at=row[11],
+        voided_at=row[12],
+        void_reason=row[13],
+    )
+
+
+def get_ipoint_confiscation(
+    conn: sqlite3.Connection, confiscation_id: int
+) -> Confiscation | None:
+    """Returns one Confiscation by id, or None when it is absent."""
+    cursor = conn.execute(
+        f"SELECT {_IPOINT_CONFISCATION_LISTING.columns} "
+        "FROM confiscations WHERE id = ?",
+        (confiscation_id,),
+    )
+    row = cursor.fetchone()
+    return _ipoint_confiscation_from_row(row) if row is not None else None
+
+
+def get_open_ipoint_confiscation(
+    conn: sqlite3.Connection, normalized_name: str
+) -> Confiscation | None:
+    """Returns a Match Key's open Confiscation (pending or active), if any.
+
+    The partial unique index guarantees at most one; this returns the oldest
+    should a legacy database carry more.
+    """
+    cursor = conn.execute(
+        f"SELECT {_IPOINT_CONFISCATION_LISTING.columns} "
+        "FROM confiscations "
+        "WHERE normalized_name = ? AND status IN ('pending', 'active') "
+        "ORDER BY id ASC LIMIT 1",
+        (normalized_name,),
+    )
+    row = cursor.fetchone()
+    return _ipoint_confiscation_from_row(row) if row is not None else None
+
+
+def list_ipoint_confiscations(
+    conn: sqlite3.Connection,
+    normalized_name: str | None = None,
+    statuses: tuple[str, ...] | None = None,
+) -> list[Confiscation]:
+    """Lists Confiscations, optionally for one Match Key and/or a status set.
+
+    Oldest first; ``statuses=None`` lists every status.
+    """
+    rows = _select_ipoint_rows(
+        conn, _IPOINT_CONFISCATION_LISTING, normalized_name, statuses
+    )
+    return [_ipoint_confiscation_from_row(row) for row in rows]

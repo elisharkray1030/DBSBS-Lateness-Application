@@ -36,7 +36,9 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 import defaults
+import ipoints
 import storage
+from ipoints import AdjustmentRejected, ChangeRejected, EntryRejected, RedemptionRejected
 from parser import (
     RejectedOutcome,
     boarders_to_csv,
@@ -1133,6 +1135,414 @@ def punishments_legacy_redirect():
     return redirect(f"/punishments{('?' + query) if query else ''}")
 
 
+# The Confiscation list's status filter: ``all`` covers the three settled
+# statuses, since ``pending`` is a Redemption shown in its own panel.
+_CONFISCATION_FILTERS: dict[str, tuple[str, ...]] = {
+    "active": (ipoints.STATUS_ACTIVE,),
+    "released": (ipoints.STATUS_RELEASED,),
+    "voided": (ipoints.STATUS_VOIDED,),
+    "all": (
+        ipoints.STATUS_ACTIVE,
+        ipoints.STATUS_RELEASED,
+        ipoints.STATUS_VOIDED,
+    ),
+}
+_DEFAULT_CONFISCATION_FILTER = "active"
+_CONFISCATION_FILTER_OPTIONS = (
+    ("active", "Active"),
+    ("released", "Released"),
+    ("voided", "Voided"),
+    ("all", "All"),
+)
+
+
+@bp.route('/ipoints')
+def ipoints_view():
+    """Renders the dedicated I-Points page: log form plus per-boarder ledger.
+
+    Reads stay read-only; only when the month-close evaluation finds a Boarder
+    whose pending Redemption is not yet stored does the route take a
+    read-write pass to materialise it, then re-read (ADR 0007).
+    """
+    today = ipoints.today_iso()
+    with connect(read_only=True) as conn:
+        needs_materialisation = bool(ipoints.pending_redemptions(conn, today))
+
+    if needs_materialisation:
+        def attempt():
+            with connect() as conn:
+                ipoints.materialise_pending_redemptions(conn)
+            return True
+
+        def _busy_redirect(exc):
+            flash(busy_message(exc.action), "error")
+            return True
+
+        _mutate_with_retry(
+            "evaluate pending I-Point redemptions",
+            attempt,
+            _busy_redirect,
+            "I-Point pending Redemption evaluation hit sustained contention",
+        )
+
+    selected_filter = request.args.get(
+        "confiscation_status", _DEFAULT_CONFISCATION_FILTER
+    )
+    if selected_filter not in _CONFISCATION_FILTERS:
+        selected_filter = _DEFAULT_CONFISCATION_FILTER
+
+    with connect(read_only=True) as conn:
+        summaries = ipoints.boarder_balances(conn, today)
+        confiscations = ipoints.confiscation_list(
+            conn, statuses=_CONFISCATION_FILTERS[selected_filter], today=today
+        )
+        boarder_options = sorted(
+            {boarder.display_name for boarder in storage.list_boarders(conn)}
+            | {summary.display_name for summary in summaries}
+        )
+
+    message, error = _consume_flashes()
+
+    return render_template('ipoints.html', **_page_context(
+        selected_tab='ipoints',
+        message=message,
+        error=error,
+        ipoint_summaries=summaries,
+        confiscations=confiscations,
+        confiscation_filter=selected_filter,
+        confiscation_filter_options=_CONFISCATION_FILTER_OPTIONS,
+        boarder_options=boarder_options,
+        today=today,
+        tier_period_labels=ipoints.TIER_PERIOD_LABELS,
+        tiers=ipoints.TIERS,
+    ))
+
+
+@bp.route('/ipoints/entries', methods=['POST'])
+def log_ipoint_entry():
+    boarder = request.form.get('boarder', '').strip()
+    points = request.form.get('points', '').strip()
+    occurred_on = request.form.get('occurred_on', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.log_entry(
+                conn,
+                normalized_name=normalize_name(boarder),
+                points=points,
+                occurred_on=occurred_on,
+                reason=reason,
+            )
+
+        if isinstance(outcome, EntryRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info(
+                "Logged I-Point Entry for %s", outcome.normalized_name
+            )
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "log the I-Point Entry",
+        attempt,
+        _busy_redirect,
+        "I-Point Entry logging hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/entries/<int:entry_id>/edit', methods=['POST'])
+def edit_ipoint_entry(entry_id):
+    points = request.form.get('points', '').strip()
+    occurred_on = request.form.get('occurred_on', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.edit_entry(
+                conn,
+                entry_id,
+                points=points,
+                occurred_on=occurred_on,
+                reason=reason,
+            )
+
+        if isinstance(outcome, EntryRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Edited I-Point Entry %s", entry_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "edit the I-Point Entry",
+        attempt,
+        _busy_redirect,
+        "I-Point Entry edit hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/entries/<int:entry_id>/remove', methods=['POST'])
+def remove_ipoint_entry(entry_id):
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.remove_entry(conn, entry_id)
+
+        if isinstance(outcome, EntryRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Removed I-Point Entry %s", entry_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "remove the I-Point Entry",
+        attempt,
+        _busy_redirect,
+        "I-Point Entry removal hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/adjustments', methods=['POST'])
+def add_ipoint_adjustment():
+    boarder = request.form.get('boarder', '').strip()
+    points = request.form.get('points', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.add_adjustment(
+                conn,
+                normalized_name=normalize_name(boarder),
+                points=points,
+                reason=reason,
+            )
+
+        if isinstance(outcome, AdjustmentRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info(
+                "Added I-Point Adjustment for %s", outcome.normalized_name
+            )
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "add the I-Point Adjustment",
+        attempt,
+        _busy_redirect,
+        "I-Point Adjustment add hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/adjustments/<int:adjustment_id>/edit', methods=['POST'])
+def edit_ipoint_adjustment(adjustment_id):
+    points = request.form.get('points', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.edit_adjustment(
+                conn,
+                adjustment_id,
+                points=points,
+                reason=reason,
+            )
+
+        if isinstance(outcome, AdjustmentRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Edited I-Point Adjustment %s", adjustment_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "edit the I-Point Adjustment",
+        attempt,
+        _busy_redirect,
+        "I-Point Adjustment edit hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/adjustments/<int:adjustment_id>/remove', methods=['POST'])
+def remove_ipoint_adjustment(adjustment_id):
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.remove_adjustment(conn, adjustment_id)
+
+        if isinstance(outcome, AdjustmentRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Removed I-Point Adjustment %s", adjustment_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "remove the I-Point Adjustment",
+        attempt,
+        _busy_redirect,
+        "I-Point Adjustment removal hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/confiscations/<int:confiscation_id>/confirm', methods=['POST'])
+def confirm_ipoint_redemption(confiscation_id):
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.confirm_redemption(conn, confiscation_id)
+
+        if isinstance(outcome, RedemptionRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info(
+                "Confirmed I-Point Redemption %s", confiscation_id
+            )
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "confirm the I-Point redemption",
+        attempt,
+        _busy_redirect,
+        "I-Point redemption confirmation hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/confiscations/<int:confiscation_id>/void', methods=['POST'])
+def void_ipoint_confiscation(confiscation_id):
+    reason = request.form.get('void_reason', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.void_confiscation(
+                conn, confiscation_id, reason=reason
+            )
+
+        if isinstance(outcome, ChangeRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Voided I-Point Confiscation %s", confiscation_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "void the I-Point Confiscation",
+        attempt,
+        _busy_redirect,
+        "I-Point Confiscation voidance hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/confiscations/<int:confiscation_id>/release', methods=['POST'])
+def release_ipoint_confiscation(confiscation_id):
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.release_confiscation(conn, confiscation_id)
+
+        if isinstance(outcome, ChangeRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Released I-Point Confiscation %s", confiscation_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "release the I-Point Confiscation",
+        attempt,
+        _busy_redirect,
+        "I-Point Confiscation release hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/confiscations/<int:confiscation_id>/edit', methods=['POST'])
+def edit_ipoint_confiscation(confiscation_id):
+    tier = request.form.get('tier', '').strip()
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.edit_confiscation(conn, confiscation_id, tier)
+
+        if isinstance(outcome, ChangeRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Edited I-Point Confiscation %s", confiscation_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "edit the I-Point Confiscation",
+        attempt,
+        _busy_redirect,
+        "I-Point Confiscation edit hit sustained contention",
+    )
+
+
+@bp.route('/ipoints/confiscations/<int:confiscation_id>/remove', methods=['POST'])
+def remove_ipoint_confiscation(confiscation_id):
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.remove_confiscation(conn, confiscation_id)
+
+        if isinstance(outcome, ChangeRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info("Removed I-Point Confiscation %s", confiscation_id)
+            flash(outcome.message, "success")
+        return redirect('/ipoints')
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect('/ipoints')
+
+    return _mutate_with_retry(
+        "remove the I-Point Confiscation",
+        attempt,
+        _busy_redirect,
+        "I-Point Confiscation removal hit sustained contention",
+    )
+
+
 @bp.route('/statistics')
 def statistics():
     """Renders the House Dashboard: the Statistics tab's home.
@@ -1232,6 +1642,11 @@ def _escalation_rows(series, live_punishments):
     return [rows[month] for month in sorted(rows)]
 
 
+def _boarder_profile_url(normalized: str) -> str:
+    """Builds the canonical, URL-quoted Boarder Profile path for a Match Key."""
+    return f"/boarder/{quote(normalized)}"
+
+
 @bp.route('/boarder/<path:key>')
 def boarder_profile(key):
     """Renders one boarder's profile, addressed by URL-encoded Match Key.
@@ -1246,6 +1661,8 @@ def boarder_profile(key):
     identity = None
     series = []
     punishments = []
+    ipoint_summary = None
+    today = ipoints.today_iso()
     with connect(read_only=True) as conn:
         if normalized:
             identity = storage.resolve_boarder_identity(conn, normalized)
@@ -1253,11 +1670,24 @@ def boarder_profile(key):
             punishments = attach_display_flags(
                 storage.list_boarder_punishments(conn, normalized)
             )
+            ipoint_summary = ipoints.boarder_summary(conn, normalized, today)
     live_punishments = [p for p in punishments if p.status != 'voided']
     voided_punishments = [p for p in punishments if p.status == 'voided']
     escalation_rows = _escalation_rows(series, live_punishments)
 
+    profile_url = _boarder_profile_url(normalized) if normalized else ""
+    show_ipoints = identity is not None or ipoint_summary is not None
+    # A Removed Boarder — one with lateness presence that is no longer Current
+    # — keeps frozen I-Points and may not accrue new ones; the record's
+    # `is_removed` owns that rule and `ipoints.log_entry` enforces it. A key
+    # known only through I-Points is not Removed, so it stays loggable.
+    can_log_ipoints = identity is None or not identity.is_removed
+
+    message, error = _consume_flashes()
+
     return render_template('boarder.html', **_page_context(
+        message=message,
+        error=error,
         identity=identity,
         series=series,
         summary=build_profile_summary(series),
@@ -1270,7 +1700,58 @@ def boarder_profile(key):
         live_punishments=live_punishments,
         voided_punishments=voided_punishments,
         escalation_rows=escalation_rows,
+        ipoint_summary=ipoint_summary,
+        show_ipoints=show_ipoints,
+        can_log_ipoints=can_log_ipoints,
+        ipoint_action=f"{profile_url}/ipoints",
+        today=today,
     ))
+
+
+@bp.route('/boarder/<path:key>/ipoints', methods=['POST'])
+def log_profile_ipoint(key):
+    """Logs an I-Point Entry from a Boarder's profile, then returns to it.
+
+    The Match Key is the URL, not a form field, so the submitted Entry can
+    only land on the Boarder whose profile was posted from; the shared
+    ``ipoints.log_entry`` validator owns the rules. Feedback travels in a
+    flash, never the URL.
+    """
+    normalized = normalize_name(key)
+    points = request.form.get('points', '').strip()
+    occurred_on = request.form.get('occurred_on', '').strip()
+    reason = request.form.get('reason', '').strip()
+    destination = _boarder_profile_url(normalized)
+
+    def attempt():
+        with connect() as conn:
+            outcome = ipoints.log_entry(
+                conn,
+                normalized_name=normalized,
+                points=points,
+                occurred_on=occurred_on,
+                reason=reason,
+            )
+
+        if isinstance(outcome, EntryRejected):
+            flash(f"Error: {outcome.reason}", "error")
+        else:
+            current_app.logger.info(
+                "Logged I-Point Entry for %s", outcome.normalized_name
+            )
+            flash(outcome.message, "success")
+        return redirect(destination)
+
+    def _busy_redirect(exc):
+        flash(busy_message(exc.action), "error")
+        return redirect(destination)
+
+    return _mutate_with_retry(
+        "log the I-Point Entry",
+        attempt,
+        _busy_redirect,
+        "Boarder Profile I-Point Entry logging hit sustained contention",
+    )
 
 
 def _punishments_redirect():

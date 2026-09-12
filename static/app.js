@@ -165,6 +165,35 @@
         });
     });
 
+    // Removing an I-Point ledger row (Entry or Adjustment) is destructive but
+    // audited: route it through the shared confirm dialog, whose wording each
+    // form carries.
+    document.querySelectorAll('form.ipoint-remove-form').forEach(form => {
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            showConfirmModal({
+                title: form.dataset.removeTitle,
+                message: form.dataset.removeMessage,
+                confirmLabel: 'Remove',
+                onConfirm: () => form.submit()
+            });
+        });
+    });
+
+    // Confirming a pending Redemption records a Phone Confiscation and debits
+    // the Balance, so it too routes through the shared confirm dialog.
+    document.querySelectorAll('form.ipoint-confirm-form').forEach(form => {
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            showConfirmModal({
+                title: form.dataset.confirmTitle,
+                message: form.dataset.confirmMessage,
+                confirmLabel: 'Confirm',
+                onConfirm: () => form.submit()
+            });
+        });
+    });
+
     // Month detail view
     let monthRequestToken = 0;
 

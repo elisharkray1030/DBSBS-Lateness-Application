@@ -196,9 +196,12 @@ class AllTimeEntry:
     """One derived All-Time List row: every boarder ever recorded.
 
     Derived live from the Master List unioned with the Match Keys found in
-    Boarder History and Punishments — never stored. ``is_current`` is
-    likewise derived (True when the key sits on the Master List), and the
+    Boarder History, Punishments, and I-Points — never stored. ``is_current``
+    is likewise derived (True when the key sits on the Master List), and the
     seen-month/lifetime figures sum this key's history rows only.
+    ``is_ipoints_only`` marks a key known only through I-Points (no Master
+    List, history, or Punishment presence), so the profile can keep it
+    loggable while refusing a Removed Boarder (see #187).
     """
 
     normalized_name: str
@@ -210,6 +213,14 @@ class AllTimeEntry:
     total_frequency: int
     total_minutes: int
     total_points: int
+    is_ipoints_only: bool = False
+
+    @property
+    def is_removed(self) -> bool:
+        """True for a Removed Boarder: off the Master List but with Boarder
+        History or Punishment presence, so it may not accrue new I-Point
+        Entries (story 43). A key known only through I-Points is not Removed."""
+        return not self.is_current and not self.is_ipoints_only
 
 
 @dataclass
@@ -234,3 +245,119 @@ class Punishment:
     was_late: bool = False
     last_action: str | None = None
     actions: list["OfferedAction"] = field(default_factory=list)
+
+
+@dataclass
+class IPointEntry:
+    """One logged occasion on which a boarder was given I-Points."""
+
+    id: int
+    normalized_name: str
+    points: int
+    occurred_on: str
+    reason: str
+    recorded_at: str
+
+
+@dataclass
+class IPointAuditDraft:
+    """An I-Point Audit row waiting to be staged, minus its database id.
+
+    The seven fields travel as one carrier from the I-Points lifecycle into
+    storage, so the write-side shape of an Audit row has a single home.
+    """
+
+    entity_type: str
+    entity_id: int
+    normalized_name: str
+    action: str
+    before_state: str | None
+    after_state: str | None
+    changed_at: str
+
+
+@dataclass
+class IPointAudit(IPointAuditDraft):
+    """One retained change to a boarder's I-Points, with its prior state.
+
+    A stored Audit row: the fields a draft carries, plus its database id.
+    """
+
+    id: int
+
+
+@dataclass
+class IPointAuditNote:
+    """One human-readable line of a boarder's I-Point Audit History."""
+
+    action: str
+    changed_at: str
+    description: str
+
+
+@dataclass
+class IPointAdjustment:
+    """One manual, signed change to a boarder's I-Point Balance.
+
+    Not tied to a specific Entry; ``points`` is a non-zero signed integer.
+    """
+
+    id: int
+    normalized_name: str
+    points: int
+    reason: str
+    recorded_at: str
+
+
+@dataclass
+class Confiscation:
+    """One Phone Confiscation, from pending through released or voided.
+
+    A pending Redemption is a Confiscation with ``status == "pending"``: it
+    carries the tier locked at creation and the points it reserves, but does
+    not debit the Balance until staff confirm it. Confirming freezes
+    ``display_name`` and ``bed`` (blank while pending) and sets
+    ``confirmed_at``/``release_due``; a pending row may instead be voided.
+
+    ``is_due`` and ``stacked`` are derived display flags, computed per read
+    with an injected today and never stored.
+    """
+
+    id: int
+    normalized_name: str
+    trigger_month: str
+    points_redeemed: int
+    tier: int
+    status: str
+    created_at: str
+    display_name: str = ""
+    bed: str = ""
+    confirmed_at: str | None = None
+    release_due: str | None = None
+    released_at: str | None = None
+    voided_at: str | None = None
+    void_reason: str | None = None
+    is_due: bool = False
+    stacked: bool = False
+
+
+@dataclass
+class IPointSummary:
+    """One boarder's derived I-Points position for the I-Points view.
+
+    ``balance`` is derived from the ledger, never stored; ``entries`` and
+    ``adjustments`` power the per-boarder ledger listing and ``audits`` the
+    audit history, without a second read. ``pending`` is the boarder's open
+    pending Redemption, if any, and ``confiscations`` their full Confiscation
+    history.
+    """
+
+    normalized_name: str
+    display_name: str
+    bed: str
+    balance: int
+    entries: list[IPointEntry] = field(default_factory=list)
+    adjustments: list[IPointAdjustment] = field(default_factory=list)
+    audits: list[IPointAuditNote] = field(default_factory=list)
+    pending: Confiscation | None = None
+    confiscations: list[Confiscation] = field(default_factory=list)

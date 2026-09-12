@@ -2,7 +2,7 @@
 
 import re
 
-from helpers import record
+from helpers import record, seed_ipoint_entry
 
 import app as app_module
 import storage
@@ -88,6 +88,19 @@ class TestAllTimeListRendering:
 
         assert "Carol" in panel
         assert "badge-former" in panel
+
+    def test_ipoint_only_survivor_listed_as_former_with_match_key(self, fresh_client):
+        seed_ipoint_entry(name="IVY", points=5)
+
+        panel = get_boarders(fresh_client, "?view=all-time")
+
+        row = re.search(r"<tr data-boarder-key=\"IVY\">.*?</tr>", panel, re.S)
+        assert row is not None
+        row_html = row.group(0)
+        assert "badge-former" in row_html
+        assert ">IVY</a>" in row_html
+        assert re.search(r"\d{4}-\d{2}", row_html) is None  # no lateness months
+        assert row_html.count("<td>0</td>") == 3  # incidents, minutes, points
 
     def test_identity_resolves_from_freshest_snapshot(self, fresh_client):
         with app_module.connect() as conn:

@@ -7,6 +7,8 @@ resolution, min/max seen months, and the empty database.
 
 from helpers import record
 
+from records import IPointAuditDraft
+
 import storage
 
 
@@ -143,6 +145,181 @@ class TestAllTimeListUnion:
         ]
 
 
+class TestAllTimeListIPointUnion:
+    def test_entry_only_key_appears_as_former(self, conn):
+        storage.stage_ipoint_entry(
+            conn,
+            "IVY",
+            points=3,
+            occurred_on="2026-08-01",
+            reason="Repeated disruption",
+            recorded_at="2026-08-01T09:00:00+00:00",
+        )
+        conn.commit()
+
+        entries = storage.list_all_time_boarders(conn)
+
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.normalized_name == "IVY"
+        assert entry.display_name == "IVY"
+        assert entry.bed == ""
+        assert entry.is_current is False
+        assert entry.is_ipoints_only is True
+        assert (entry.first_month, entry.last_month) == (None, None)
+        assert entry.total_points == 0
+
+    def test_adjustment_only_key_appears_with_the_match_key_display(self, conn):
+        storage.stage_ipoint_adjustment(
+            conn,
+            "JADE",
+            points=-2,
+            reason="Rebalance",
+            recorded_at="2026-08-02T09:00:00+00:00",
+        )
+        conn.commit()
+
+        entries = storage.list_all_time_boarders(conn)
+
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.normalized_name == "JADE"
+        assert entry.display_name == "JADE"
+        assert entry.bed == ""
+        assert entry.is_current is False
+        assert entry.is_ipoints_only is True
+
+    def test_audit_only_key_stays_discoverable(self, conn):
+        storage.stage_ipoint_audit(
+            conn,
+            IPointAuditDraft(
+                entity_type="entry",
+                entity_id=99,
+                normalized_name="KAI",
+                action="removed",
+                before_state=None,
+                after_state=None,
+                changed_at="2026-08-03T09:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+        entries = storage.list_all_time_boarders(conn)
+
+        assert [e.normalized_name for e in entries] == ["KAI"]
+        assert entries[0].display_name == "KAI"
+        assert entries[0].is_ipoints_only is True
+
+    def test_pending_confiscation_key_has_no_frozen_identity(self, conn):
+        storage.stage_ipoint_confiscation(
+            conn,
+            "MONA",
+            trigger_month="2026-07",
+            points_redeemed=5,
+            tier=5,
+            status="pending",
+            created_at="2026-08-01T09:00:00+00:00",
+        )
+        conn.commit()
+
+        entries = storage.list_all_time_boarders(conn)
+
+        assert [e.normalized_name for e in entries] == ["MONA"]
+        assert entries[0].display_name == "MONA"
+        assert entries[0].bed == ""
+        assert entries[0].is_ipoints_only is True
+
+    def test_confirmed_confiscation_freezes_display_name_and_bed(self, conn):
+        confiscation_id = storage.stage_ipoint_confiscation(
+            conn,
+            "LENA",
+            trigger_month="2026-07",
+            points_redeemed=5,
+            tier=5,
+            status="pending",
+            created_at="2026-08-01T09:00:00+00:00",
+        )
+        storage.stage_confirm_ipoint_confiscation(
+            conn,
+            confiscation_id,
+            display_name="Lena Lovelace",
+            bed="402",
+            confirmed_at="2026-08-05T09:00:00+00:00",
+            release_due="2026-08-06",
+        )
+        conn.commit()
+
+        entries = storage.list_all_time_boarders(conn)
+
+        assert [e.normalized_name for e in entries] == ["LENA"]
+        assert entries[0].display_name == "Lena Lovelace"
+        assert entries[0].bed == "402"
+        assert entries[0].is_ipoints_only is True
+
+    def test_key_across_sources_appears_once(self, conn):
+        storage.stage_ipoint_entry(
+            conn, "ROSE", 1, "2026-08-01", "x",
+            "2026-08-01T09:00:00+00:00",
+        )
+        storage.stage_ipoint_adjustment(
+            conn, "ROSE", 2, "x", "2026-08-02T09:00:00+00:00"
+        )
+        storage.stage_ipoint_audit(
+            conn,
+            IPointAuditDraft(
+                entity_type="entry", entity_id=1, normalized_name="ROSE",
+                action="created", before_state=None, after_state=None,
+                changed_at="2026-08-01T09:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+        entries = storage.list_all_time_boarders(conn)
+
+        assert [e.normalized_name for e in entries] == ["ROSE"]
+
+    def test_punishment_only_key_is_not_ipoints_only(self, conn):
+        storage.assign_punishments(
+            conn,
+            month="2026-03",
+            boarders=[record("CAROL", "602A", 1, 4, 9)],
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+
+        entry = entry_by_key(storage.list_all_time_boarders(conn), "CAROL")
+
+        assert entry.is_current is False
+        assert entry.is_ipoints_only is False
+
+    def test_history_only_key_is_not_ipoints_only(self, conn):
+        save_history(conn, "OWEN", month="2026-01")
+
+        entry = entry_by_key(storage.list_all_time_boarders(conn), "OWEN")
+
+        assert entry.is_ipoints_only is False
+
+    def test_master_key_is_not_ipoints_only(self, conn):
+        storage.replace_boarders(conn, [make_boarder("ALICE", "Alice", "601A")])
+
+        entry = entry_by_key(storage.list_all_time_boarders(conn), "ALICE")
+
+        assert entry.is_ipoints_only is False
+
+    def test_resolve_boarder_identity_returns_ipoints_only_entry(self, conn):
+        storage.stage_ipoint_entry(
+            conn, "IVY", 3, "2026-08-01", "x",
+            "2026-08-01T09:00:00+00:00",
+        )
+        conn.commit()
+
+        resolved = storage.resolve_boarder_identity(conn, "IVY")
+
+        assert resolved is not None
+        assert resolved.normalized_name == "IVY"
+        assert resolved.is_ipoints_only is True
+
+
 class TestAllTimeFreshestIdentity:
     def test_identity_resolves_from_latest_month_snapshot(self, conn):
         save_history(conn, "ALICE", bed="101", month="2026-01",
@@ -196,6 +373,40 @@ class TestAllTimeFreshestIdentity:
             "Master Alice",
             "601A",
         )
+
+    def test_confirmed_confiscation_snapshot_outranks_older_history(self, conn):
+        save_history(conn, "NORA", bed="101", display_name="Old Nora",
+                     month="2026-01")
+        confiscation_id = storage.stage_ipoint_confiscation(
+            conn, "NORA", trigger_month="2026-06", points_redeemed=5, tier=5,
+            status="pending", created_at="2026-07-01T09:00:00+00:00",
+        )
+        storage.stage_confirm_ipoint_confiscation(
+            conn, confiscation_id, display_name="Nora New", bed="808",
+            confirmed_at="2026-07-03T09:00:00+00:00", release_due="2026-07-04",
+        )
+        conn.commit()
+
+        entries = storage.list_all_time_boarders(conn)
+
+        assert (entries[0].display_name, entries[0].bed) == ("Nora New", "808")
+
+    def test_newer_history_snapshot_outranks_older_confiscation(self, conn):
+        confiscation_id = storage.stage_ipoint_confiscation(
+            conn, "NORA", trigger_month="2026-01", points_redeemed=5, tier=5,
+            status="pending", created_at="2026-02-01T09:00:00+00:00",
+        )
+        storage.stage_confirm_ipoint_confiscation(
+            conn, confiscation_id, display_name="Confiscation Nora", bed="111",
+            confirmed_at="2026-02-02T09:00:00+00:00", release_due="2026-02-03",
+        )
+        save_history(conn, "NORA", bed="202", display_name="History Nora",
+                     month="2026-05")
+        conn.commit()
+
+        entries = storage.list_all_time_boarders(conn)
+
+        assert (entries[0].display_name, entries[0].bed) == ("History Nora", "202")
 
 
 class TestAllTimeOrdering:

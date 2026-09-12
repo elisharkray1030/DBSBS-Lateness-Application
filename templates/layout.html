@@ -962,6 +962,26 @@
             color: var(--navy);
         }
 
+        .ipoints-group {
+            margin-bottom: 24px;
+        }
+
+        .ipoints-group-title {
+            margin: 0 0 6px;
+            color: var(--navy);
+        }
+
+        .ipoint-balance-badge {
+            display: inline-block;
+            background: var(--navy);
+            color: var(--surface);
+            font-size: 0.75em;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            margin-left: 6px;
+        }
+
         .modal {
             display: none;
             position: fixed;
@@ -1316,6 +1336,7 @@
         <a class="tab-link" href="/?tab=history">Search Boarder History</a>
         {% endif %}
         <a class="tab-link {% if selected_tab == 'punishments' %}active{% endif %}" data-tab="punishments" href="/punishments">Punishments</a>
+        <a class="tab-link {% if selected_tab == 'ipoints' %}active{% endif %}" href="/ipoints">I-Points</a>
         {% if panels_in_page %}
         <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">Boarders</button>
         {% else %}

@@ -3107,7 +3107,7 @@ class TestChromeConsistency:
         results_index = panel.index("<h3>Search Results</h3>")
         assert title_index < results_index
 
-    def test_all_four_tabs_share_identical_computed_typography(self, fresh_client, browser_page):
+    def test_every_tab_shares_identical_computed_typography(self, fresh_client, browser_page):
         html = fresh_client.get("/").get_data(as_text=True)
 
         page = browser_page
@@ -3119,7 +3119,7 @@ class TestChromeConsistency:
             })"""
         )
 
-        assert len(typography) == 5
+        assert len(typography) == 6
         assert len(set(typography)) == 1, typography
 
 

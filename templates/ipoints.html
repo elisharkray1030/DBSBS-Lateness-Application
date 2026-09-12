@@ -1,0 +1,350 @@
+{% extends "layout.html" %}
+
+{% block title %}I-Points — DBS Boarding School{% endblock %}
+
+{% block heading %}
+    <h1>I-Points</h1>
+{% endblock %}
+
+{% block content %}
+    <section id="ipoints" class="panel active ipoints-panel">
+        <h2>Irregularity Points</h2>
+
+        <div class="upload-panel">
+            <h3 class="upload-title">Log I-Point Entry</h3>
+            <form action="/ipoints/entries" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="ipoint-boarder"><strong>Boarder Name</strong></label>
+                        <input type="text" id="ipoint-boarder" name="boarder"
+                               list="ipoint-boarders" autocomplete="off" required>
+                        <datalist id="ipoint-boarders">
+                            {% for option in boarder_options %}
+                                <option value="{{ option }}"></option>
+                            {% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="form-field">
+                        <label for="ipoint-points"><strong>Points</strong></label>
+                        <input type="number" id="ipoint-points" name="points"
+                               min="1" step="1" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="ipoint-occurred-on"><strong>Date</strong></label>
+                        <input type="date" id="ipoint-occurred-on" name="occurred_on"
+                               value="{{ today }}" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="ipoint-reason"><strong>Reason</strong></label>
+                        <input type="text" id="ipoint-reason" name="reason" required>
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-primary">Log Entry</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <div class="upload-panel">
+            <h3 class="upload-title">Add I-Point Adjustment</h3>
+            <form action="/ipoints/adjustments" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="adjustment-boarder"><strong>Boarder Name</strong></label>
+                        <input type="text" id="adjustment-boarder" name="boarder"
+                               list="ipoint-boarders" autocomplete="off" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="adjustment-points"><strong>Points</strong></label>
+                        <input type="number" id="adjustment-points" name="points"
+                               step="1" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="adjustment-reason"><strong>Reason</strong></label>
+                        <input type="text" id="adjustment-reason" name="reason" required>
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-primary">Add Adjustment</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <div class="upload-panel" id="confiscations">
+            <h3 class="upload-title">Phone Confiscations</h3>
+            <form action="/ipoints" method="get" class="ipoint-filter-form">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="confiscation-status"><strong>Status</strong></label>
+                        <select id="confiscation-status" name="confiscation_status">
+                            {% for value, label in confiscation_filter_options %}
+                            <option value="{{ value }}" {% if value == confiscation_filter %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+                    </div>
+                </div>
+            </form>
+            {% if confiscations %}
+            <div class="table-scroll">
+                <table class="ipoints-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Boarder</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Redeemed</th>
+                            <th scope="col">Due back</th>
+                            <th scope="col">Flags</th>
+                            <th scope="col">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for confiscation in confiscations %}
+                        {% set who = confiscation.display_name or confiscation.normalized_name %}
+                        <tr data-confiscation-id="{{ confiscation.id }}">
+                            <td>{{ who }}{% if confiscation.bed %} (Bed {{ confiscation.bed }}){% endif %}</td>
+                            <td>{{ confiscation.status|capitalize }}</td>
+                            <td>{{ confiscation.points_redeemed }} I-Points (tier {{ confiscation.tier }})</td>
+                            <td>
+                                {{ confiscation.release_due or '—' }}
+                                {% if confiscation.released_at %}<br>Returned {{ confiscation.released_at }}{% endif %}
+                                {% if confiscation.void_reason %}<br>Voided: {{ confiscation.void_reason }}{% endif %}
+                            </td>
+                            <td>
+                                {% if confiscation.stacked %}<span class="ipoint-flag ipoint-flag-stacked">Stacked</span>{% endif %}
+                                {% if confiscation.is_due %}<span class="ipoint-flag ipoint-flag-due">Due for release</span>{% endif %}
+                            </td>
+                            <td class="ipoint-row-actions">
+                                {% if confiscation.status == 'active' %}
+                                <form id="ipoint-confiscation-release-{{ confiscation.id }}"
+                                      class="ipoint-confirm-form"
+                                      action="/ipoints/confiscations/{{ confiscation.id }}/release" method="post"
+                                      data-confirm-title="Release Confiscation?"
+                                      data-confirm-message="Mark the Confiscation for {{ who }} released? The phone is recorded as returned{% if confiscation.stacked %}, but it stays held until the lateness Punishment is submitted{% endif %}.">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                </form>
+                                <button type="submit" form="ipoint-confiscation-release-{{ confiscation.id }}"
+                                        class="btn btn-primary btn-sm"
+                                        aria-label="Release the Confiscation for {{ who }}">Release</button>
+                                <form id="ipoint-confiscation-edit-{{ confiscation.id }}"
+                                      action="/ipoints/confiscations/{{ confiscation.id }}/edit" method="post">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                </form>
+                                <select name="tier" form="ipoint-confiscation-edit-{{ confiscation.id }}"
+                                        aria-label="Tier for {{ who }}'s Confiscation">
+                                    {% for tier in tiers %}
+                                    <option value="{{ tier }}" {% if tier == confiscation.tier %}selected{% endif %}>{{ tier }} ({{ tier_period_labels[tier] }})</option>
+                                    {% endfor %}
+                                </select>
+                                <button type="submit" form="ipoint-confiscation-edit-{{ confiscation.id }}"
+                                        class="btn btn-primary btn-sm"
+                                        aria-label="Save the tier for {{ who }}'s Confiscation">Save</button>
+                                <form id="ipoint-confiscation-void-{{ confiscation.id }}"
+                                      action="/ipoints/confiscations/{{ confiscation.id }}/void" method="post">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <label for="confiscation-void-reason-{{ confiscation.id }}">Reason</label>
+                                    <input type="text" id="confiscation-void-reason-{{ confiscation.id }}"
+                                           name="void_reason" required
+                                           aria-label="Reason for voiding the Confiscation for {{ who }}">
+                                </form>
+                                <button type="submit" form="ipoint-confiscation-void-{{ confiscation.id }}"
+                                        class="btn btn-danger btn-sm"
+                                        aria-label="Void the Confiscation for {{ who }}">Void</button>
+                                {% endif %}
+                                <form id="ipoint-confiscation-remove-{{ confiscation.id }}"
+                                      class="ipoint-remove-form"
+                                      action="/ipoints/confiscations/{{ confiscation.id }}/remove" method="post"
+                                      data-remove-title="Remove Confiscation?"
+                                      data-remove-message="Remove the Confiscation for {{ who }}? It leaves the list but stays in the Audit History.">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                </form>
+                                <button type="submit" form="ipoint-confiscation-remove-{{ confiscation.id }}"
+                                        class="btn btn-danger btn-sm"
+                                        aria-label="Remove the Confiscation for {{ who }}">Remove</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>No {{ confiscation_filter }} Phone Confiscations.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if ipoint_summaries %}
+            {% for summary in ipoint_summaries %}
+            <div class="ipoints-group">
+                <h3 class="ipoints-group-title">
+                    {{ summary.display_name }}{% if summary.bed %} (Bed {{ summary.bed }}){% endif %}
+                    <span class="ipoint-balance-badge">Balance: {{ summary.balance }}</span>
+                </h3>
+                {% if summary.pending %}
+                {% set tier_period = tier_period_labels.get(summary.pending.tier, summary.pending.tier) %}
+                <div class="ipoint-pending" role="status">
+                    <p>
+                        <strong>Pending redemption:</strong>
+                        {{ summary.pending.points_redeemed }} I-Points for
+                        {{ tier_period }} (triggered at {{ summary.pending.trigger_month }}).
+                        Confirming takes the phone and deducts the points.
+                    </p>
+                    <div class="ipoint-row-actions">
+                        <form action="/ipoints/confiscations/{{ summary.pending.id }}/confirm"
+                              method="post" class="ipoint-confirm-form"
+                              data-confirm-title="Confirm redemption?"
+                              data-confirm-message="Confirm the {{ summary.pending.points_redeemed }}-I-Point redemption for {{ summary.display_name }}? This records a Phone Confiscation and deducts the points from the Balance.">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn btn-primary btn-sm"
+                                    aria-label="Confirm redemption for {{ summary.display_name }}">Confirm</button>
+                        </form>
+                        <form action="/ipoints/confiscations/{{ summary.pending.id }}/void"
+                              method="post" class="ipoint-void-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <label for="void-reason-{{ summary.pending.id }}">Reason (optional)</label>
+                            <input type="text" id="void-reason-{{ summary.pending.id }}"
+                                   name="void_reason"
+                                   aria-label="Reason for voiding the redemption for {{ summary.display_name }}">
+                            <button type="submit" class="btn btn-danger btn-sm"
+                                    aria-label="Void redemption for {{ summary.display_name }}">Void</button>
+                        </form>
+                    </div>
+                </div>
+                {% endif %}
+                {% if summary.entries or summary.adjustments %}
+                <div class="table-scroll">
+                    <table class="ipoints-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Type</th>
+                                <th scope="col">Date</th>
+                                <th scope="col">Points</th>
+                                <th scope="col">Reason</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in summary.entries %}
+                            <tr data-entry-id="{{ entry.id }}">
+                                <td>Entry</td>
+                                <td>
+                                    <input type="date" name="occurred_on"
+                                           form="ipoint-edit-{{ entry.id }}"
+                                           value="{{ entry.occurred_on }}"
+                                           aria-label="Date for entry {{ entry.id }}" required>
+                                </td>
+                                <td>
+                                    <input type="number" name="points"
+                                           form="ipoint-edit-{{ entry.id }}"
+                                           min="1" step="1" value="{{ entry.points }}"
+                                           aria-label="Points for entry {{ entry.id }}" required>
+                                </td>
+                                <td>
+                                    <input type="text" name="reason"
+                                           form="ipoint-edit-{{ entry.id }}"
+                                           value="{{ entry.reason }}"
+                                           aria-label="Reason for entry {{ entry.id }}" required>
+                                </td>
+                                <td class="ipoint-row-actions">
+                                    <form id="ipoint-edit-{{ entry.id }}"
+                                          action="/ipoints/entries/{{ entry.id }}/edit" method="post">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    </form>
+                                    <form id="ipoint-remove-{{ entry.id }}" class="ipoint-remove-form"
+                                          action="/ipoints/entries/{{ entry.id }}/remove" method="post"
+                                          data-remove-title="Remove I-Point Entry?"
+                                          data-remove-message="Remove the {{ entry.occurred_on }} I-Point Entry for {{ summary.display_name }}? It leaves the Balance but stays in the Audit History.">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    </form>
+                                    <button type="submit" form="ipoint-edit-{{ entry.id }}"
+                                            class="btn btn-primary btn-sm">Save</button>
+                                    <button type="submit" form="ipoint-remove-{{ entry.id }}"
+                                            class="btn btn-danger btn-sm"
+                                            aria-label="Remove entry from {{ entry.occurred_on }}">Remove</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            {% for adjustment in summary.adjustments %}
+                            <tr data-adjustment-id="{{ adjustment.id }}">
+                                <td>Adjustment</td>
+                                <td>—</td>
+                                <td>
+                                    <input type="number" name="points"
+                                           form="ipoint-adjustment-edit-{{ adjustment.id }}"
+                                           step="1" value="{{ adjustment.points }}"
+                                           aria-label="Points for adjustment {{ adjustment.id }}" required>
+                                </td>
+                                <td>
+                                    <input type="text" name="reason"
+                                           form="ipoint-adjustment-edit-{{ adjustment.id }}"
+                                           value="{{ adjustment.reason }}"
+                                           aria-label="Reason for adjustment {{ adjustment.id }}" required>
+                                </td>
+                                <td class="ipoint-row-actions">
+                                    <form id="ipoint-adjustment-edit-{{ adjustment.id }}"
+                                          action="/ipoints/adjustments/{{ adjustment.id }}/edit" method="post">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    </form>
+                                    <form id="ipoint-adjustment-remove-{{ adjustment.id }}"
+                                          class="ipoint-remove-form"
+                                          action="/ipoints/adjustments/{{ adjustment.id }}/remove" method="post"
+                                          data-remove-title="Remove I-Point Adjustment?"
+                                          data-remove-message="Remove the {{ adjustment.points }} I-Point Adjustment for {{ summary.display_name }}? It leaves the Balance but stays in the Audit History.">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    </form>
+                                    <button type="submit" form="ipoint-adjustment-edit-{{ adjustment.id }}"
+                                            class="btn btn-primary btn-sm">Save</button>
+                                    <button type="submit" form="ipoint-adjustment-remove-{{ adjustment.id }}"
+                                            class="btn btn-danger btn-sm"
+                                            aria-label="Remove adjustment from {{ adjustment.reason }}">Remove</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+                {% if summary.audits %}
+                <details class="ipoints-audit">
+                    <summary>Audit History</summary>
+                    <div class="table-scroll">
+                        <table class="ipoints-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Action</th>
+                                    <th scope="col">When</th>
+                                    <th scope="col">Change</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for note in summary.audits %}
+                                <tr>
+                                    <td>{{ note.action }}</td>
+                                    <td>{{ note.changed_at }}</td>
+                                    <td>{{ note.description }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                No I-Point Entries have been logged yet.
+            </div>
+        {% endif %}
+    </section>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}
