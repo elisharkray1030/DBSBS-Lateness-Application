@@ -2,9 +2,11 @@
 
 The app is a Flask dashboard over one SQLite database. Two seams carry the
 data: ingestion (`parser.py`) and storage (`storage.py`). A typed boarder
-record (`records.py`) crosses both. The app layer (`app.py`) is a thin adapter
-that opens a connection per request and renders outcomes; templates and
-`static/app.js` are the browser surface.
+record (`records.py`) crosses both. Two parallel lifecycle modules sit on the
+storage seam — `punishments.py` and `ipoints.py` — each owning its domain's
+validation, derived figures, and transitions without importing the other. The
+app layer (`app.py`) is a thin adapter that opens a connection per request and
+renders outcomes; templates and `static/app.js` are the browser surface.
 
 See [CONTEXT.md](../CONTEXT.md) for domain vocabulary and [docs/adr/](adr/) for
 the decisions behind these boundaries.
@@ -196,10 +198,13 @@ Important behavior:
   attached in `boarder_balances(conn, today)` and `confiscation_list(conn,
   statuses, today)`. The app never releases on its own (ADR 0005), and the phone
   returns only once both gates clear.
-- The I-Points tables (`ipoint_entries`, `ipoint_adjustments`, `confiscations`,
-  `ipoint_audit`) are created idempotently by `create_schema` and re-keyed with
-  the other tables by the Match-Key migration. A partial unique index keeps one
-  open (`pending` or `active`) Confiscation per Match Key.
+- The I-Point ledger is four tables, created idempotently by `create_schema` and
+  re-keyed with the other tables by the Match-Key migration: `ipoint_entries`
+  holds one logged Entry, `ipoint_adjustments` one signed Adjustment,
+  `confiscations` one Redemption that becomes a Phone Confiscation from pending
+  through released or voided, and `ipoint_audit` one retained change with its
+  prior state. A partial unique index keeps one open (`pending` or `active`)
+  Confiscation per Match Key.
 - The web routes live in `app.py` (`GET /ipoints`, `POST /ipoints/entries`,
   `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`,
   `POST /ipoints/adjustments`, `POST /ipoints/adjustments/<id>/edit`,
@@ -287,10 +292,12 @@ Important behavior:
   sees frozen history and no quick-log. Reached by clicking a boarder name
   anywhere in the app or via Find a Boarder search.
 - `templates/ipoints.html` is the I-Points view: the log-Entry and
-  add-Adjustment forms and the per-boarder ledger with each boarder's Balance,
+  add-Adjustment forms, the per-boarder ledger with each boarder's Balance,
   pending Redemption (confirm/void), Entries and Adjustments distinguished by a
   Type column with inline edit/remove controls, and a collapsible per-boarder
-  Audit History. Reached from a tab-bar entry beside Punishments.
+  Audit History, plus the Confiscation management list with status filtering and
+  the Stacked/due-for-release flags. Reached from a tab-bar entry beside
+  Punishments.
 - `templates/macros.html` holds shared Jinja macros (for example, the
   Current/Former status badge).
 - `static/app.js` holds browser-side behavior: table sorting, charts, and
@@ -312,3 +319,10 @@ Important behavior:
   `DB_PATH` global.
 - **No DB writes at import.** Importing the modules opens no database and
   writes nothing; schema creation is an explicit `init-db` step.
+- **Derived I-Point Balance.** A boarder's Balance is computed from the stored
+  ledger on each read — Entries plus Adjustments minus confirmed (`active` or
+  `released`) Confiscations — never stored, so it cannot drift. A pending
+  Redemption is a persisted row (ADR 0007) but does not debit the Balance until
+  confirmed.
+- **Non-negative I-Point Balance.** Every write that can move the Balance
+  refuses a change that would take it below zero (ADR 0006).
