@@ -14,6 +14,7 @@ from records import (
     HouseTrendPoint,
     IPointAudit,
     IPointAuditDraft,
+    IPointAdjustment,
     IPointEntry,
     MonthSummary,
     Punishment,
@@ -112,6 +113,17 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS ipoint_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_name TEXT NOT NULL,
+            points INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS ipoint_audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_type TEXT NOT NULL,
@@ -153,6 +165,7 @@ def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
         "boarder_history",
         "punishments",
         "ipoint_entries",
+        "ipoint_adjustments",
         "ipoint_audit",
     ):
         rows = conn.execute(
@@ -1122,6 +1135,64 @@ def stage_delete_ipoint_entry(conn: sqlite3.Connection, entry_id: int) -> None:
     conn.execute("DELETE FROM ipoint_entries WHERE id = ?", (entry_id,))
 
 
+def stage_ipoint_adjustment(
+    conn: sqlite3.Connection,
+    normalized_name: str,
+    points: int,
+    reason: str,
+    recorded_at: str,
+) -> int:
+    """Stages one I-Point Adjustment on the open transaction; it does not commit.
+
+    The I-Points lifecycle owns the transaction so an Adjustment and its audit
+    row are written together. A standalone caller must commit the connection.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO ipoint_adjustments (
+            normalized_name, points, reason, recorded_at
+        ) VALUES (?, ?, ?, ?)
+        """,
+        (normalized_name, points, reason, recorded_at),
+    )
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("Insert succeeded but no row id was returned.")
+    return lastrowid
+
+
+def stage_update_ipoint_adjustment(
+    conn: sqlite3.Connection,
+    adjustment_id: int,
+    points: int,
+    reason: str,
+) -> None:
+    """Stages one I-Point Adjustment edit on the open transaction; it does not commit.
+
+    ``recorded_at`` is the logging timestamp and is deliberately left untouched
+    by an edit.
+    """
+    conn.execute(
+        """
+        UPDATE ipoint_adjustments
+        SET points = ?, reason = ?
+        WHERE id = ?
+        """,
+        (points, reason, adjustment_id),
+    )
+
+
+def stage_delete_ipoint_adjustment(
+    conn: sqlite3.Connection, adjustment_id: int
+) -> None:
+    """Stages one I-Point Adjustment removal on the open transaction; it does not commit.
+
+    The prior state survives in the I-Point Audit row written beside this
+    delete in the same transaction.
+    """
+    conn.execute("DELETE FROM ipoint_adjustments WHERE id = ?", (adjustment_id,))
+
+
 def stage_ipoint_audit(
     conn: sqlite3.Connection, audit: IPointAuditDraft
 ) -> None:
@@ -1159,6 +1230,11 @@ _IPOINT_ENTRY_LISTING = _IPointListing(
     "id, normalized_name, points, occurred_on, reason, recorded_at",
     "ipoint_entries",
     "occurred_on ASC, id ASC",
+)
+_IPOINT_ADJUSTMENT_LISTING = _IPointListing(
+    "id, normalized_name, points, reason, recorded_at",
+    "ipoint_adjustments",
+    "id ASC",
 )
 _IPOINT_AUDIT_LISTING = _IPointListing(
     "id, entity_type, entity_id, normalized_name, action, "
@@ -1217,6 +1293,36 @@ def list_ipoint_entries(
     """Lists I-Point Entries chronologically, optionally for one Match Key."""
     rows = _select_ipoint_rows(conn, _IPOINT_ENTRY_LISTING, normalized_name)
     return [_ipoint_entry_from_row(row) for row in rows]
+
+
+def _ipoint_adjustment_from_row(row) -> IPointAdjustment:
+    return IPointAdjustment(
+        id=row[0],
+        normalized_name=row[1],
+        points=row[2],
+        reason=row[3],
+        recorded_at=row[4],
+    )
+
+
+def get_ipoint_adjustment(
+    conn: sqlite3.Connection, adjustment_id: int
+) -> IPointAdjustment | None:
+    """Returns one I-Point Adjustment by id, or None when it is absent."""
+    cursor = conn.execute(
+        f"SELECT {_IPOINT_ADJUSTMENT_LISTING.columns} FROM ipoint_adjustments WHERE id = ?",
+        (adjustment_id,),
+    )
+    row = cursor.fetchone()
+    return _ipoint_adjustment_from_row(row) if row is not None else None
+
+
+def list_ipoint_adjustments(
+    conn: sqlite3.Connection, normalized_name: str | None = None
+) -> list[IPointAdjustment]:
+    """Lists I-Point Adjustments, optionally for one Match Key, oldest first."""
+    rows = _select_ipoint_rows(conn, _IPOINT_ADJUSTMENT_LISTING, normalized_name)
+    return [_ipoint_adjustment_from_row(row) for row in rows]
 
 
 def _ipoint_audit_from_row(row) -> IPointAudit:

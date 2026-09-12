@@ -165,14 +165,15 @@
         });
     });
 
-    // Removing an I-Point Entry is destructive but audited: route it through
-    // the shared confirm dialog naming the Boarder and date.
+    // Removing an I-Point ledger row (Entry or Adjustment) is destructive but
+    // audited: route it through the shared confirm dialog, whose wording each
+    // form carries.
     document.querySelectorAll('form.ipoint-remove-form').forEach(form => {
         form.addEventListener('submit', function(event) {
             event.preventDefault();
             showConfirmModal({
-                title: 'Remove I-Point Entry?',
-                message: `Remove the ${form.dataset.date} I-Point Entry for ${form.dataset.boarder}? It leaves the Balance but stays in the Audit History.`,
+                title: form.dataset.removeTitle,
+                message: form.dataset.removeMessage,
                 confirmLabel: 'Remove',
                 onConfirm: () => form.submit()
             });

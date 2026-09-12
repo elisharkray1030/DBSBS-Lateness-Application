@@ -91,7 +91,7 @@ One logged occasion on which a boarder was given I-Points, carrying the points, 
 _Avoid_: award, incident, infraction, charge
 
 **I-Point Adjustment**:
-A manual staff correction to a boarder's I-Point Balance that adds or subtracts points without being tied to a specific Entry. Used to rebalance instead of rewriting history, and a subtraction may never take the Balance below zero.
+A manual staff change to a boarder's I-Point Balance that adds or subtracts points without being tied to a specific Entry. Used to rebalance instead of rewriting history, and a subtraction may never take the Balance below zero.
 _Avoid_: correction, override, manual entry
 
 **I-Point Balance**:

@@ -285,12 +285,26 @@ class IPointAuditNote:
 
 
 @dataclass
+class IPointAdjustment:
+    """One manual, signed change to a boarder's I-Point Balance.
+
+    Not tied to a specific Entry; ``points`` is a non-zero signed integer.
+    """
+
+    id: int
+    normalized_name: str
+    points: int
+    reason: str
+    recorded_at: str
+
+
+@dataclass
 class IPointSummary:
     """One boarder's derived I-Points position for the I-Points view.
 
-    ``balance`` is derived from the ledger, never stored; ``entries`` powers
-    the per-boarder ledger listing and ``audits`` the audit history, without
-    a second read.
+    ``balance`` is derived from the ledger, never stored; ``entries`` and
+    ``adjustments`` power the per-boarder ledger listing and ``audits`` the
+    audit history, without a second read.
     """
 
     normalized_name: str
@@ -298,4 +312,5 @@ class IPointSummary:
     bed: str
     balance: int
     entries: list[IPointEntry] = field(default_factory=list)
+    adjustments: list[IPointAdjustment] = field(default_factory=list)
     audits: list[IPointAuditNote] = field(default_factory=list)
