@@ -5,10 +5,32 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from helpers import record, static_dir
+from helpers import post_csrf, record, seed_punishments, static_dir
 
 import app as app_module
+import ipoints
+import punishments
 import storage
+
+
+def seed_ipoint_entry(
+    name="ALICE",
+    points=5,
+    occurred_on="2026-08-01",
+    reason="Repeated disruption",
+    recorded_at="2026-08-01T09:00:00+00:00",
+):
+    with app_module.connect() as conn:
+        outcome = ipoints.log_entry(
+            conn,
+            normalized_name=name,
+            points=points,
+            occurred_on=occurred_on,
+            reason=reason,
+            recorded_at=recorded_at,
+        )
+    assert isinstance(outcome, ipoints.EntrySaved)
+    return outcome
 
 
 def profile_html(client, key):
@@ -588,11 +610,13 @@ class TestProfileChrome:
     def test_identity_header_survives_print_styles(self, fresh_client):
         # The shared print stylesheet excludes .upload-panel; the profile's
         # identity header must not live inside that class, or printing drops
-        # the name, bed, badge, and every summary figure.
+        # the name, bed, badge, and every summary figure. The I-Point quick-log
+        # panel is allowed (and is itself deliberately excluded from paper).
         html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
 
         assert 'class="profile-header"' in html
-        assert 'class="upload-panel' not in html
+        header_start = html.index('class="profile-header"')
+        assert 'class="upload-panel' not in html[:header_start]
 
 
 class TestEscalationParityAndLock:
@@ -795,3 +819,214 @@ class TestEscalationParityAndLock:
             assert all('scope="col"' in tag for tag in headers), (
                 f"{table_id} diverged from the Profile's table semantics"
             )
+
+
+class TestProfileIPointsSection:
+    def test_ipoints_only_boarder_shows_balance_and_history(self, fresh_client):
+        seed_ipoint_entry(name="CHEN WEI", points=5, reason="Repeated disruption")
+
+        html = profile_html(fresh_client, "CHEN%20WEI").get_data(as_text=True)
+
+        assert "<h2>I-Points</h2>" in html
+        assert 'id="stat-ipoint-balance">5<' in html
+        assert "Repeated disruption" in html
+        assert "CHEN WEI" in html
+        # No lateness identity resolves, so no Current/Former badge and no
+        # misleading zero lateness summary cards.
+        assert 'class="status-badge' not in html
+        assert "Total incidents" not in html
+
+    def test_current_boarder_without_ipoints_gets_the_section_and_quick_log(
+        self, fresh_client
+    ):
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert "<h2>I-Points</h2>" in html
+        assert 'id="stat-ipoint-balance">0<' in html
+        assert 'action="/boarder/ALICE/ipoints"' in html
+        assert "Total incidents" in html
+
+    def test_removed_boarder_shows_frozen_history_without_a_quick_log(
+        self, fresh_client
+    ):
+        seed_history("ZED", "Zed", "601Z", [("2026-01", 1, 2, 3)])
+        seed_ipoint_entry(name="ZED", points=7, reason="Frozen entry")
+
+        html = profile_html(fresh_client, "ZED").get_data(as_text=True)
+
+        assert "Frozen entry" in html
+        assert 'id="stat-ipoint-balance">7<' in html
+        assert 'action="/boarder/ZED/ipoints"' not in html
+
+    def test_profile_omits_the_ipoint_audit_history(self, fresh_client):
+        seed_ipoint_entry(name="ALICE", points=5)
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert "Audit History" not in html
+
+    def test_ipoint_section_repeats_stacked_and_due_flags(self, fresh_client):
+        with app_module.connect() as conn:
+            ipoints.log_entry(
+                conn,
+                normalized_name="ALICE",
+                points=14,
+                occurred_on="2026-08-01",
+                reason="x",
+                recorded_at="2026-08-10T09:00:00+00:00",
+            )
+            ipoints.materialise_pending_redemptions(conn, "2026-09-12")
+            pending = storage.get_open_ipoint_confiscation(conn, "ALICE")
+            ipoints.confirm_redemption(
+                conn,
+                pending.id,
+                today="2020-01-01",
+                recorded_at="2020-01-01T10:00:00+00:00",
+            )
+            rows = seed_punishments(
+                conn,
+                boarders=[record("ALICE", "601A", 2, 5, 7)],
+                month="2026-03",
+                deadline="2026-03-10",
+            )
+            punishment = rows[0]
+            punishments.transition(
+                conn, punishment.id, "overdue",
+                timestamp="2026-03-11T09:00:00+00:00",
+            )
+            punishments.transition(
+                conn, punishment.id, "phone_held",
+                timestamp="2026-03-12T09:00:00+00:00",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert "Stacked" in html
+        assert "Due for release" in html
+
+    def test_profile_lists_released_and_voided_confiscations(self, fresh_client):
+        with app_module.connect() as conn:
+            ipoints.log_entry(
+                conn,
+                normalized_name="ALICE",
+                points=14,
+                occurred_on="2026-08-01",
+                reason="x",
+                recorded_at="2026-08-10T09:00:00+00:00",
+            )
+            ipoints.log_entry(
+                conn,
+                normalized_name="BOB",
+                points=5,
+                occurred_on="2026-08-01",
+                reason="y",
+                recorded_at="2026-08-10T09:00:00+00:00",
+            )
+            ipoints.materialise_pending_redemptions(conn, "2026-09-12")
+            alice = storage.get_open_ipoint_confiscation(conn, "ALICE")
+            ipoints.confirm_redemption(
+                conn,
+                alice.id,
+                today="2026-09-15",
+                recorded_at="2026-09-15T09:00:00+00:00",
+            )
+            ipoints.release_confiscation(
+                conn, alice.id, released_at="2026-09-18T09:00:00+00:00"
+            )
+            bob = storage.get_open_ipoint_confiscation(conn, "BOB")
+            ipoints.void_confiscation(conn, bob.id, reason="recorded in error")
+
+        alice_html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+        bob_html = profile_html(fresh_client, "BOB").get_data(as_text=True)
+
+        assert "Released" in alice_html
+        assert "Taken 2026-09-15" in alice_html
+        assert "Returned 2026-09-18" in alice_html
+        assert "Voided" in bob_html
+        assert "recorded in error" in bob_html
+
+
+class TestProfileIPointQuickLog:
+    def test_logging_redirects_to_the_profile_and_shows_the_entry(
+        self, fresh_client
+    ):
+        response = post_csrf(
+            fresh_client,
+            "/boarder/ALICE/ipoints",
+            data={
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "Repeated disruption",
+            },
+        )
+
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/boarder/ALICE")
+        html = fresh_client.get("/boarder/ALICE").get_data(as_text=True)
+        assert "banner-success" in html
+        assert "Logged 5" in html
+        assert 'id="stat-ipoint-balance">5<' in html
+        assert "Repeated disruption" in html
+
+    def test_entry_is_recorded_under_the_url_key(self, fresh_client):
+        post_csrf(
+            fresh_client,
+            "/boarder/ALICE/ipoints",
+            data={
+                "boarder": "BOB",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "x",
+            },
+        )
+
+        with app_module.connect() as conn:
+            alice = storage.list_ipoint_entries(conn, "ALICE")
+            bob = storage.list_ipoint_entries(conn, "BOB")
+        assert len(alice) == 1
+        assert bob == []
+
+    def test_blank_reason_shows_error_and_saves_nothing(self, fresh_client):
+        post_csrf(
+            fresh_client,
+            "/boarder/ALICE/ipoints",
+            data={"points": "5", "occurred_on": "2026-08-01", "reason": ""},
+        )
+
+        html = fresh_client.get("/boarder/ALICE").get_data(as_text=True)
+        assert "banner-error" in html
+        with app_module.connect() as conn:
+            assert storage.list_ipoint_entries(conn, "ALICE") == []
+
+    def test_missing_csrf_rejected_and_saves_nothing(self, fresh_client):
+        response = fresh_client.post(
+            "/boarder/ALICE/ipoints",
+            data={"points": "5", "occurred_on": "2026-08-01", "reason": "x"},
+        )
+
+        assert response.status_code == 403
+        with app_module.connect() as conn:
+            assert storage.list_ipoint_entries(conn, "ALICE") == []
+
+    def test_quick_log_controls_are_labelled_and_keyboard_operable(
+        self, fresh_client, browser_page
+    ):
+        html = fresh_client.get("/boarder/ALICE").get_data(as_text=True)
+        page = browser_page
+        page.set_content(html)
+
+        assert page.locator('label[for="ipoint-quick-points"]').count() == 1
+        assert page.locator('label[for="ipoint-quick-occurred-on"]').count() == 1
+        assert page.locator('label[for="ipoint-quick-reason"]').count() == 1
+
+        page.locator("#ipoint-quick-points").focus()
+        page.keyboard.type("3")
+        assert page.locator("#ipoint-quick-points").input_value() == "3"
+
+        page.locator("#ipoint-quick-reason").focus()
+        page.keyboard.type("Talking back")
+        assert page.locator("#ipoint-quick-reason").input_value() == "Talking back"
+
+        # Tabbing off the last text field reaches the submit control.
+        page.keyboard.press("Tab")
+        assert page.evaluate("() => document.activeElement.tagName") == "BUTTON"

@@ -36,21 +36,25 @@
         <span>DBS Boarding School</span>
     </div>
 
-    {% if not identity %}
+    {% if not show_ipoints %}
         <div class="empty-state">
             <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
             <p>Nothing is stored for this boarder.</p>
         </div>
     {% else %}
+        {% set who = identity or ipoint_summary %}
         <div class="profile-header">
             <div class="profile-name-row">
-                <h3 class="profile-name">{{ identity.display_name }}</h3>
-                {{ status_badge(identity.is_current) }}
+                <h3 class="profile-name">{{ who.display_name }}</h3>
+                {% if identity %}{{ status_badge(identity.is_current) }}{% endif %}
             </div>
-            <p class="profile-subline">Bed {{ identity.bed }}</p>
-            {% if identity.first_month %}
+            {% if who.bed %}
+                <p class="profile-subline">Bed {{ who.bed }}</p>
+            {% endif %}
+            {% if identity and identity.first_month %}
                 <p class="profile-subline">Seen from {{ identity.first_month }} to {{ identity.last_month }}</p>
             {% endif %}
+            {% if identity %}
             <div class="profile-summary">
                 <div class="stat-card">
                     <div class="stat-value" id="stat-incidents">{{ summary.total_incidents }}</div>
@@ -80,7 +84,122 @@
                 </div>
                 {% endif %}
             </div>
+            {% endif %}
         </div>
+
+        <section class="history-panel profile-ipoints">
+            <h2>I-Points</h2>
+            <div class="profile-summary">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-ipoint-balance">{% if ipoint_summary %}{{ ipoint_summary.balance }}{% else %}0{% endif %}</div>
+                    <div class="stat-label">I-Point Balance</div>
+                </div>
+            </div>
+
+            {% if can_log_ipoints %}
+            <div class="upload-panel ipoint-quick-log">
+                <h3 class="upload-title">Log I-Point Entry</h3>
+                <form action="{{ ipoint_action }}" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label for="ipoint-quick-points"><strong>Points</strong></label>
+                            <input type="number" id="ipoint-quick-points" name="points"
+                                   min="1" step="1" required>
+                        </div>
+                        <div class="form-field">
+                            <label for="ipoint-quick-occurred-on"><strong>Date</strong></label>
+                            <input type="date" id="ipoint-quick-occurred-on" name="occurred_on"
+                                   value="{{ today }}" required>
+                        </div>
+                        <div class="form-field">
+                            <label for="ipoint-quick-reason"><strong>Reason</strong></label>
+                            <input type="text" id="ipoint-quick-reason" name="reason" required>
+                        </div>
+                        <div>
+                            <button type="submit" class="btn btn-primary">Log Entry</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            {% endif %}
+
+            {% if ipoint_summary and ipoint_summary.confiscations %}
+            <div class="table-scroll">
+                <table class="ipoints-table" aria-label="I-Point Redemptions and Confiscations">
+                    <thead>
+                        <tr>
+                            <th scope="col">Status</th>
+                            <th scope="col">Redeemed</th>
+                            <th scope="col">Due back</th>
+                            <th scope="col">Flags</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for confiscation in ipoint_summary.confiscations %}
+                        <tr>
+                            <td>{{ confiscation.status|capitalize }}</td>
+                            <td>
+                                {{ confiscation.points_redeemed }} I-Points (tier {{ confiscation.tier }})
+                                {% if confiscation.status == 'pending' %}<br>Triggered {{ confiscation.trigger_month }}{% endif %}
+                                {% if confiscation.confirmed_at %}<br>Taken {{ confiscation.confirmed_at }}{% endif %}
+                            </td>
+                            <td>
+                                {{ confiscation.release_due or '—' }}
+                                {% if confiscation.released_at %}<br>Returned {{ confiscation.released_at }}{% endif %}
+                                {% if confiscation.void_reason %}<br>Voided: {{ confiscation.void_reason }}{% endif %}
+                            </td>
+                            <td>
+                                {% if confiscation.stacked %}<span class="ipoint-flag ipoint-flag-stacked">Stacked</span>{% endif %}
+                                {% if confiscation.is_due %}<span class="ipoint-flag ipoint-flag-due">Due for release</span>{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if ipoint_summary and (ipoint_summary.entries or ipoint_summary.adjustments) %}
+            <div class="table-scroll">
+                <table class="ipoints-table" aria-label="I-Point history">
+                    <thead>
+                        <tr>
+                            <th scope="col">Type</th>
+                            <th scope="col">Date</th>
+                            <th scope="col">Points</th>
+                            <th scope="col">Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in ipoint_summary.entries %}
+                        <tr>
+                            <td>Entry</td>
+                            <td>{{ entry.occurred_on }}</td>
+                            <td>{{ entry.points }}</td>
+                            <td>{{ entry.reason }}</td>
+                        </tr>
+                        {% endfor %}
+                        {% for adjustment in ipoint_summary.adjustments %}
+                        <tr>
+                            <td>Adjustment</td>
+                            <td>—</td>
+                            <td>{{ adjustment.points }}</td>
+                            <td>{{ adjustment.reason }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if not ipoint_summary or (not ipoint_summary.confiscations and not ipoint_summary.entries and not ipoint_summary.adjustments) %}
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
+                No I-Point history has been logged for this boarder.
+            </div>
+            {% endif %}
+        </section>
 
         {% if series %}
         <section class="history-panel profile-chart">

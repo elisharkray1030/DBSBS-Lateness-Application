@@ -49,7 +49,7 @@ The set of a boarder's lateness entries across all imported months, surfaced by 
 _Avoid_: search history, records
 
 **Boarder Profile**:
-The per-boarder page addressed by URL-encoded Match Key: identity resolved freshest-first (with a Former badge off the Master List), lifetime summary figures with best and worst month, the month-by-month Boarder History, and — as it exists — the Punishment timeline. Reached uniformly for current and Removed boarders, so name variants collapse to one page.
+The per-boarder page addressed by URL-encoded Match Key: identity resolved freshest-first (with a Former badge off the Master List), lifetime lateness summary figures with best and worst month, the month-by-month Boarder History, the Punishment timeline, and the boarder's I-Point Balance with their full I-Point history and a quick-log action. Reached uniformly for current, Removed, and I-Points-only boarders, so name variants collapse to one page.
 _Avoid_: student page, person record, individual view
 
 **House Dashboard**:

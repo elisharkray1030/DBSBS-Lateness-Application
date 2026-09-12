@@ -148,6 +148,12 @@ Important behavior:
   live Entries and Adjustments, their pending Redemption, and their newest-first
   Audit History notes, and keeps a boarder whose Entries were all removed in
   that view.
+- `boarder_summary(conn, normalized_name, today)` is the profile-scoped
+  counterpart to `boarder_balances(conn, today)`: it reads only one Match Key's
+  ledger and audit rows, returning `None` when the key has no I-Point row of any
+  kind, and otherwise the same derived Summary. Both share one private builder,
+  so the Balance/pending/flag arithmetic cannot drift between the list and one
+  profile.
 - `evaluate_month_close(entries, adjustments, confiscations, today)` is where
   month-close logic lives — a pure function taking an injected `today` —
   returning a pending Redemption at the largest tier at or below the
@@ -190,7 +196,8 @@ Important behavior:
   `POST /ipoints/confiscations/<id>/release`,
   `POST /ipoints/confiscations/<id>/void`,
   `POST /ipoints/confiscations/<id>/edit`,
-  `POST /ipoints/confiscations/<id>/remove`) and delegate here; the route layer
+  `POST /ipoints/confiscations/<id>/remove`, and the profile-scoped
+  `POST /boarder/<path:key>/ipoints`) and delegate here; the route layer
   stays a thin adapter. The GET opens a read-only connection, materialising due
   pending Redemptions through a read-write pass only when needed (ADR 0007), and
   renders the Confiscation management list filtered by the
@@ -255,8 +262,13 @@ Important behavior:
   Top Boarders ranking, repeat-offender watchlist, and Points distribution
   histogram.
 - `templates/boarder.html` is the boarder profile: all-time record, Points
-  trend chart, and all punishments. Reached by clicking a boarder name anywhere
-  in the app or via Find a Boarder search.
+  trend chart, all punishments, and the boarder's I-Point Balance with their
+  Entries, Adjustments, and Confiscations (released and voided included, with
+  the Stacked/due flags), plus a quick-log action. The I-Point section renders
+  for a Boarder known only through I-Points — without a fabricated
+  Current/Former badge or zero-valued lateness summary cards — while a Removed
+  Boarder sees frozen history and no quick-log. Reached by clicking a boarder
+  name anywhere in the app or via Find a Boarder search.
 - `templates/ipoints.html` is the I-Points view: the log-Entry and
   add-Adjustment forms and the per-boarder ledger with each boarder's Balance,
   pending Redemption (confirm/void), Entries and Adjustments distinguished by a
