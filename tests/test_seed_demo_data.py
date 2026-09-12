@@ -11,6 +11,7 @@ import sqlite3
 import pytest
 
 import app as app_module
+import ipoints
 import parser as parser_module
 import seed_demo_data
 import storage
@@ -63,6 +64,46 @@ def seeded(tmp_path):
     report = seed_demo_data.seed(conn, str(namelist_path))
     yield conn, report
     conn.close()
+
+
+@pytest.fixture()
+def seeded_client(tmp_path, monkeypatch):
+    """A Flask test client over a file database seeded by the demo seeder.
+
+    ``today_iso`` is pinned to the seeder's fixed today so the GET's
+    self-materialisation and the computed due flags never depend on the
+    machine clock.
+    """
+    namelist_path = tmp_path / "namelist.csv"
+    write_namelist(namelist_path)
+    db_path = tmp_path / "seeded.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        storage.create_schema(conn)
+        storage.replace_boarders(
+            conn, parser_module.load_namelist_rows(str(namelist_path))
+        )
+        seed_demo_data.seed(conn, str(namelist_path))
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        ipoints, "today_iso", lambda: seed_demo_data.IPOINT_TODAY
+    )
+    application = app_module.create_app(
+        {
+            "DB_PATH": str(db_path),
+            "NAMELIST_PATH": str(namelist_path),
+            "SECRET_KEY": "test-secret-key",
+            "TESTING": True,
+        }
+    )
+    pushed = application.app_context()
+    pushed.push()
+    try:
+        yield application.test_client()
+    finally:
+        pushed.pop()
 
 
 def months_stored(conn):
@@ -257,6 +298,229 @@ class TestPunishmentMatrix:
         # keeps its frozen snapshot per ADR 0001.
         assert stored_points > points_owed
         assert points_owed == 16
+
+
+class TestIPointMatrix:
+    def _summaries(self, conn):
+        return {
+            summary.normalized_name: summary
+            for summary in ipoints.boarder_balances(
+                conn, seed_demo_data.IPOINT_TODAY
+            )
+        }
+
+    def test_balances_seeded_per_persona(self, seeded):
+        conn, _ = seeded
+
+        balances = {
+            key: summary.balance
+            for key, summary in self._summaries(conn).items()
+        }
+
+        assert balances == {
+            "ELVIS WONG YAT SHUN": 1,
+            "JASON FONG PAK HIN": 10,
+            "JASPER CHAN CHEUK YIN": 2,
+            "MELVIN YEUNG CHENG YE MELVIN": 3,
+            "NAVAS YUEN HIU NOK": 5,
+            "THEO LAM CHI HANG": 0,
+        }
+
+    def test_multi_entry_balances_keep_every_entry(self, seeded):
+        conn, _ = seeded
+
+        jason = self._summaries(conn)["JASON FONG PAK HIN"]
+
+        assert [entry.points for entry in jason.entries] == [3, 2, 5]
+        assert [entry.occurred_on for entry in jason.entries] == [
+            "2026-01-15", "2026-02-20", "2026-07-05",
+        ]
+
+    def test_adjustments_seeded_with_both_signs(self, seeded):
+        conn, _ = seeded
+
+        adjustments = {
+            adjustment.normalized_name: adjustment.points
+            for adjustment in storage.list_ipoint_adjustments(conn)
+        }
+
+        assert adjustments == {
+            "MELVIN YEUNG CHENG YE MELVIN": 2,
+            "THEO LAM CHI HANG": -3,
+        }
+
+    def test_negative_adjustment_respects_the_floor(self, seeded):
+        # Theo's only Entry is 3; the −3 Adjustment takes him to exactly 0,
+        # the floor boundary ADR 0006 permits and never below.
+        conn, _ = seeded
+
+        theo = self._summaries(conn)["THEO LAM CHI HANG"]
+
+        assert theo.balance == 0
+
+    def test_confiscation_statuses_cover_every_filter(self, seeded):
+        conn, _ = seeded
+
+        by_key = {
+            row.normalized_name: row
+            for row in storage.list_ipoint_confiscations(conn)
+        }
+
+        assert {row.status for row in by_key.values()} == {
+            "pending", "active", "released", "voided",
+        }
+        assert by_key["JASON FONG PAK HIN"].status == "pending"
+        assert by_key["JASPER CHAN CHEUK YIN"].status == "active"
+        assert by_key["ELVIS WONG YAT SHUN"].status == "released"
+        assert by_key["NAVAS YUEN HIU NOK"].status == "voided"
+
+    def test_pending_redemption_is_left_for_the_view(self, seeded):
+        conn, _ = seeded
+
+        jason = self._summaries(conn)["JASON FONG PAK HIN"]
+
+        assert jason.pending is not None
+        assert jason.pending.tier == 10
+        assert jason.pending.trigger_month == "2026-08"
+
+    def test_active_confiscation_flags_due_for_release(self, seeded):
+        conn, _ = seeded
+
+        jasper = next(
+            row
+            for row in ipoints.confiscation_list(
+                conn, today=seed_demo_data.IPOINT_TODAY
+            )
+            if row.normalized_name == "JASPER CHAN CHEUK YIN"
+        )
+
+        assert jasper.release_due == "2026-09-03"
+        assert jasper.is_due is True
+
+    def test_removed_boarder_keeps_frozen_ipoint_history(self, seeded):
+        conn, _ = seeded
+
+        navas = self._summaries(conn)["NAVAS YUEN HIU NOK"]
+        confiscation = next(
+            row
+            for row in storage.list_ipoint_confiscations(conn)
+            if row.normalized_name == "NAVAS YUEN HIU NOK"
+        )
+
+        assert navas.balance == 5
+        assert navas.display_name == "Navas YUEN Hiu Nok"
+        assert navas.bed == "603A"
+        # The confirmed row freezes identity too, not just the live summary.
+        assert confiscation.display_name == "Navas YUEN Hiu Nok"
+        assert confiscation.bed == "603A"
+
+    def test_boarder_known_only_through_ipoints_falls_back_to_match_key(self, seeded):
+        conn, _ = seeded
+
+        theo = self._summaries(conn)["THEO LAM CHI HANG"]
+
+        assert theo.display_name == "THEO LAM CHI HANG"
+        assert theo.bed == ""
+
+    def test_confiscation_stamps_are_deterministic(self, seeded):
+        conn, _ = seeded
+
+        by_key = {
+            row.normalized_name: row
+            for row in storage.list_ipoint_confiscations(conn)
+        }
+
+        assert {row.created_at for row in by_key.values()} == {
+            "2026-09-01T07:00:00+00:00"
+        }
+        assert by_key["JASPER CHAN CHEUK YIN"].confirmed_at == "2026-09-02T09:00:00+00:00"
+        assert by_key["ELVIS WONG YAT SHUN"].confirmed_at == "2026-09-03T09:00:00+00:00"
+        assert by_key["ELVIS WONG YAT SHUN"].released_at == "2026-09-05T09:00:00+00:00"
+        assert by_key["NAVAS YUEN HIU NOK"].confirmed_at == "2026-09-04T09:00:00+00:00"
+        assert by_key["NAVAS YUEN HIU NOK"].voided_at == "2026-09-06T09:00:00+00:00"
+
+    def test_reseeding_does_not_duplicate_ipoint_rows(self, tmp_path):
+        namelist_path = tmp_path / "namelist.csv"
+        write_namelist(namelist_path)
+        conn = self._seed_fresh(namelist_path)
+        try:
+            first = self._row_counts(conn)
+            seed_demo_data.seed(conn, str(namelist_path))
+            second = self._row_counts(conn)
+        finally:
+            conn.close()
+
+        assert first == second == {
+            "ipoint_entries": 10,
+            "ipoint_adjustments": 2,
+            "ipoint_audit": 21,
+            "confiscations": 4,
+        }
+
+    def test_seed_is_byte_reproducible_across_fresh_databases(self, tmp_path):
+        namelist_path = tmp_path / "namelist.csv"
+        write_namelist(namelist_path)
+        first = self._seed_fresh(namelist_path)
+        second = self._seed_fresh(namelist_path)
+        try:
+            first_rows = self._ipoint_rows(first)
+            second_rows = self._ipoint_rows(second)
+        finally:
+            first.close()
+            second.close()
+
+        # Same starting state gives byte-identical I-Point rows and audit
+        # stamps, so the seed's determinism is asserted, not just its size.
+        assert first_rows == second_rows
+
+    @staticmethod
+    def _seed_fresh(namelist_path):
+        conn = sqlite3.connect(":memory:")
+        storage.create_schema(conn)
+        storage.replace_boarders(
+            conn, parser_module.load_namelist_rows(str(namelist_path))
+        )
+        seed_demo_data.seed(conn, str(namelist_path))
+        return conn
+
+    @staticmethod
+    def _row_counts(conn):
+        return {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "ipoint_entries", "ipoint_adjustments",
+                "ipoint_audit", "confiscations",
+            )
+        }
+
+    @staticmethod
+    def _ipoint_rows(conn):
+        return {
+            table: conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+            for table in (
+                "ipoint_entries", "ipoint_adjustments",
+                "ipoint_audit", "confiscations",
+            )
+        }
+
+
+class TestPopulatedViews:
+    def test_ipoints_view_shows_the_seeded_ledger(self, seeded_client):
+        response = seeded_client.get("/ipoints")
+        html = response.get_data(as_text=True)
+
+        assert response.status_code == 200
+        assert "Balance: 10" in html
+        assert "triggered at 2026-08" in html
+        assert "Used phone after lights-out" in html
+
+    def test_boarder_profile_shows_the_ipoint_section(self, seeded_client):
+        response = seeded_client.get("/boarder/JASON%20FONG%20PAK%20HIN")
+        html = response.get_data(as_text=True)
+
+        assert response.status_code == 200
+        assert 'id="stat-ipoint-balance"' in html
+        assert "Left dorm without signing out" in html
 
 
 class TestGeneratedLogs:
