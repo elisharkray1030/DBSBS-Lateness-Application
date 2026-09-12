@@ -283,6 +283,7 @@ class TestRemovedBoarderEntryGuard:
             boarders=[record("ZED", "601Z", 2, 5, 7)],
             month="2026-03",
             deadline="2026-03-10",
+            include_report=False,
         )
 
         outcome = log_entry(
@@ -291,6 +292,7 @@ class TestRemovedBoarderEntryGuard:
 
         assert isinstance(outcome, EntryRejected)
         assert storage.list_ipoint_entries(conn, "ZED") == []
+        assert storage.list_ipoint_audit(conn, "ZED") == []
 
     def test_ipoints_only_boarder_can_accrue(self, conn):
         outcome = log_entry(
@@ -692,6 +694,7 @@ class TestLogEntryRoute:
                 boarders=[record("ZED", "601Z", 2, 5, 7)],
                 month="2026-03",
                 deadline="2026-03-10",
+                include_report=False,
             )
 
         response = post_csrf(

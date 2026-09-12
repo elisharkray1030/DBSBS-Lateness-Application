@@ -1039,6 +1039,25 @@ class TestProfileIPointQuickLog:
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ALICE") == []
 
+    def test_removed_boarder_quick_log_is_refused_and_saves_nothing(
+        self, fresh_client
+    ):
+        seed_history("ZED", "Zed", "601Z", [("2026-01", 1, 2, 3)])
+
+        response = post_csrf(
+            fresh_client,
+            "/boarder/ZED/ipoints",
+            data={"points": "5", "occurred_on": "2026-08-01", "reason": "x"},
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/boarder/ZED").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "removed" in html.lower()
+        with app_module.connect() as conn:
+            assert storage.list_ipoint_entries(conn, "ZED") == []
+            assert storage.list_ipoint_audit(conn, "ZED") == []
+
     def test_quick_log_controls_are_labelled_and_keyboard_operable(
         self, fresh_client, browser_page
     ):

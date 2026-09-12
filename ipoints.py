@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from records import (
+    AllTimeEntry,
     BoarderIdentity,
     Confiscation,
     IPointAdjustment,
@@ -302,9 +303,17 @@ def today_iso() -> str:
     return datetime.now().astimezone().date().isoformat()
 
 
-def resolve_display_name(conn, normalized_name: str) -> str:
-    """Resolves a Match Key to its freshest display name, or the key itself."""
-    identity = storage.resolve_boarder_identity(conn, normalized_name)
+def resolve_display_name(
+    conn, normalized_name: str, identity: "AllTimeEntry | None" = None
+) -> str:
+    """Resolves a Match Key to its freshest display name, or the key itself.
+
+    A caller that already resolved ``identity`` through the All-Time List may
+    pass it in, so the Removed-Boarder guard and the display name share one
+    scan.
+    """
+    if identity is None:
+        identity = storage.resolve_boarder_identity(conn, normalized_name)
     return identity.display_name if identity is not None else normalized_name
 
 
@@ -1130,7 +1139,7 @@ def log_entry(
         )
 
     stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    display_name = resolve_display_name(conn, name)
+    display_name = resolve_display_name(conn, name, identity)
 
     with conn:
         entry_id = storage.stage_ipoint_entry(
