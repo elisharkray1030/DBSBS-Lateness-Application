@@ -74,6 +74,9 @@ Important behavior:
   freshest-first identity resolution and sort order.
 - `delete_month(conn, month_label)` removes a month and returns the deleted row
   count.
+- `clear_derived_data(conn)` deletes every derived row — Punishments, Boarder
+  History, and the I-Point ledger — keeping the Master List and meta untouched;
+  the demo seeder resets through it rather than issuing raw SQL.
 - `replace_boarders(conn, rows)` replaces the Master List after resolving
   duplicate normalized names last-row-wins and validating that no two different
   boarders share a Bed, raising a `ValueError` otherwise.

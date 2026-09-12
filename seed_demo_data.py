@@ -483,17 +483,6 @@ def _remove_demo_former(conn: sqlite3.Connection) -> str | None:
     return match.display_name
 
 
-def clean_slate(conn: sqlite3.Connection) -> None:
-    """Drops every derived row, keeping the Master List untouched."""
-    conn.execute("DELETE FROM punishments")
-    conn.execute("DELETE FROM boarder_history")
-    conn.execute("DELETE FROM confiscations")
-    conn.execute("DELETE FROM ipoint_entries")
-    conn.execute("DELETE FROM ipoint_adjustments")
-    conn.execute("DELETE FROM ipoint_audit")
-    conn.commit()
-
-
 def _ingest_month(
     conn: sqlite3.Connection,
     master_list: dict[str, "parser_module.Boarder"],
@@ -531,7 +520,8 @@ def seed(
     # Removed Boarder is refused new I-Point Entries, #187).
     storage.replace_boarders(conn, list(master_list.values()))
 
-    clean_slate(conn)
+    # Reset every derived row before regenerating, keeping the Master List.
+    storage.clear_derived_data(conn)
 
     month_outcomes: list[MonthOutcome] = []
     if log_dir:
