@@ -877,8 +877,11 @@ class TestProfileIPointsSection:
     def test_removed_boarder_shows_frozen_history_without_a_quick_log(
         self, fresh_client
     ):
-        seed_history("ZED", "Zed", "601Z", [("2026-01", 1, 2, 3)])
+        # Log while the key is known only through I-Points, then add history so
+        # ZED becomes a Removed Boarder holding a frozen Entry (#187 forbids
+        # logging a new Entry after the history exists).
         seed_ipoint_entry(name="ZED", points=7, reason="Frozen entry")
+        seed_history("ZED", "Zed", "601Z", [("2026-01", 1, 2, 3)])
 
         html = profile_html(fresh_client, "ZED").get_data(as_text=True)
 
@@ -1035,6 +1038,25 @@ class TestProfileIPointQuickLog:
         assert response.status_code == 403
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ALICE") == []
+
+    def test_removed_boarder_quick_log_is_refused_and_saves_nothing(
+        self, fresh_client
+    ):
+        seed_history("ZED", "Zed", "601Z", [("2026-01", 1, 2, 3)])
+
+        response = post_csrf(
+            fresh_client,
+            "/boarder/ZED/ipoints",
+            data={"points": "5", "occurred_on": "2026-08-01", "reason": "x"},
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/boarder/ZED").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "removed" in html.lower()
+        with app_module.connect() as conn:
+            assert storage.list_ipoint_entries(conn, "ZED") == []
+            assert storage.list_ipoint_audit(conn, "ZED") == []
 
     def test_quick_log_controls_are_labelled_and_keyboard_operable(
         self, fresh_client, browser_page

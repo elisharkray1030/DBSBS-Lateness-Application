@@ -1678,12 +1678,10 @@ def boarder_profile(key):
     profile_url = _boarder_profile_url(normalized) if normalized else ""
     show_ipoints = identity is not None or ipoint_summary is not None
     # A Removed Boarder — one with lateness presence that is no longer Current
-    # — keeps frozen I-Points and may not accrue new ones. A key known only
-    # through I-Points is not Removed, so it stays loggable; #187 owns the
-    # server-side write guard.
-    can_log_ipoints = (
-        identity is None or identity.is_current or identity.is_ipoints_only
-    )
+    # — keeps frozen I-Points and may not accrue new ones; the record's
+    # `is_removed` owns that rule and `ipoints.log_entry` enforces it. A key
+    # known only through I-Points is not Removed, so it stays loggable.
+    can_log_ipoints = identity is None or not identity.is_removed
 
     message, error = _consume_flashes()
 

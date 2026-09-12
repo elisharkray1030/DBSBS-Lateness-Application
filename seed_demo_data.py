@@ -526,6 +526,11 @@ def seed(
         raise ValueError(f"Could not load a Master List from '{namelist_path}'.")
     _require_personas(master_list)
 
+    # Regenerate the Master List too, so the seed is self-contained on a fresh
+    # database and a reseed restores a boarder the previous run removed (a
+    # Removed Boarder is refused new I-Point Entries, #187).
+    storage.replace_boarders(conn, list(master_list.values()))
+
     clean_slate(conn)
 
     month_outcomes: list[MonthOutcome] = []

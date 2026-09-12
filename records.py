@@ -215,6 +215,13 @@ class AllTimeEntry:
     total_points: int
     is_ipoints_only: bool = False
 
+    @property
+    def is_removed(self) -> bool:
+        """True for a Removed Boarder: off the Master List but with Boarder
+        History or Punishment presence, so it may not accrue new I-Point
+        Entries (story 43). A key known only through I-Points is not Removed."""
+        return not self.is_current and not self.is_ipoints_only
+
 
 @dataclass
 class Punishment:

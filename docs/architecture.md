@@ -140,7 +140,10 @@ Important behavior:
 - `log_entry(conn, ...)` validates a submission (positive whole points, a
   required reason, a valid date) and writes the Entry plus its `created` audit
   row in one connection block; a rejected submission writes nothing. A blank
-  date falls back to the injected `today` or the machine-local date.
+  date falls back to the injected `today` or the machine-local date. A Boarder
+  removed from the Master List is refused (a Removed Boarder accrues no new
+  Entries), while a key known only through I-Points still may accrue its first
+  Entry.
 - `edit_entry(conn, ...)` and `remove_entry(conn, ...)` validate the same fields
   and write an `edited`/`removed` audit row in the same connection block. A
   removal leaves the Balance but its prior state survives in the audit history.
@@ -224,7 +227,9 @@ Important behavior:
 
 `seed_demo_data.py` populates the database with deterministic demo data
 (January through August, excluding June) for development or testing. It reads
-the seed Master List, generates synthetic lateness logs, and ingests them
+the seed Master List and rewrites the database Master List from it, so the seed
+is self-contained on a fresh database and a reseed restores any Boarder the
+previous run removed. It generates synthetic lateness logs and ingests them
 through the same `ingest_log` path the web Import uses. It then seeds I-Point
 data — Entries, both signs of Adjustment, and a Confiscation in every status —
 through the production I-Points lifecycle with fixed stamps, materialising the

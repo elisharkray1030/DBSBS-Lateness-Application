@@ -238,6 +238,93 @@ class TestLogEntry:
         assert storage.list_ipoint_audit(conn) == []
 
 
+class TestRemovedBoarderEntryGuard:
+    """A Removed Boarder is frozen to new Entries; I-Points-only keys are not."""
+
+    def _removed_boarder(self, conn, name="ZED"):
+        storage.save_month(
+            conn,
+            [record(name, "601Z", 1, 2, 3, display_name=name.title())],
+            "2026-01",
+        )
+
+    def test_current_master_list_boarder_can_accrue(self, conn):
+        storage.replace_boarders(
+            conn,
+            [
+                storage.Boarder(
+                    normalized_name="ALICE", display_name="Alice", bed="601A"
+                )
+            ],
+        )
+
+        outcome = log_entry(
+            conn, normalized_name="ALICE", points=5, occurred_on="2026-08-01", reason="x"
+        )
+
+        assert isinstance(outcome, EntrySaved)
+        assert len(storage.list_ipoint_entries(conn, "ALICE")) == 1
+
+    def test_removed_boarder_known_from_history_is_refused(self, conn):
+        self._removed_boarder(conn)
+
+        outcome = log_entry(
+            conn, normalized_name="ZED", points=5, occurred_on="2026-08-01", reason="x"
+        )
+
+        assert isinstance(outcome, EntryRejected)
+        assert "removed" in outcome.reason.lower()
+        assert storage.list_ipoint_entries(conn, "ZED") == []
+        assert storage.list_ipoint_audit(conn, "ZED") == []
+
+    def test_removed_boarder_known_from_punishments_is_refused(self, conn):
+        seed_punishments(
+            conn,
+            boarders=[record("ZED", "601Z", 2, 5, 7)],
+            month="2026-03",
+            deadline="2026-03-10",
+            include_report=False,
+        )
+
+        outcome = log_entry(
+            conn, normalized_name="ZED", points=5, occurred_on="2026-08-01", reason="x"
+        )
+
+        assert isinstance(outcome, EntryRejected)
+        assert storage.list_ipoint_entries(conn, "ZED") == []
+        assert storage.list_ipoint_audit(conn, "ZED") == []
+
+    def test_ipoints_only_boarder_can_accrue(self, conn):
+        outcome = log_entry(
+            conn, normalized_name="CHEN WEI", points=5, occurred_on="2026-08-01", reason="x"
+        )
+
+        assert isinstance(outcome, EntrySaved)
+        assert len(storage.list_ipoint_entries(conn, "CHEN WEI")) == 1
+
+    def test_existing_ipoints_only_boarder_can_accrue_again(self, conn):
+        seed_entry(conn, name="CHEN WEI", points=5)
+
+        outcome = log_entry(
+            conn, normalized_name="CHEN WEI", points=2, occurred_on="2026-08-02", reason="y"
+        )
+
+        assert isinstance(outcome, EntrySaved)
+        assert len(storage.list_ipoint_entries(conn, "CHEN WEI")) == 2
+
+    def test_removed_boarders_existing_entries_stay_readable(self, conn):
+        seed_entry(conn, name="ZED", points=7)
+        self._removed_boarder(conn)
+
+        outcome = log_entry(
+            conn, normalized_name="ZED", points=5, occurred_on="2026-08-01", reason="x"
+        )
+
+        assert isinstance(outcome, EntryRejected)
+        assert len(storage.list_ipoint_entries(conn, "ZED")) == 1
+        assert _balance(conn, "ZED") == 7
+
+
 class TestBalance:
     def test_balance_sums_entries_for_one_boarder(self, conn):
         seed_entry(conn, name="ALICE", points=2)
@@ -569,6 +656,100 @@ class TestLogEntryRoute:
         assert response.status_code == 403
         html = fresh_client.get("/ipoints").get_data(as_text=True)
         assert "No I-Point Entries" in html
+
+    def test_removed_boarder_entry_is_refused_and_saves_nothing(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [record("ZED", "601Z", 1, 2, 3, display_name="Zed")],
+                "2026-01",
+            )
+
+        response = post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Zed",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "x",
+            },
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "removed" in html.lower()
+        assert "No I-Point Entries" in html
+        with app_module.connect() as conn:
+            assert storage.list_ipoint_entries(conn, "ZED") == []
+            assert storage.list_ipoint_audit(conn, "ZED") == []
+
+    def test_removed_boarder_known_from_punishments_is_refused_over_http(
+        self, fresh_client
+    ):
+        with app_module.connect() as conn:
+            seed_punishments(
+                conn,
+                boarders=[record("ZED", "601Z", 2, 5, 7)],
+                month="2026-03",
+                deadline="2026-03-10",
+                include_report=False,
+            )
+
+        response = post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Zed",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "x",
+            },
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "removed" in html.lower()
+        with app_module.connect() as conn:
+            assert storage.list_ipoint_entries(conn, "ZED") == []
+            assert storage.list_ipoint_audit(conn, "ZED") == []
+
+    def test_ipoints_only_boarder_entry_succeeds(self, fresh_client):
+        response = post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Chen Wei",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "Repeated disruption",
+            },
+        )
+
+        assert response.status_code == 302
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-success" in html
+        assert "Repeated disruption" in html
+
+    def test_existing_ipoints_only_boarder_can_log_again(self, fresh_client):
+        for points in ("5", "2"):
+            response = post_csrf(
+                fresh_client,
+                "/ipoints/entries",
+                data={
+                    "boarder": "Chen Wei",
+                    "points": points,
+                    "occurred_on": "2026-08-01",
+                    "reason": "Repeated disruption",
+                },
+            )
+            assert response.status_code == 302
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-success" in html
+        assert "Balance: 7" in html
 
 
 class TestEditEntry:

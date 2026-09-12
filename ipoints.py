@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from records import (
+    AllTimeEntry,
     BoarderIdentity,
     Confiscation,
     IPointAdjustment,
@@ -302,9 +303,17 @@ def today_iso() -> str:
     return datetime.now().astimezone().date().isoformat()
 
 
-def resolve_display_name(conn, normalized_name: str) -> str:
-    """Resolves a Match Key to its freshest display name, or the key itself."""
-    identity = storage.resolve_boarder_identity(conn, normalized_name)
+def resolve_display_name(
+    conn, normalized_name: str, identity: "AllTimeEntry | None" = None
+) -> str:
+    """Resolves a Match Key to its freshest display name, or the key itself.
+
+    A caller that already resolved ``identity`` through the All-Time List may
+    pass it in, so the Removed-Boarder guard and the display name share one
+    scan.
+    """
+    if identity is None:
+        identity = storage.resolve_boarder_identity(conn, normalized_name)
     return identity.display_name if identity is not None else normalized_name
 
 
@@ -1098,7 +1107,9 @@ def log_entry(
 
     Points must be a positive whole number and the reason must be present;
     a blank date falls back to the injected (or machine-local) today. A
-    rejected submission writes nothing.
+    rejected submission writes nothing. A Boarder removed from the Master List
+    is refused because Removed Boarders accrue no new Entries; a key known only
+    through I-Points is not Removed, so its first Entry is still allowed.
     """
     name = (normalized_name or "").strip()
     if not name:
@@ -1118,8 +1129,17 @@ def log_entry(
     if resolved_date is None:
         return EntryRejected(reason="Enter a valid date.")
 
+    identity = storage.resolve_boarder_identity(conn, name)
+    if identity is not None and identity.is_removed:
+        return EntryRejected(
+            reason=(
+                f"{identity.display_name} has been removed and cannot accrue "
+                f"new I-Point Entries."
+            )
+        )
+
     stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    display_name = resolve_display_name(conn, name)
+    display_name = resolve_display_name(conn, name, identity)
 
     with conn:
         entry_id = storage.stage_ipoint_entry(
