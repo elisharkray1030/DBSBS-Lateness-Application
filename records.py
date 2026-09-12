@@ -286,7 +286,7 @@ class IPointAuditNote:
 
 @dataclass
 class IPointAdjustment:
-    """One manual, signed correction to a boarder's I-Point Balance.
+    """One manual, signed change to a boarder's I-Point Balance.
 
     Not tied to a specific Entry; ``points`` is a non-zero signed integer.
     """

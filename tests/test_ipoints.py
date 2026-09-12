@@ -990,12 +990,9 @@ class TestAdjustmentBalance:
 
 
 class TestEditAdjustment:
-    def _adjustment_id(self, conn, name="ALICE"):
-        return storage.list_ipoint_adjustments(conn, name)[0].id
-
     def test_edits_points_and_reason(self, conn):
         ipoints.add_adjustment(conn, "ALICE", 3, "first")
-        adjustment_id = self._adjustment_id(conn)
+        adjustment_id = _adjustment_id(conn)
 
         outcome = ipoints.edit_adjustment(conn, adjustment_id, 2, "corrected")
 
@@ -1008,14 +1005,14 @@ class TestEditAdjustment:
         seed_entry(conn, name="ALICE", points=5)
         ipoints.add_adjustment(conn, "ALICE", 2, "first")
 
-        outcome = ipoints.edit_adjustment(conn, self._adjustment_id(conn), -4, "flip")
+        outcome = ipoints.edit_adjustment(conn, _adjustment_id(conn), -4, "flip")
 
         assert isinstance(outcome, AdjustmentEdited)
         assert storage.list_ipoint_adjustments(conn)[0].points == -4
 
     def test_edit_retains_the_prior_state_in_the_audit(self, conn):
         ipoints.add_adjustment(conn, "ALICE", 3, "first")
-        adjustment_id = self._adjustment_id(conn)
+        adjustment_id = _adjustment_id(conn)
 
         ipoints.edit_adjustment(conn, adjustment_id, 2, "corrected")
 
@@ -1032,14 +1029,14 @@ class TestEditAdjustment:
     def test_edit_message_names_the_boarder(self, conn):
         ipoints.add_adjustment(conn, "ALICE", 3, "first")
 
-        outcome = ipoints.edit_adjustment(conn, self._adjustment_id(conn), 2, "x")
+        outcome = ipoints.edit_adjustment(conn, _adjustment_id(conn), 2, "x")
 
         assert "ALICE" in outcome.message
 
     def test_edit_rejects_zero_points_without_writing(self, conn):
         ipoints.add_adjustment(conn, "ALICE", 3, "first")
 
-        outcome = ipoints.edit_adjustment(conn, self._adjustment_id(conn), 0, "x")
+        outcome = ipoints.edit_adjustment(conn, _adjustment_id(conn), 0, "x")
 
         assert isinstance(outcome, AdjustmentRejected)
         assert storage.list_ipoint_adjustments(conn)[0].points == 3
@@ -1048,7 +1045,7 @@ class TestEditAdjustment:
     def test_edit_rejects_a_blank_reason(self, conn):
         ipoints.add_adjustment(conn, "ALICE", 3, "first")
 
-        outcome = ipoints.edit_adjustment(conn, self._adjustment_id(conn), 2, "  ")
+        outcome = ipoints.edit_adjustment(conn, _adjustment_id(conn), 2, "  ")
 
         assert isinstance(outcome, AdjustmentRejected)
         assert storage.list_ipoint_adjustments(conn)[0].reason == "first"
@@ -1062,7 +1059,7 @@ class TestEditAdjustment:
     def test_edit_that_would_go_negative_is_refused(self, conn):
         seed_entry(conn, name="ALICE", points=5)
         ipoints.add_adjustment(conn, "ALICE", -3, "first")
-        adjustment_id = self._adjustment_id(conn)
+        adjustment_id = _adjustment_id(conn)
 
         outcome = ipoints.edit_adjustment(conn, adjustment_id, -6, "too far")
 
@@ -1071,13 +1068,10 @@ class TestEditAdjustment:
 
 
 class TestRemoveAdjustment:
-    def _adjustment_id(self, conn, name="ALICE"):
-        return storage.list_ipoint_adjustments(conn, name)[0].id
-
     def test_remove_deletes_the_adjustment_and_keeps_the_audit(self, conn):
         ipoints.add_adjustment(conn, "ALICE", 3, "first")
 
-        outcome = ipoints.remove_adjustment(conn, self._adjustment_id(conn))
+        outcome = ipoints.remove_adjustment(conn, _adjustment_id(conn))
 
         assert isinstance(outcome, AdjustmentRemoved)
         assert storage.list_ipoint_adjustments(conn) == []
@@ -1089,7 +1083,7 @@ class TestRemoveAdjustment:
     def test_remove_message_names_the_boarder(self, conn):
         ipoints.add_adjustment(conn, "ALICE", 3, "first")
 
-        outcome = ipoints.remove_adjustment(conn, self._adjustment_id(conn))
+        outcome = ipoints.remove_adjustment(conn, _adjustment_id(conn))
 
         assert "ALICE" in outcome.message
 
@@ -1103,7 +1097,7 @@ class TestRemoveAdjustment:
         seed_entry(conn, name="ALICE", points=5)
         ipoints.add_adjustment(conn, "ALICE", -5, "offset")
 
-        outcome = ipoints.remove_adjustment(conn, self._adjustment_id(conn))
+        outcome = ipoints.remove_adjustment(conn, _adjustment_id(conn))
 
         assert isinstance(outcome, AdjustmentRemoved)
         assert ipoints.boarder_balances(conn)[0].balance == 5
@@ -1112,7 +1106,7 @@ class TestRemoveAdjustment:
         _seed_offset(conn, "ALICE", -2)
         ipoints.add_adjustment(conn, "ALICE", 3, "first")
 
-        outcome = ipoints.remove_adjustment(conn, self._adjustment_id(conn))
+        outcome = ipoints.remove_adjustment(conn, _adjustment_id(conn))
 
         assert isinstance(outcome, AdjustmentRejected)
         assert "below zero" in outcome.reason.lower()
@@ -1281,6 +1275,21 @@ class TestEditAdjustmentRoute:
         )
 
         assert response.status_code == 403
+        with app_module.connect() as conn:
+            assert storage.list_ipoint_adjustments(conn)[0].points == 4
+
+    def test_overdraw_refusal_is_surfaced_as_page_feedback(self, fresh_client):
+        adjustment_id = self._seed(fresh_client)
+
+        post_csrf(
+            fresh_client,
+            f"/ipoints/adjustments/{adjustment_id}/edit",
+            data={"points": "-6", "reason": "too far"},
+        )
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert "banner-error" in html
+        assert "below zero" in html.lower()
         with app_module.connect() as conn:
             assert storage.list_ipoint_adjustments(conn)[0].points == 4
 

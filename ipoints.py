@@ -161,23 +161,31 @@ def resolve_display_name(conn, normalized_name: str) -> str:
     return identity.display_name if identity is not None else normalized_name
 
 
+def _whole_int(text: str, *, signed: bool) -> "int | None":
+    """Parses a stripped integer string, optionally admitting a leading sign.
+
+    ``str.isdecimal`` (not ``str.isdigit``) gates the digits, so digit-class
+    characters such as a superscript ``²`` — which pass ``isdigit`` but have no
+    ``int`` value — are refused.
+    """
+    body = text[1:] if signed and text[:1] in "+-" else text
+    if not body.isdecimal():
+        return None
+    return int(text)
+
+
 def _coerce_points(points) -> "int | None":
     """Returns an integer candidate, or None for a non-whole-number value.
 
     Only integers and decimal-digit strings qualify, so a fractional value can
-    never be silently truncated into an Entry. ``str.isdecimal`` (not
-    ``str.isdigit``) is required because digit-class characters such as a
-    superscript ``²`` pass ``isdigit`` but have no ``int`` value.
+    never be silently truncated into an Entry.
     """
     if isinstance(points, bool):
         return None
     if isinstance(points, int):
         return points
     if isinstance(points, str):
-        text = points.strip()
-        if not text.isdecimal():
-            return None
-        return int(text)
+        return _whole_int(points.strip(), signed=False)
     return None
 
 
@@ -185,19 +193,14 @@ def _coerce_signed_points(points) -> "int | None":
     """Returns a signed integer candidate, or None for a non-whole-number value.
 
     Like ``_coerce_points`` but admitting a leading sign, since an Adjustment
-    may subtract. ``str.isdecimal`` still gates the digits, so a fractional or
-    digit-class value (``5.9``, ``²``) can never slip through.
+    may subtract.
     """
     if isinstance(points, bool):
         return None
     if isinstance(points, int):
         return points
     if isinstance(points, str):
-        text = points.strip()
-        body = text[1:] if text[:1] in "+-" else text
-        if not body.isdecimal():
-            return None
-        return int(text)
+        return _whole_int(points.strip(), signed=True)
     return None
 
 
@@ -521,7 +524,7 @@ def edit_adjustment(
     reason: str,
     recorded_at: str | None = None,
 ) -> "AdjustmentEdited | AdjustmentRejected":
-    """Validates and applies an Adjustment correction, auditing the prior state.
+    """Validates and applies an Adjustment edit, auditing the prior state.
 
     The new signed value must be non-zero and its reason present. A change that
     would drive the Balance below zero is refused (ADR 0006), writing nothing.
