@@ -122,6 +122,20 @@ def panel_html(html, panel_id):
     return match.group(0)
 
 
+def page_h1(html):
+    """Returns the rendered page H1 text (the chrome heading, not a panel)."""
+    match = re.search(r'<h1[^>]*>(.*?)</h1>', html, re.S)
+    assert match is not None, "page has no <h1> heading"
+    return match.group(1).strip()
+
+
+def active_tab_label(html):
+    """Returns the visible label of the tab marked active in the tab bar."""
+    match = re.search(r'class="tab-link active"[^>]*>(.*?)</(?:button|a)>', html, re.S)
+    assert match is not None, "no active tab found in the tab bar"
+    return match.group(1).strip()
+
+
 def open_month_picker(page):
     """Opens the Report Month popover from the reports tab."""
     page.locator('.tab-link[data-tab="reports"]').click()
@@ -166,6 +180,92 @@ class TestTabNavigation:
             assert page.locator(f"#{tab_name}").evaluate(
                 "panel => panel.classList.contains('active')"
             ), page_errors
+
+        assert not page_errors
+
+
+class TestConsistentPageHeading:
+    """#205: the page H1 matches the active tab's label on every page."""
+
+    _PAGES_BY_TAB = {
+        "reports": "/",
+        "history": "/?tab=history",
+        "punishments": "/punishments",
+        "ipoints": "/ipoints",
+        "boarders": "/boarders",
+        "statistics": "/statistics",
+    }
+
+    def test_home_defaults_to_the_reports_tab_label(self):
+        assert page_h1(home_html()) == "View Reports in Database"
+
+    def test_active_tab_label_matches_the_page_heading(self, fresh_client):
+        for tab, route in self._PAGES_BY_TAB.items():
+            html = fresh_client.get(route).get_data(as_text=True)
+            assert page_h1(html) == active_tab_label(html), (
+                f"{route} heading disagrees with its active {tab!r} tab"
+            )
+
+    def test_switching_home_tabs_updates_the_heading_without_a_reload(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+
+        assert page.locator("#page-heading").inner_text() == "View Reports in Database"
+        page.locator('.tab-link[data-tab="history"]').click()
+        assert page.locator("#page-heading").inner_text() == "Search Boarder History"
+        page.locator('.tab-link[data-tab="boarders"]').click()
+        assert page.locator("#page-heading").inner_text() == "Boarders"
+        page.locator('.tab-link[data-tab="reports"]').click()
+        assert page.locator("#page-heading").inner_text() == "View Reports in Database"
+
+    def test_boarder_profile_keeps_its_own_heading(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+        html = fresh_client.get("/boarder/ALICE").get_data(as_text=True)
+        assert page_h1(html) == "Boarder Profile"
+
+    def test_error_page_keeps_a_neutral_heading(self, fresh_client):
+        response = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "602A"})
+        assert response.status_code == 403
+        assert page_h1(response.get_data(as_text=True)) == "Invalid request"
+
+    def test_report_printing_still_hides_the_page_heading(self, fresh_client, browser_page):
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            [month_row("ALICE", "101", 2, 5, 7)],
+        )
+        page.emulate_media(media="print")
+        display = page.evaluate(
+            "() => getComputedStyle(document.getElementById('page-heading')).display"
+        )
+        assert display == "none"
+
+    def test_unknown_tab_still_renders_a_heading(self):
+        # A future page that relies on the shared layout but names no tab must
+        # not render blank chrome (#205).
+        assert app_module._page_context()["page_heading"] == "Lateness Dashboard"
+        assert (
+            app_module._page_context("nonsense")["page_heading"]
+            == "Lateness Dashboard"
+        )
+
+    def test_activate_tab_without_a_panel_raises_no_js_error(
+        self, fresh_client, browser_page
+    ):
+        # Link tabs carry no data-tab, so their click handler reaches
+        # activateTab(null); with no matching .panel the guard must skip it
+        # rather than throw and take the page scripts down.
+        page = browser_page
+        page_errors = []
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+
+        page.evaluate("() => activateTab(null)")
 
         assert not page_errors
 
