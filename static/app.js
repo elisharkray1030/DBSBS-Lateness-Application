@@ -97,13 +97,30 @@
     const tabButtons = document.querySelectorAll('.tab-link');
     const panels = document.querySelectorAll('.panel');
 
+    // The layout embeds the tab-label map (tab key -> label) as JSON; the
+    // server derives the initial H1 from the same map (#205).
+    function tabLabel(tabName) {
+        const mapEl = document.getElementById('tab-labels');
+        if (!mapEl) return '';
+        try {
+            return JSON.parse(mapEl.textContent)[tabName] || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
     function activateTab(tabName) {
         tabButtons.forEach(btn => btn.classList.remove('active'));
         panels.forEach(panel => panel.classList.remove('active'));
 
         const button = document.querySelector(`.tab-link[data-tab="${tabName}"]`);
         if (button) button.classList.add('active');
-        document.getElementById(tabName).classList.add('active');
+        const panel = document.getElementById(tabName);
+        if (panel) panel.classList.add('active');
+
+        const heading = document.getElementById('page-heading');
+        const label = tabLabel(tabName);
+        if (heading && label) heading.textContent = label;
     }
 
     tabButtons.forEach(button => {

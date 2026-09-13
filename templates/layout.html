@@ -1317,8 +1317,11 @@
 </header>
 
 <div class="container">
-    {% block heading %}{% endblock %}
-    
+    {% block heading %}
+    <h1 id="page-heading">{{ page_heading }}</h1>
+    {% endblock %}
+    <script type="application/json" id="tab-labels">{{ tab_labels|tojson }}</script>
+
     {% if message %}
         <div class="banner banner-success">{{ message }}</div>
     {% endif %}

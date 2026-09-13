@@ -1,10 +1,6 @@
 {% extends "layout.html" %}
 {% from "macros.html" import status_badge %}
 
-{% block heading %}
-    <h1>Lateness Disciplinary Dashboard</h1>
-{% endblock %}
-
 {% block content %}
     <!-- History Search Panel -->
     <section id="history" class="panel {% if selected_tab == 'history' %}active{% endif %} history-panel">

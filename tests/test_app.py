@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import re
 import tempfile
@@ -122,6 +123,13 @@ def panel_html(html, panel_id):
     return match.group(0)
 
 
+def page_h1(html):
+    """Returns the rendered page H1 text (the chrome heading, not a panel)."""
+    match = re.search(r'<h1[^>]*>(.*?)</h1>', html, re.S)
+    assert match is not None, "page has no <h1> heading"
+    return match.group(1).strip()
+
+
 def open_month_picker(page):
     """Opens the Report Month popover from the reports tab."""
     page.locator('.tab-link[data-tab="reports"]').click()
@@ -168,6 +176,76 @@ class TestTabNavigation:
             ), page_errors
 
         assert not page_errors
+
+
+class TestConsistentPageHeading:
+    """#205: the page H1 matches the active tab's label on every page."""
+
+    _STANDALONE_PAGES = {
+        "reports": "/",
+        "history": "/?tab=history",
+        "punishments": "/punishments",
+        "ipoints": "/ipoints",
+        "boarders": "/boarders",
+        "statistics": "/statistics",
+    }
+
+    def test_home_defaults_to_the_reports_tab_label(self):
+        assert page_h1(home_html()) == "View Reports in Database"
+
+    def test_server_headings_all_come_from_the_embedded_label_map(self, fresh_client):
+        map_html = fresh_client.get("/").get_data(as_text=True)
+        match = re.search(
+            r'<script type="application/json" id="tab-labels">(.*?)</script>',
+            map_html,
+            re.S,
+        )
+        assert match is not None, "page does not embed the tab-label map"
+        labels = json.loads(match.group(1))
+
+        assert set(labels) == set(self._STANDALONE_PAGES)
+        for tab, route in self._STANDALONE_PAGES.items():
+            html = fresh_client.get(route).get_data(as_text=True)
+            assert page_h1(html) == labels[tab], f"{route} heading != map[{tab!r}]"
+
+    def test_switching_home_tabs_updates_the_heading_without_a_reload(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+
+        assert page.locator("#page-heading").inner_text() == "View Reports in Database"
+        page.locator('.tab-link[data-tab="history"]').click()
+        assert page.locator("#page-heading").inner_text() == "Search Boarder History"
+        page.locator('.tab-link[data-tab="boarders"]').click()
+        assert page.locator("#page-heading").inner_text() == "Boarders"
+        page.locator('.tab-link[data-tab="reports"]').click()
+        assert page.locator("#page-heading").inner_text() == "View Reports in Database"
+
+    def test_boarder_profile_keeps_its_own_heading(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-03")
+        html = fresh_client.get("/boarder/ALICE").get_data(as_text=True)
+        assert page_h1(html) == "Boarder Profile"
+
+    def test_error_page_keeps_a_neutral_heading(self, fresh_client):
+        response = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "602A"})
+        assert response.status_code == 403
+        assert page_h1(response.get_data(as_text=True)) == "Invalid request"
+
+    def test_report_printing_still_hides_the_page_heading(self, fresh_client, browser_page):
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            [month_row("ALICE", "101", 2, 5, 7)],
+        )
+        page.emulate_media(media="print")
+        display = page.evaluate(
+            "() => getComputedStyle(document.getElementById('page-heading')).display"
+        )
+        assert display == "none"
 
 
 class TestImportMonthPicker:

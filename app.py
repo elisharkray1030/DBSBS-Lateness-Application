@@ -433,6 +433,20 @@ def _chart_payload(labels, **series):
     return {"labels": list(labels), **series}
 
 
+# Single source of truth for the tab bar and the page heading (#205): every
+# tab key maps to its label, the layout derives the H1 from the active tab,
+# and the map is embedded for JavaScript so an in-page tab switch updates the
+# heading without a reload. Keep in step with the markup in layout.html.
+TAB_LABELS = {
+    'reports': 'View Reports in Database',
+    'history': 'Search Boarder History',
+    'punishments': 'Punishments',
+    'ipoints': 'I-Points',
+    'boarders': 'Boarders',
+    'statistics': 'Statistics',
+}
+
+
 def _page_context(selected_tab: str = '', message: str | None = None,
                   error: str | None = None, **extra):
     """Shared template context for every full page.
@@ -445,6 +459,8 @@ def _page_context(selected_tab: str = '', message: str | None = None,
     context = {
         'panels_in_page': False,
         'selected_tab': selected_tab,
+        'page_heading': TAB_LABELS.get(selected_tab, ''),
+        'tab_labels': TAB_LABELS,
         'message': message,
         'error': error,
         'history_results': None,
