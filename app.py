@@ -433,10 +433,9 @@ def _chart_payload(labels, **series):
     return {"labels": list(labels), **series}
 
 
-# Single source of truth for the tab bar and the page heading (#205): every
-# tab key maps to its label, the layout derives the H1 from the active tab,
-# and the map is embedded for JavaScript so an in-page tab switch updates the
-# heading without a reload. Keep in step with the markup in layout.html.
+# Single source of truth for the tab bar and the page heading (#205): the
+# layout renders both the tab links and the H1 from this map, and embeds it
+# for JavaScript so an in-page tab switch updates the heading without a reload.
 TAB_LABELS = {
     'reports': 'View Reports in Database',
     'history': 'Search Boarder History',

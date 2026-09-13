@@ -1,6 +1,5 @@
 import csv
 import io
-import json
 import os
 import re
 import tempfile
@@ -130,6 +129,13 @@ def page_h1(html):
     return match.group(1).strip()
 
 
+def active_tab_label(html):
+    """Returns the visible label of the tab marked active in the tab bar."""
+    match = re.search(r'class="tab-link active"[^>]*>(.*?)</(?:button|a)>', html, re.S)
+    assert match is not None, "no active tab found in the tab bar"
+    return match.group(1).strip()
+
+
 def open_month_picker(page):
     """Opens the Report Month popover from the reports tab."""
     page.locator('.tab-link[data-tab="reports"]').click()
@@ -193,20 +199,12 @@ class TestConsistentPageHeading:
     def test_home_defaults_to_the_reports_tab_label(self):
         assert page_h1(home_html()) == "View Reports in Database"
 
-    def test_server_headings_all_come_from_the_embedded_label_map(self, fresh_client):
-        map_html = fresh_client.get("/").get_data(as_text=True)
-        match = re.search(
-            r'<script type="application/json" id="tab-labels">(.*?)</script>',
-            map_html,
-            re.S,
-        )
-        assert match is not None, "page does not embed the tab-label map"
-        labels = json.loads(match.group(1))
-
-        assert set(labels) == set(self._STANDALONE_PAGES)
+    def test_active_tab_label_matches_the_page_heading(self, fresh_client):
         for tab, route in self._STANDALONE_PAGES.items():
             html = fresh_client.get(route).get_data(as_text=True)
-            assert page_h1(html) == labels[tab], f"{route} heading != map[{tab!r}]"
+            assert page_h1(html) == active_tab_label(html), (
+                f"{route} heading disagrees with its active {tab!r} tab"
+            )
 
     def test_switching_home_tabs_updates_the_heading_without_a_reload(
         self, fresh_client, browser_page
