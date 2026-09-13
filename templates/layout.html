@@ -1317,8 +1317,11 @@
 </header>
 
 <div class="container">
-    {% block heading %}{% endblock %}
-    
+    {% block heading %}
+    <h1 id="page-heading">{{ page_heading }}</h1>
+    {% endblock %}
+    <script type="application/json" id="tab-labels">{{ tab_labels|tojson }}</script>
+
     {% if message %}
         <div class="banner banner-success">{{ message }}</div>
     {% endif %}
@@ -1329,20 +1332,20 @@
 
     <div class="tabs">
         {% if panels_in_page %}
-        <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">View Reports in Database</button>
-        <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">Search Boarder History</button>
+        <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">{{ tab_labels.reports }}</button>
+        <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">{{ tab_labels.history }}</button>
         {% else %}
-        <a class="tab-link" href="/?tab=reports">View Reports in Database</a>
-        <a class="tab-link" href="/?tab=history">Search Boarder History</a>
+        <a class="tab-link" href="/?tab=reports">{{ tab_labels.reports }}</a>
+        <a class="tab-link" href="/?tab=history">{{ tab_labels.history }}</a>
         {% endif %}
-        <a class="tab-link {% if selected_tab == 'punishments' %}active{% endif %}" data-tab="punishments" href="/punishments">Punishments</a>
-        <a class="tab-link {% if selected_tab == 'ipoints' %}active{% endif %}" href="/ipoints">I-Points</a>
+        <a class="tab-link {% if selected_tab == 'punishments' %}active{% endif %}" data-tab="punishments" href="/punishments">{{ tab_labels.punishments }}</a>
+        <a class="tab-link {% if selected_tab == 'ipoints' %}active{% endif %}" href="/ipoints">{{ tab_labels.ipoints }}</a>
         {% if panels_in_page %}
-        <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">Boarders</button>
+        <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">{{ tab_labels.boarders }}</button>
         {% else %}
-        <a class="tab-link" href="/?tab=boarders">Boarders</a>
+        <a class="tab-link" href="/?tab=boarders">{{ tab_labels.boarders }}</a>
         {% endif %}
-        <a class="tab-link {% if selected_tab == 'statistics' %}active{% endif %}" href="/statistics">Statistics</a>
+        <a class="tab-link {% if selected_tab == 'statistics' %}active{% endif %}" href="/statistics">{{ tab_labels.statistics }}</a>
     </div>
 
     {% block content %}{% endblock %}
