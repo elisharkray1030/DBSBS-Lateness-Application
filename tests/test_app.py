@@ -245,6 +245,30 @@ class TestConsistentPageHeading:
         )
         assert display == "none"
 
+    def test_unknown_tab_still_renders_a_heading(self):
+        # A future page that relies on the shared layout but names no tab must
+        # not render blank chrome (#205).
+        assert app_module._page_context()["page_heading"] == "Lateness Dashboard"
+        assert (
+            app_module._page_context("nonsense")["page_heading"]
+            == "Lateness Dashboard"
+        )
+
+    def test_activate_tab_without_a_panel_raises_no_js_error(
+        self, fresh_client, browser_page
+    ):
+        # Link tabs carry no data-tab, so their click handler reaches
+        # activateTab(null); with no matching .panel the guard must skip it
+        # rather than throw and take the page scripts down.
+        page = browser_page
+        page_errors = []
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+
+        page.evaluate("() => activateTab(null)")
+
+        assert not page_errors
+
 
 class TestImportMonthPicker:
     def _report_month_input(self):

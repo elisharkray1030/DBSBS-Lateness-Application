@@ -433,6 +433,11 @@ def _chart_payload(labels, **series):
     return {"labels": list(labels), **series}
 
 
+# Neutral heading for a page that relies on the shared layout but names no tab
+# (e.g. a future page that forgets to override {% block heading %}).
+DEFAULT_PAGE_HEADING = 'Lateness Dashboard'
+
+
 # Single source of truth for the tab bar and the page heading (#205): the
 # layout renders both the tab links and the H1 from this map, and embeds it
 # for JavaScript so an in-page tab switch updates the heading without a reload.
@@ -458,7 +463,7 @@ def _page_context(selected_tab: str = '', message: str | None = None,
     context = {
         'panels_in_page': False,
         'selected_tab': selected_tab,
-        'page_heading': TAB_LABELS.get(selected_tab, ''),
+        'page_heading': TAB_LABELS.get(selected_tab, DEFAULT_PAGE_HEADING),
         'tab_labels': TAB_LABELS,
         'message': message,
         'error': error,

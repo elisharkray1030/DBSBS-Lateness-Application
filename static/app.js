@@ -100,13 +100,7 @@
     // The layout embeds the tab-label map (tab key -> label) as JSON; the
     // server derives the initial H1 from the same map (#205).
     function tabLabel(tabName) {
-        const mapEl = document.getElementById('tab-labels');
-        if (!mapEl) return '';
-        try {
-            return JSON.parse(mapEl.textContent)[tabName] || '';
-        } catch (error) {
-            return '';
-        }
+        return JSON.parse(document.getElementById('tab-labels').textContent)[tabName] || '';
     }
 
     function activateTab(tabName) {
