@@ -187,7 +187,7 @@ class TestTabNavigation:
 class TestConsistentPageHeading:
     """#205: the page H1 matches the active tab's label on every page."""
 
-    _STANDALONE_PAGES = {
+    _PAGES_BY_TAB = {
         "reports": "/",
         "history": "/?tab=history",
         "punishments": "/punishments",
@@ -200,7 +200,7 @@ class TestConsistentPageHeading:
         assert page_h1(home_html()) == "View Reports in Database"
 
     def test_active_tab_label_matches_the_page_heading(self, fresh_client):
-        for tab, route in self._STANDALONE_PAGES.items():
+        for tab, route in self._PAGES_BY_TAB.items():
             html = fresh_client.get(route).get_data(as_text=True)
             assert page_h1(html) == active_tab_label(html), (
                 f"{route} heading disagrees with its active {tab!r} tab"
