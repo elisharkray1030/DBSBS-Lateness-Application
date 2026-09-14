@@ -30,14 +30,14 @@ class TestStatisticsTabRouting:
     def test_statistics_tab_highlights_on_direct_visit(self, fresh_client):
         html = dashboard(fresh_client)
 
-        match = re.search(r'<a class="([^"]*)" href="/statistics">', html)
+        match = re.search(r'<a class="([^"]*)" href="/statistics"[^>]*>', html)
         assert match is not None, "no Statistics tab link found"
         assert "active" in match.group(1).split()
 
     def test_home_page_shows_statistics_tab_link(self, fresh_client):
         html = fresh_client.get("/").get_data(as_text=True)
 
-        assert 'href="/statistics">Statistics</a>' in html
+        assert re.search(r'href="/statistics"[^>]*>Statistics</a>', html)
 
 
 class TestHouseTrendPayload:
