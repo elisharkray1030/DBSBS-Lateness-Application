@@ -200,8 +200,10 @@ class TestServerErrorPage:
         with caplog.at_level(logging.ERROR, logger=app_module.app.logger.name):
             response = client.get("/")
         assert response.status_code == 500
+        html = response.get_data(as_text=True)
         assert b"Something went wrong" in response.data
         assert b"Back to dashboard" in response.data
+        assert "<title>Something went wrong — DBS Boarding School</title>" in html
 
     def test_unhandled_exception_logs_traceback(
         self, hardening_client, monkeypatch, caplog
