@@ -2432,6 +2432,27 @@ class TestIPointsInteractions:
             field.fill(original)
             assert save.is_hidden(), name
 
+    def test_entry_save_reveals_on_a_change_event_without_input(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(self._entry_html(fresh_client))
+
+        save = page.locator(".ipoint-entry-save")
+        assert save.is_hidden()
+
+        # Some controls (autofill, certain pickers) report via change without
+        # an input event: move the value, then dispatch only change.
+        page.evaluate(
+            """() => {
+                const field = document.querySelector('.ipoint-entry-field[name="reason"]');
+                field.value = 'corrected';
+                field.dispatchEvent(new Event('change'));
+            }"""
+        )
+
+        assert save.is_visible()
+
     # --- Minimal Remove ---
 
     def test_entry_remove_is_an_icon_only_danger_button(self, fresh_client):

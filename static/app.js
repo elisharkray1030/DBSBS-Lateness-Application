@@ -223,6 +223,7 @@
 
         row.querySelectorAll('.ipoint-entry-field').forEach(field => {
             field.addEventListener('input', updateSaveVisibility);
+            field.addEventListener('change', updateSaveVisibility);
         });
         updateSaveVisibility();
     });
