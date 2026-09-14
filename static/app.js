@@ -176,6 +176,11 @@
         });
     });
 
+    // A Save or a confirmed Remove is a deliberate navigation, not an
+    // abandoned edit: those submissions silence the unload guard below. The
+    // flag resets when the page is restored from the back/forward cache.
+    let entrySubmitting = false;
+
     // Removing an I-Point Entry is destructive but audited: route it through
     // the shared confirm dialog, whose wording each form carries.
     document.querySelectorAll('form.ipoint-remove-form').forEach(form => {
@@ -185,7 +190,10 @@
                 title: form.dataset.removeTitle,
                 message: form.dataset.removeMessage,
                 confirmLabel: 'Remove',
-                onConfirm: () => form.submit()
+                onConfirm: () => {
+                    entrySubmitting = true;
+                    form.submit();
+                }
             });
         });
     });
@@ -204,20 +212,27 @@
         });
     });
 
-    // An Entry row's Save only matters once the row differs from the stored
-    // Entry, so compare each control against its initial value and hide clean
-    // rows. The button ships visible so the form stays usable without JS.
+    // An Entry row is dirty when any of its controls differs from the stored
+    // value rendered at load. Save only matters once the row is dirty, so the
+    // button ships visible (usable without JS) and clean rows get hidden.
+    function entryRowIsDirty(row) {
+        return [...row.querySelectorAll('.ipoint-entry-field')].some(
+            field => field.value !== field.defaultValue
+        );
+    }
+
     document.querySelectorAll('tr[data-entry-id]').forEach(row => {
-        const saveButton = row.querySelector('button[form^="ipoint-edit-"]');
-        const fields = row.querySelectorAll('input[form^="ipoint-edit-"]');
-        if (!saveButton || !fields.length) return;
+        const saveButton = row.querySelector('.ipoint-entry-save');
+        if (!saveButton) return;
 
         const updateSaveVisibility = () => {
-            const dirty = [...fields].some(field => field.value !== field.defaultValue);
-            saveButton.classList.toggle('hidden', !dirty);
+            saveButton.classList.toggle('hidden', !entryRowIsDirty(row));
         };
 
-        fields.forEach(field => field.addEventListener('input', updateSaveVisibility));
+        row.querySelectorAll('.ipoint-entry-field').forEach(field => {
+            field.addEventListener('input', updateSaveVisibility);
+            field.addEventListener('change', updateSaveVisibility);
+        });
         updateSaveVisibility();
     });
 
@@ -589,10 +604,23 @@
         boarderCancelButton.addEventListener('click', discardBoarderEdits);
     }
 
+    // Entry rows only exist on /ipoints; this returns false everywhere else.
+    function hasDirtyEntryRow() {
+        return [...document.querySelectorAll('tr[data-entry-id]')].some(entryRowIsDirty);
+    }
+
+    // Saving an Entry edit is the same deliberate navigation as a confirmed
+    // Remove, so it sets the flag the unload guard reads.
+    document.querySelectorAll('form.ipoint-entry-edit-form').forEach(form => {
+        form.addEventListener('submit', () => { entrySubmitting = true; });
+    });
+    window.addEventListener('pageshow', () => { entrySubmitting = false; });
+
     // Unsaved-edit guard for full page navigation (brand link, Back, refresh).
     // Tab clicks keep their own in-page confirm guard above.
     window.addEventListener('beforeunload', function(event) {
-        if (hasDirtyBoarderRow()) {
+        if (entrySubmitting) return;
+        if (hasDirtyBoarderRow() || hasDirtyEntryRow()) {
             event.preventDefault();
             event.returnValue = '';
             return '';
@@ -610,15 +638,18 @@
     const monthPickerInput = document.getElementById('report_month');
     const monthPickerToggle = document.getElementById('report-month-toggle');
     const monthPickerPopover = document.getElementById('month-picker-popover');
+    const monthPickerGrid = monthPickerPopover && monthPickerPopover.querySelector('.month-grid');
+    const monthPickerYearLabel = document.getElementById('month-picker-year');
+    const monthPickerPrevYear = document.getElementById('month-picker-prev-year');
+    const monthPickerNextYear = document.getElementById('month-picker-next-year');
 
     // app.js is shared by the home page and pages such as /ipoints, where the
-    // Reports-panel month picker is absent. Skip the whole setup when its
-    // popover is missing so the rest of the script still runs.
-    if (monthPickerPopover) {
-        const monthPickerGrid = monthPickerPopover.querySelector('.month-grid');
-        const monthPickerYearLabel = document.getElementById('month-picker-year');
-        const monthPickerPrevYear = document.getElementById('month-picker-prev-year');
-        const monthPickerNextYear = document.getElementById('month-picker-next-year');
+    // Reports-panel month picker is absent. Run the setup only when every node
+    // it dereferences is present, so the rest of the script still runs.
+    if (
+        monthPickerInput && monthPickerToggle && monthPickerPopover && monthPickerGrid &&
+        monthPickerYearLabel && monthPickerPrevYear && monthPickerNextYear
+    ) {
         let monthPickerBrowsedYear = null;
 
         function monthPickerBounds() {
