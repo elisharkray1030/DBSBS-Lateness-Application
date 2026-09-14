@@ -104,9 +104,11 @@ def static_app_js():
 
 
 def tab_button_class(html, tab_name):
-    match = re.search(f'<button class="([^"]*)" data-tab="{tab_name}">', html)
+    match = re.search(rf'<button([^>]*data-tab="{tab_name}"[^>]*)>', html)
     assert match is not None, f"no tab button found for {tab_name!r}"
-    return match.group(1)
+    class_match = re.search(r'class="([^"]*)"', match.group(1))
+    assert class_match is not None, f"tab button {tab_name!r} has no class"
+    return class_match.group(1)
 
 
 TAB_LABELS = {
@@ -220,6 +222,66 @@ class TestConsistentPageHeading:
         assert page.locator("#page-heading").inner_text() == "Boarders"
         page.locator('.tab-link[data-tab="reports"]').click()
         assert page.locator("#page-heading").inner_text() == "View Reports in Database"
+
+    def test_tab_bar_is_a_named_navigation_landmark(self):
+        assert re.search(r'<nav class="tabs" aria-label="Primary">', home_html())
+
+    def test_exactly_one_tab_is_marked_current(self, fresh_client):
+        for route in self._PAGES_BY_TAB.values():
+            html = fresh_client.get(route).get_data(as_text=True)
+            assert len(re.findall(r'aria-current="', html)) == 1, (
+                f"{route} should mark exactly one tab current"
+            )
+
+    def test_current_tab_value_reflects_whether_it_navigates(self, fresh_client):
+        # In-page button tabs switch the view without a URL change and use
+        # aria-current="true"; link tabs move to another page and use "page".
+        home = fresh_client.get("/").get_data(as_text=True)
+        assert 'aria-current="true"' in home
+        assert 'aria-current="page"' not in home
+
+        punishments = fresh_client.get("/punishments").get_data(as_text=True)
+        assert 'aria-current="page"' in punishments
+        assert 'aria-current="true"' not in punishments
+
+    def test_page_title_names_the_current_view(self, fresh_client):
+        for route in ("/", "/?tab=history", "/punishments", "/boarders"):
+            html = fresh_client.get(route).get_data(as_text=True)
+            title = re.search(r"<title>(.*?)</title>", html, re.S).group(1).strip()
+            assert title == f"{page_h1(html)} — DBS Boarding School", route
+
+    def test_switching_home_tabs_moves_current_and_focuses_the_heading(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+
+        assert page.locator("#page-heading").get_attribute("tabindex") == "-1"
+        page.locator('.tab-link[data-tab="history"]').click()
+
+        assert page.locator("#page-heading").inner_text() == "Search Boarder History"
+        assert page.title() == "Search Boarder History — DBS Boarding School"
+        assert page.evaluate("() => document.activeElement.id") == "page-heading"
+        assert (
+            page.locator('.tab-link[data-tab="history"]').get_attribute("aria-current")
+            == "true"
+        )
+        assert (
+            page.locator('.tab-link[data-tab="reports"]').get_attribute("aria-current")
+            is None
+        )
+
+    def test_auto_opening_a_month_on_load_does_not_steal_focus(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        html = fresh_client.get("/").get_data(as_text=True).replace(
+            '<script type="application/json" id="initial-month-data">null</script>',
+            '<script type="application/json" id="initial-month-data">"2026-07"</script>',
+        )
+        page.set_content(html)
+
+        assert page.evaluate("() => document.activeElement.id") != "page-heading"
 
     def test_boarder_profile_keeps_its_own_heading(self, fresh_client):
         with app_module.connect() as conn:
@@ -1689,7 +1751,7 @@ class TestPunishmentsRoute:
     def test_punishments_tab_links_to_server_view(self):
         html = client.get("/").get_data(as_text=True)
         assert re.search(
-            r'<a class="tab-link [^"]*" data-tab="punishments" href="/punishments">',
+            r'<a class="tab-link[^"]*" data-tab="punishments" href="/punishments"',
             html,
         )
 
@@ -3277,27 +3339,45 @@ class TestVisualConsistencyPass:
         assert set(colors["panels"]) == {"rgb(29, 43, 83)"}, colors  # --navy
         assert colors["modalTitle"] == "rgb(26, 26, 26)", colors  # --text
 
-    def test_duplicate_panel_headings_are_clipped_not_removed(self, browser_page):
+    def test_duplicate_panel_headings_are_clipped_not_removed(self, fresh_client, browser_page):
         page = browser_page
-        page.set_content(home_html())
 
-        heading = page.evaluate(
-            """() => {
-                const h = document.querySelector('#reports > h2');
-                const rect = h.getBoundingClientRect();
-                const style = getComputedStyle(h);
-                return {
-                    text: h.textContent.trim(),
-                    position: style.position,
-                    width: rect.width,
-                    height: rect.height,
-                };
-            }"""
-        )
+        def clip_style(selector):
+            return page.evaluate(
+                """(selector) => {
+                    const h = document.querySelector(selector);
+                    const rect = h.getBoundingClientRect();
+                    const style = getComputedStyle(h);
+                    return {
+                        text: h.textContent.trim(),
+                        position: style.position,
+                        clipPath: style.clipPath,
+                        width: rect.width,
+                        height: rect.height,
+                    };
+                }""",
+                selector,
+            )
 
-        assert heading["text"] == "View Reports in Database", heading
-        assert heading["position"] == "absolute", heading
-        assert heading["width"] <= 1 and heading["height"] <= 1, heading
+        page.set_content(home_html(fresh_client))
+        readings = {"reports": clip_style("#reports > h2")}
+        page.locator('.tab-link[data-tab="boarders"]').click()
+        readings["boarders"] = clip_style("#boarders > h2")
+        # The Punishments panel is inert on the home DOM (display:none), so
+        # measure it on the page where it is the active view.
+        page.set_content(fresh_client.get("/punishments").get_data(as_text=True))
+        readings["punishments"] = clip_style("#punishments > h2")
+
+        expected_text = {
+            "reports": "View Reports in Database",
+            "boarders": "Boarders",
+            "punishments": "Punishments",
+        }
+        for panel_id, reading in readings.items():
+            assert reading["text"] == expected_text[panel_id], reading
+            assert reading["position"] == "absolute", (panel_id, reading)
+            assert reading["clipPath"] == "inset(50%)", (panel_id, reading)
+            assert reading["width"] <= 1 and reading["height"] <= 1, (panel_id, reading)
 
     def test_table_scrollbar_chrome_is_navy_tinted_from_shared_token(self, fresh_client, browser_page):
         with app_module.connect() as conn:
