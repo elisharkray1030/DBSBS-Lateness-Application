@@ -23,8 +23,9 @@ losing the audit trail that makes the discipline defensible.
 
 Add **Irregularity Points (I-Points)** as a second, persisting disciplinary
 currency. Staff log I-Point Entries (points, date, reason) and I-Point
-Adjustments directly in a new I-Points view. A Boarder's I-Point Balance
-carries across months and never falls below zero. At each local month's close,
+Adjustments directly in a new I-Points view. _(I-Point Adjustments were retired
+in Slice 1, #214; the Balance is now Entries minus confirmed Redemptions.)_ A
+Boarder's I-Point Balance carries across months and never falls below zero. At each local month's close,
 a Boarder whose Balance is
 at least 5 is shown a pending Redemption: the largest tier at or below the
 Balance (5/10/15 → 1 day / 1 week / 1 calendar month) becomes a Phone
@@ -113,7 +114,8 @@ and the app never releases it on its own.
     released, and voided sets.
 40. As staff, I want server-side validation: Entry points are positive integers,
     Adjustments are non-zero signed integers whose deduction may not exceed the
-    Balance, and required reasons are enforced.
+    Balance, and required reasons are enforced. _(The Adjustment rules were
+    retired in Slice 1.)_
 41. As staff, I want month-close evaluation to use the local calendar date, so a
     month closes at local midnight.
 42. As staff, I want back-dated Entries to change only the running Balance,

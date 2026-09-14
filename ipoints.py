@@ -260,15 +260,14 @@ def resolve_display_name(
     return identity.display_name if identity is not None else normalized_name
 
 
-def _whole_int(text: str, *, signed: bool) -> "int | None":
-    """Parses a stripped integer string, optionally admitting a leading sign.
+def _whole_int(text: str) -> "int | None":
+    """Parses a stripped non-negative integer string.
 
     ``str.isdecimal`` (not ``str.isdigit``) gates the digits, so digit-class
     characters such as a superscript ``²`` — which pass ``isdigit`` but have no
     ``int`` value — are refused.
     """
-    body = text[1:] if signed and text[:1] in "+-" else text
-    if not body.isdecimal():
+    if not text.isdecimal():
         return None
     return int(text)
 
@@ -284,7 +283,7 @@ def _coerce_points(points) -> "int | None":
     if isinstance(points, int):
         return points
     if isinstance(points, str):
-        return _whole_int(points.strip(), signed=False)
+        return _whole_int(points.strip())
     return None
 
 

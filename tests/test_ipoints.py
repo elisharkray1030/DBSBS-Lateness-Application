@@ -543,8 +543,13 @@ class TestLegacyAdjustmentAudit:
             self._seed_legacy_adjustment(conn)
 
         response = fresh_client.get("/boarder/ALICE")
+        html = response.get_data(as_text=True)
 
         assert response.status_code == 200
+        # The profile deliberately omits audit history, so it must not claim
+        # there is no history at all; the audit note lives on /ipoints.
+        assert "Audit History" not in html
+        assert "No I-Point Entries or Confiscations for this boarder." in html
 
 
 class TestLogEntryRoute:
