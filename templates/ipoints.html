@@ -48,14 +48,12 @@
                 <div class="form-row">
                     <div class="form-field">
                         <label for="confiscation-status"><strong>Status</strong></label>
-                        <select id="confiscation-status" name="confiscation_status">
+                        <select id="confiscation-status" name="confiscation_status"
+                                onchange="this.form.submit()">
                             {% for value, label in confiscation_filter_options %}
                             <option value="{{ value }}" {% if value == confiscation_filter %}selected{% endif %}>{{ label }}</option>
                             {% endfor %}
                         </select>
-                    </div>
-                    <div>
-                        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
                     </div>
                 </div>
             </form>
@@ -133,8 +131,11 @@
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 </form>
                                 <button type="submit" form="ipoint-confiscation-remove-{{ confiscation.id }}"
-                                        class="btn btn-danger btn-sm"
-                                        aria-label="Remove the Confiscation for {{ who }}">Remove</button>
+                                        class="btn btn-danger btn-sm btn-icon"
+                                        aria-label="Remove the Confiscation for {{ who }}"
+                                        title="Remove Confiscation">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                </button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -232,8 +233,11 @@
                                     <button type="submit" form="ipoint-edit-{{ entry.id }}"
                                             class="btn btn-primary btn-sm">Save</button>
                                     <button type="submit" form="ipoint-remove-{{ entry.id }}"
-                                            class="btn btn-danger btn-sm"
-                                            aria-label="Remove entry from {{ entry.occurred_on }}">Remove</button>
+                                            class="btn btn-danger btn-sm btn-icon"
+                                            aria-label="Remove entry from {{ entry.occurred_on }}"
+                                            title="Remove entry">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    </button>
                                 </td>
                             </tr>
                             {% endfor %}
