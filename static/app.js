@@ -593,161 +593,167 @@
     const monthPickerInput = document.getElementById('report_month');
     const monthPickerToggle = document.getElementById('report-month-toggle');
     const monthPickerPopover = document.getElementById('month-picker-popover');
-    const monthPickerGrid = monthPickerPopover.querySelector('.month-grid');
-    const monthPickerYearLabel = document.getElementById('month-picker-year');
-    const monthPickerPrevYear = document.getElementById('month-picker-prev-year');
-    const monthPickerNextYear = document.getElementById('month-picker-next-year');
-    let monthPickerBrowsedYear = null;
 
-    function monthPickerBounds() {
-        return {
-            min: MONTH_PICKER_MIN_YEAR,
-            max: new Date().getFullYear() + 1
-        };
-    }
+    // app.js is shared by the home page and pages such as /ipoints, where the
+    // Reports-panel month picker is absent. Skip the whole setup when its
+    // popover is missing so the rest of the script still runs.
+    if (monthPickerPopover) {
+        const monthPickerGrid = monthPickerPopover.querySelector('.month-grid');
+        const monthPickerYearLabel = document.getElementById('month-picker-year');
+        const monthPickerPrevYear = document.getElementById('month-picker-prev-year');
+        const monthPickerNextYear = document.getElementById('month-picker-next-year');
+        let monthPickerBrowsedYear = null;
 
-    function monthValue(year, zeroBasedMonth) {
-        return `${year}-${String(zeroBasedMonth + 1).padStart(2, '0')}`;
-    }
+        function monthPickerBounds() {
+            return {
+                min: MONTH_PICKER_MIN_YEAR,
+                max: new Date().getFullYear() + 1
+            };
+        }
 
-    function renderMonthGrid() {
-        const selectedValue = monthPickerInput.value.trim();
-        const now = new Date();
-        monthPickerYearLabel.textContent = String(monthPickerBrowsedYear);
+        function monthValue(year, zeroBasedMonth) {
+            return `${year}-${String(zeroBasedMonth + 1).padStart(2, '0')}`;
+        }
 
-        let html = '';
-        for (let rowStart = 0; rowStart < 12; rowStart += 4) {
-            html += '<div role="row">';
-            for (let offset = 0; offset < 4; offset++) {
-                const zeroBasedMonth = rowStart + offset;
-                const value = monthValue(monthPickerBrowsedYear, zeroBasedMonth);
-                const classes = ['month-option'];
-                if (value === selectedValue) classes.push('selected');
-                if (
-                    monthPickerBrowsedYear === now.getFullYear() &&
-                    zeroBasedMonth === now.getMonth()
-                ) {
-                    classes.push('current');
+        function renderMonthGrid() {
+            const selectedValue = monthPickerInput.value.trim();
+            const now = new Date();
+            monthPickerYearLabel.textContent = String(monthPickerBrowsedYear);
+
+            let html = '';
+            for (let rowStart = 0; rowStart < 12; rowStart += 4) {
+                html += '<div role="row">';
+                for (let offset = 0; offset < 4; offset++) {
+                    const zeroBasedMonth = rowStart + offset;
+                    const value = monthValue(monthPickerBrowsedYear, zeroBasedMonth);
+                    const classes = ['month-option'];
+                    if (value === selectedValue) classes.push('selected');
+                    if (
+                        monthPickerBrowsedYear === now.getFullYear() &&
+                        zeroBasedMonth === now.getMonth()
+                    ) {
+                        classes.push('current');
+                    }
+                    html += `<div role="gridcell"><button type="button" tabindex="-1" class="${classes.join(' ')}" data-month-value="${value}">${MONTH_PICKER_NAMES[zeroBasedMonth]}</button></div>`;
                 }
-                html += `<div role="gridcell"><button type="button" tabindex="-1" class="${classes.join(' ')}" data-month-value="${value}">${MONTH_PICKER_NAMES[zeroBasedMonth]}</button></div>`;
+                html += '</div>';
             }
-            html += '</div>';
+            monthPickerGrid.innerHTML = html;
+
+            monthPickerPrevYear.disabled = monthPickerBrowsedYear <= monthPickerBounds().min;
+            monthPickerNextYear.disabled = monthPickerBrowsedYear >= monthPickerBounds().max;
         }
-        monthPickerGrid.innerHTML = html;
 
-        monthPickerPrevYear.disabled = monthPickerBrowsedYear <= monthPickerBounds().min;
-        monthPickerNextYear.disabled = monthPickerBrowsedYear >= monthPickerBounds().max;
-    }
-
-    function monthPickerFocusTargetButton() {
-        const selected = monthPickerGrid.querySelector('.month-option.selected');
-        if (selected) return selected;
-        const current = monthPickerGrid.querySelector('.month-option.current');
-        if (current) return current;
-        return monthPickerGrid.querySelector('.month-option');
-    }
-
-    function openMonthPicker() {
-        const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(monthPickerInput.value.trim());
-        const typedYear = match ? parseInt(match[1], 10) : NaN;
-        monthPickerBrowsedYear = Number.isInteger(typedYear)
-            ? typedYear
-            : new Date().getFullYear();
-
-        renderMonthGrid();
-        monthPickerPopover.classList.remove('hidden');
-        monthPickerToggle.setAttribute('aria-expanded', 'true');
-
-        // Roving tabindex keeps Tab cycling short; arrows handle the grid.
-        const target = monthPickerFocusTargetButton();
-        target.tabIndex = 0;
-        target.focus();
-    }
-
-    function closeMonthPicker(restoreFocusToField) {
-        monthPickerPopover.classList.add('hidden');
-        monthPickerToggle.setAttribute('aria-expanded', 'false');
-        if (restoreFocusToField) {
-            monthPickerInput.focus();
+        function monthPickerFocusTargetButton() {
+            const selected = monthPickerGrid.querySelector('.month-option.selected');
+            if (selected) return selected;
+            const current = monthPickerGrid.querySelector('.month-option.current');
+            if (current) return current;
+            return monthPickerGrid.querySelector('.month-option');
         }
-    }
 
-    function isMonthPickerOpen() {
-        return !monthPickerPopover.classList.contains('hidden');
-    }
+        function openMonthPicker() {
+            const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(monthPickerInput.value.trim());
+            const typedYear = match ? parseInt(match[1], 10) : NaN;
+            monthPickerBrowsedYear = Number.isInteger(typedYear)
+                ? typedYear
+                : new Date().getFullYear();
 
-    monthPickerToggle.addEventListener('click', function() {
-        if (isMonthPickerOpen()) {
-            closeMonthPicker(false);
-        } else {
-            openMonthPicker();
+            renderMonthGrid();
+            monthPickerPopover.classList.remove('hidden');
+            monthPickerToggle.setAttribute('aria-expanded', 'true');
+
+            // Roving tabindex keeps Tab cycling short; arrows handle the grid.
+            const target = monthPickerFocusTargetButton();
+            target.tabIndex = 0;
+            target.focus();
         }
-    });
 
-    monthPickerPrevYear.addEventListener('click', function() {
-        monthPickerBrowsedYear -= 1;
-        renderMonthGrid();
-    });
+        function closeMonthPicker(restoreFocusToField) {
+            monthPickerPopover.classList.add('hidden');
+            monthPickerToggle.setAttribute('aria-expanded', 'false');
+            if (restoreFocusToField) {
+                monthPickerInput.focus();
+            }
+        }
 
-    monthPickerNextYear.addEventListener('click', function() {
-        monthPickerBrowsedYear += 1;
-        renderMonthGrid();
-    });
+        function isMonthPickerOpen() {
+            return !monthPickerPopover.classList.contains('hidden');
+        }
 
-    monthPickerGrid.addEventListener('click', function(event) {
-        const option = event.target.closest('.month-option');
-        if (!option) return;
-        monthPickerInput.value = option.getAttribute('data-month-value');
-        closeMonthPicker(true);
-    });
+        monthPickerToggle.addEventListener('click', function() {
+            if (isMonthPickerOpen()) {
+                closeMonthPicker(false);
+            } else {
+                openMonthPicker();
+            }
+        });
 
-    // Clicking anywhere outside the popover or its toggle dismisses it.
-    document.addEventListener('mousedown', function(event) {
-        if (!isMonthPickerOpen()) return;
-        if (monthPickerPopover.contains(event.target)) return;
-        if (monthPickerToggle.contains(event.target)) return;
-        closeMonthPicker(false);
-    });
+        monthPickerPrevYear.addEventListener('click', function() {
+            monthPickerBrowsedYear -= 1;
+            renderMonthGrid();
+        });
 
-    monthPickerPopover.addEventListener('keydown', function(event) {
-        if (event.key === 'Escape') {
-            event.preventDefault();
+        monthPickerNextYear.addEventListener('click', function() {
+            monthPickerBrowsedYear += 1;
+            renderMonthGrid();
+        });
+
+        monthPickerGrid.addEventListener('click', function(event) {
+            const option = event.target.closest('.month-option');
+            if (!option) return;
+            monthPickerInput.value = option.getAttribute('data-month-value');
             closeMonthPicker(true);
-            return;
-        }
+        });
 
-        // Focus trap mirroring the confirm dialog: Tab cycles inside only.
-        if (event.key === 'Tab') {
-            const focusables = this.querySelectorAll(
-                'button:not([disabled]):not([tabindex="-1"]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-            );
-            if (!focusables.length) return;
-            const first = focusables[0];
-            const last = focusables[focusables.length - 1];
-            if (event.shiftKey && document.activeElement === first) {
+        // Clicking anywhere outside the popover or its toggle dismisses it.
+        document.addEventListener('mousedown', function(event) {
+            if (!isMonthPickerOpen()) return;
+            if (monthPickerPopover.contains(event.target)) return;
+            if (monthPickerToggle.contains(event.target)) return;
+            closeMonthPicker(false);
+        });
+
+        monthPickerPopover.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
                 event.preventDefault();
-                last.focus();
-            } else if (!event.shiftKey && document.activeElement === last) {
-                event.preventDefault();
-                first.focus();
+                closeMonthPicker(true);
+                return;
             }
-            return;
-        }
 
-        const arrowMoves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -4, ArrowDown: 4 };
-        if (!(event.key in arrowMoves)) return;
-        const focusedOption =
-            document.activeElement && document.activeElement.closest('.month-option');
-        if (!focusedOption || !this.contains(document.activeElement)) return;
+            // Focus trap mirroring the confirm dialog: Tab cycles inside only.
+            if (event.key === 'Tab') {
+                const focusables = this.querySelectorAll(
+                    'button:not([disabled]):not([tabindex="-1"]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                );
+                if (!focusables.length) return;
+                const first = focusables[0];
+                const last = focusables[focusables.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+                return;
+            }
 
-        event.preventDefault();
-        const options = [...this.querySelectorAll('.month-option')];
-        const index = options.indexOf(focusedOption);
-        const nextIndex = (index + arrowMoves[event.key] + options.length) % options.length;
-        focusedOption.tabIndex = -1;
-        options[nextIndex].tabIndex = 0;
-        options[nextIndex].focus();
-    });
+            const arrowMoves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -4, ArrowDown: 4 };
+            if (!(event.key in arrowMoves)) return;
+            const focusedOption =
+                document.activeElement && document.activeElement.closest('.month-option');
+            if (!focusedOption || !this.contains(document.activeElement)) return;
+
+            event.preventDefault();
+            const options = [...this.querySelectorAll('.month-option')];
+            const index = options.indexOf(focusedOption);
+            const nextIndex = (index + arrowMoves[event.key] + options.length) % options.length;
+            focusedOption.tabIndex = -1;
+            options[nextIndex].tabIndex = 0;
+            options[nextIndex].focus();
+        });
+    }
 
     // Card cue: shade sticky headers while rows scroll beneath them.
     document.querySelectorAll('.table-scroll').forEach(function(scroller) {

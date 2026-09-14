@@ -4345,3 +4345,42 @@ class TestIPointsEntryFormStyling:
         assert metrics["radius"] == "6px", metrics
         assert metrics["background"] == "rgb(229, 26, 60)", metrics
         assert metrics["fontFamily"] == metrics["bodyFont"], metrics
+
+
+class TestAppScriptLoadsOnIPoints:
+    """#211: app.js is shared by the home page and /ipoints. Loading it on a
+    page without the home DOM must not raise, and the wiring that follows the
+    month-picker setup must still run."""
+
+    def test_ipoints_load_raises_no_error_and_wires_table_shading(
+        self, fresh_client, browser_page
+    ):
+        post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Alice",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": "Repeated disruption",
+            },
+        )
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        page = browser_page
+        page_errors = []
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.set_content(html)
+
+        assert not page_errors, page_errors
+
+        # Force horizontal overflow so the scrolled-shading listener has a
+        # non-zero scroll position to react to.
+        page.locator("#ipoints .table-scroll").first.evaluate(
+            """el => {
+                el.style.width = '120px';
+                el.scrollLeft = 20;
+                el.dispatchEvent(new Event('scroll'));
+            }"""
+        )
+        assert page.locator("#ipoints .table-scroll.scrolled").count() == 1
