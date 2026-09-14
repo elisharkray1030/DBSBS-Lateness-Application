@@ -160,7 +160,7 @@
             </div>
             {% endif %}
 
-            {% if ipoint_summary and (ipoint_summary.entries or ipoint_summary.adjustments) %}
+            {% if ipoint_summary and ipoint_summary.entries %}
             <div class="table-scroll">
                 <table class="ipoints-table" aria-label="I-Point history">
                     <thead>
@@ -180,23 +180,15 @@
                             <td>{{ entry.reason }}</td>
                         </tr>
                         {% endfor %}
-                        {% for adjustment in ipoint_summary.adjustments %}
-                        <tr>
-                            <td>Adjustment</td>
-                            <td>—</td>
-                            <td>{{ adjustment.points }}</td>
-                            <td>{{ adjustment.reason }}</td>
-                        </tr>
-                        {% endfor %}
                     </tbody>
                 </table>
             </div>
             {% endif %}
 
-            {% if not ipoint_summary or (not ipoint_summary.confiscations and not ipoint_summary.entries and not ipoint_summary.adjustments) %}
+            {% if not ipoint_summary or (not ipoint_summary.confiscations and not ipoint_summary.entries) %}
             <div class="empty-state">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-inbox"/></svg>
-                No I-Point history has been logged for this boarder.
+                No I-Point Entries or Confiscations for this boarder.
             </div>
             {% endif %}
         </section>

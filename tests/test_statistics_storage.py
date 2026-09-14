@@ -169,13 +169,18 @@ class TestAllTimeListIPointUnion:
         assert (entry.first_month, entry.last_month) == (None, None)
         assert entry.total_points == 0
 
-    def test_adjustment_only_key_appears_with_the_match_key_display(self, conn):
-        storage.stage_ipoint_adjustment(
+    def test_legacy_adjustment_audit_key_stays_discoverable(self, conn):
+        storage.stage_ipoint_audit(
             conn,
-            "JADE",
-            points=-2,
-            reason="Rebalance",
-            recorded_at="2026-08-02T09:00:00+00:00",
+            IPointAuditDraft(
+                entity_type="adjustment",
+                entity_id=1,
+                normalized_name="JADE",
+                action="removed",
+                before_state=None,
+                after_state=None,
+                changed_at="2026-08-02T09:00:00+00:00",
+            ),
         )
         conn.commit()
 
@@ -260,9 +265,6 @@ class TestAllTimeListIPointUnion:
         storage.stage_ipoint_entry(
             conn, "ROSE", 1, "2026-08-01", "x",
             "2026-08-01T09:00:00+00:00",
-        )
-        storage.stage_ipoint_adjustment(
-            conn, "ROSE", 2, "x", "2026-08-02T09:00:00+00:00"
         )
         storage.stage_ipoint_audit(
             conn,

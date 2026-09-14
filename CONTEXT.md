@@ -90,16 +90,12 @@ _Avoid_: IP, infraction points, demerits
 One logged occasion on which a boarder was given I-Points, carrying the points, the date, and a stated reason. Entries are freely editable and removable; every change is kept in the I-Point Audit History.
 _Avoid_: award, incident, infraction, charge
 
-**I-Point Adjustment**:
-A manual staff change to a boarder's I-Point Balance that adds or subtracts points without being tied to a specific Entry. Used to rebalance instead of rewriting history, and a subtraction may never take the Balance below zero.
-_Avoid_: correction, override, manual entry
-
 **I-Point Balance**:
-A boarder's outstanding I-Points: every I-Point Entry plus every I-Point Adjustment minus every confirmed Redemption. It carries from month to month and is never negative — no Entry, Adjustment, or Redemption change may take it below zero.
+A boarder's outstanding I-Points: every I-Point Entry minus every confirmed Redemption. It carries from month to month and is never negative — no Entry or Redemption change may take it below zero.
 _Avoid_: total, score
 
 **I-Point Audit History**:
-The retained record of every change to a boarder's I-Points — edited or removed Entries, Adjustments, and edited or voided Redemptions and Confiscations — so staff can see what changed, when, and to what.
+The retained record of every change to a boarder's I-Points — edited or removed Entries, and edited or voided Redemptions and Confiscations — so staff can see what changed, when, and to what.
 _Avoid_: log, changelog, activity feed
 
 **Redemption**:

@@ -176,9 +176,8 @@
         });
     });
 
-    // Removing an I-Point ledger row (Entry or Adjustment) is destructive but
-    // audited: route it through the shared confirm dialog, whose wording each
-    // form carries.
+    // Removing an I-Point Entry is destructive but audited: route it through
+    // the shared confirm dialog, whose wording each form carries.
     document.querySelectorAll('form.ipoint-remove-form').forEach(form => {
         form.addEventListener('submit', function(event) {
             event.preventDefault();

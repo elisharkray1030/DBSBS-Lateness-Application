@@ -4,6 +4,11 @@
 > by [ADR 0007](0007-persisted-pending-confiscation.md)**, which persists a
 > pending Redemption as a `confiscations` row with `status = 'pending'`. The rest
 > of this ADR still stands.
+>
+> Scope: the I-Point Adjustment capability described below was retired in
+> Slice 1 of the UI-refresh tracker (#208). Entries, Redemptions, and
+> Confiscations are unaffected; the I-Point Audit History retains any
+> pre-retirement adjustment rows.
 
 Added Irregularity Points (I-Points) as a second, persisting disciplinary
 currency alongside monthly lateness Points. Staff log I-Point Entries (boarder,

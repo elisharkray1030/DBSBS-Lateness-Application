@@ -321,9 +321,9 @@ class TestIPointMatrix:
             "ELVIS WONG YAT SHUN": 1,
             "JASON FONG PAK HIN": 10,
             "JASPER CHAN CHEUK YIN": 2,
-            "MELVIN YEUNG CHENG YE MELVIN": 3,
+            "MELVIN YEUNG CHENG YE MELVIN": 1,
             "NAVAS YUEN HIU NOK": 5,
-            "THEO LAM CHI HANG": 0,
+            "THEO LAM CHI HANG": 3,
         }
 
     def test_multi_entry_balances_keep_every_entry(self, seeded):
@@ -335,28 +335,6 @@ class TestIPointMatrix:
         assert [entry.occurred_on for entry in jason.entries] == [
             "2026-01-15", "2026-02-20", "2026-07-05",
         ]
-
-    def test_adjustments_seeded_with_both_signs(self, seeded):
-        conn, _ = seeded
-
-        adjustments = {
-            adjustment.normalized_name: adjustment.points
-            for adjustment in storage.list_ipoint_adjustments(conn)
-        }
-
-        assert adjustments == {
-            "MELVIN YEUNG CHENG YE MELVIN": 2,
-            "THEO LAM CHI HANG": -3,
-        }
-
-    def test_negative_adjustment_respects_the_floor(self, seeded):
-        # Theo's only Entry is 3; the −3 Adjustment takes him to exactly 0,
-        # the floor boundary ADR 0006 permits and never below.
-        conn, _ = seeded
-
-        theo = self._summaries(conn)["THEO LAM CHI HANG"]
-
-        assert theo.balance == 0
 
     def test_confiscation_statuses_cover_every_filter(self, seeded):
         conn, _ = seeded
@@ -452,8 +430,7 @@ class TestIPointMatrix:
 
         assert first == second == {
             "ipoint_entries": 10,
-            "ipoint_adjustments": 2,
-            "ipoint_audit": 21,
+            "ipoint_audit": 19,
             "confiscations": 4,
         }
 
@@ -488,7 +465,7 @@ class TestIPointMatrix:
         return {
             table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in (
-                "ipoint_entries", "ipoint_adjustments",
+                "ipoint_entries",
                 "ipoint_audit", "confiscations",
             )
         }
@@ -498,7 +475,7 @@ class TestIPointMatrix:
         return {
             table: conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
             for table in (
-                "ipoint_entries", "ipoint_adjustments",
+                "ipoint_entries",
                 "ipoint_audit", "confiscations",
             )
         }

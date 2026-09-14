@@ -23,6 +23,81 @@ class TestCreateSchema:
         assert storage.list_months(conn) == []
 
 
+class TestDropAdjustmentTableMigration:
+    def _table_names(self, connection):
+        return {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+
+    def test_fresh_schema_never_creates_the_retired_table(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            storage.create_schema(connection)
+            storage.create_schema(connection)
+            assert "ipoint_adjustments" not in self._table_names(connection)
+        finally:
+            connection.close()
+
+    def test_migration_drops_the_table_and_keeps_ledger_rows(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            storage.create_schema(connection)
+            connection.execute(
+                """
+                CREATE TABLE ipoint_adjustments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    normalized_name TEXT NOT NULL,
+                    points INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO ipoint_adjustments "
+                "(normalized_name, points, reason, recorded_at) "
+                "VALUES ('ALICE', 2, 'credit', '2026-08-02T09:00:00+00:00')"
+            )
+            connection.execute(
+                "INSERT INTO ipoint_entries "
+                "(normalized_name, points, occurred_on, reason, recorded_at) "
+                "VALUES ('ALICE', 5, '2026-08-01', 'x', '2026-08-01T09:00:00+00:00')"
+            )
+            connection.execute(
+                "INSERT INTO ipoint_audit "
+                "(entity_type, entity_id, normalized_name, action, changed_at) "
+                "VALUES ('entry', 1, 'ALICE', 'created', '2026-08-01T09:00:00+00:00')"
+            )
+            connection.execute(
+                "INSERT INTO confiscations "
+                "(normalized_name, trigger_month, points_redeemed, tier, status, "
+                "created_at) "
+                "VALUES ('ALICE', '2026-08', 5, 5, 'pending', "
+                "'2026-08-01T09:00:00+00:00')"
+            )
+            connection.commit()
+
+            storage.create_schema(connection)
+            storage.create_schema(connection)
+
+            assert "ipoint_adjustments" not in self._table_names(connection)
+            assert [
+                entry.normalized_name
+                for entry in storage.list_ipoint_entries(connection)
+            ] == ["ALICE"]
+            assert [row.normalized_name for row in storage.list_ipoint_audit(connection)] == [
+                "ALICE"
+            ]
+            assert [
+                row.normalized_name for row in storage.list_ipoint_confiscations(connection)
+            ] == ["ALICE"]
+        finally:
+            connection.close()
+
+
 class TestBedUniqueMigration:
     def _legacy_boarders_sql(self):
         return """
@@ -769,9 +844,6 @@ class TestClearDerivedData:
         storage.stage_ipoint_entry(
             conn, "ALICE", 5, "2026-08-01", "x", "2026-08-01T09:00:00+00:00"
         )
-        storage.stage_ipoint_adjustment(
-            conn, "ALICE", 2, "credit", "2026-08-02T09:00:00+00:00"
-        )
         storage.stage_ipoint_confiscation(
             conn, "ALICE", "2026-08", 5, 5, "pending", "2026-08-03T09:00:00+00:00"
         )
@@ -797,7 +869,6 @@ class TestClearDerivedData:
         assert storage.list_months(conn) == []
         assert storage.list_punishments(conn) == []
         assert storage.list_ipoint_entries(conn) == []
-        assert storage.list_ipoint_adjustments(conn) == []
         assert storage.list_ipoint_confiscations(conn) == []
         assert storage.list_ipoint_audit(conn) == []
 
