@@ -22,12 +22,11 @@ hand-authored persona matrix then makes each implemented feature observable:
   Former entry.
 - Deterministic I-Point data: Entries spread across personas (multi-entry
   balances, a single-entry balance, a removed boarder's frozen history, and one
-  boarder known only through I-Points), a positive and a negative Adjustment,
-  and a Confiscation in every status — pending, active (due for release),
-  released, and voided — so the I-Points view, its filters, and the Boarder
-  Profile section all have data. Every write uses a fixed stamp, and the
-  pending Redemptions are materialised at a fixed ``IPOINT_TODAY`` so opening
-  the view never writes surprise rows.
+  boarder known only through I-Points), and a Confiscation in every status —
+  pending, active (due for release), released, and voided — so the I-Points
+  view, its filters, and the Boarder Profile section all have data. Every write
+  uses a fixed stamp, and the pending Redemptions are materialised at a fixed
+  ``IPOINT_TODAY`` so opening the view never writes surprise rows.
 
 Run: python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]
 """
@@ -153,16 +152,6 @@ class IPointSeed:
     display_name: str
     points: int
     occurred_on: str
-    reason: str
-    recorded_at: str
-
-
-@dataclass(frozen=True)
-class AdjustmentSeed:
-    """One deterministic signed I-Point Adjustment the seeder adds."""
-
-    display_name: str
-    points: int
     reason: str
     recorded_at: str
 
@@ -344,17 +333,8 @@ _IPOINT_PLAN = [
     IPointSeed("Theo LAM Chi Hang", 3, "2026-06-12", "Unapproved guest in room", "2026-06-12T21:55:00+00:00"),
 ]
 
-# Both signs of Adjustment: Melvin gains a credit, and Theo's correction takes
-# his single 3-point Entry to exactly 0 — the floor boundary ADR 0006 permits,
-# never below. Both land before the August close, so neither disturbs the four
-# Boarders whose balances qualify for a pending Redemption.
-_ADJUSTMENT_PLAN = [
-    AdjustmentSeed("Melvin YEUNG Cheng Ye Melvin", 2, "Good-conduct credit", "2026-08-25T09:00:00+00:00"),
-    AdjustmentSeed("Theo LAM Chi Hang", -3, "Duplicate Entry correction", "2026-08-26T09:00:00+00:00"),
-]
-
 # Four Boarders clear the tier at the 2026-08 close (Jason 10, Jasper 5,
-# Elvis 5, Navas 5 after the Adjustments). Jason's pending is left for the
+# Elvis 5, Navas 5). Jason's pending is left for the
 # grouped-pending demo; Jasper is an active Confiscation past its release due,
 # Elvis is released, and Navas — Removed — is confirmed then voided, proving a
 # Removed Boarder's frozen identity still supports the lifecycle (story 44).
@@ -417,22 +397,6 @@ def _apply_ipoints(conn: sqlite3.Connection) -> None:
         if isinstance(outcome, ipoints.EntryRejected):
             raise ValueError(
                 f"I-Point Entry for {seed.display_name} was rejected: {outcome.reason}"
-            )
-
-
-def _apply_adjustments(conn: sqlite3.Connection) -> None:
-    """Adds the deterministic signed I-Point Adjustments."""
-    for seed in _ADJUSTMENT_PLAN:
-        outcome = ipoints.add_adjustment(
-            conn,
-            normalized_name=normalize_name(seed.display_name),
-            points=seed.points,
-            reason=seed.reason,
-            recorded_at=seed.recorded_at,
-        )
-        if isinstance(outcome, ipoints.AdjustmentRejected):
-            raise ValueError(
-                f"Adjustment for {seed.display_name} was rejected: {outcome.reason}"
             )
 
 
@@ -532,7 +496,6 @@ def seed(
 
     _apply_punishments(conn, master_list)
     _apply_ipoints(conn)
-    _apply_adjustments(conn)
 
     # The corrected July re-import happens after July's punishment was
     # frozen, demonstrating that assignment snapshots never change.

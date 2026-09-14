@@ -100,62 +100,6 @@ class EntryRejected(ChangeRejected):
 
 
 @dataclass
-class AdjustmentSaved:
-    """An I-Point Adjustment was added."""
-
-    normalized_name: str
-    display_name: str
-    points: int
-    reason: str
-
-    @property
-    def message(self) -> str:
-        return (
-            f"Added an adjustment of {points_phrase(self.points)} "
-            f"for {self.display_name}."
-        )
-
-
-@dataclass
-class AdjustmentEdited:
-    """An I-Point Adjustment's points or reason was corrected."""
-
-    normalized_name: str
-    display_name: str
-    points: int
-    reason: str
-
-    @property
-    def message(self) -> str:
-        return (
-            f"Updated {self.display_name}'s adjustment to "
-            f"{points_phrase(self.points)}."
-        )
-
-
-@dataclass
-class AdjustmentRemoved:
-    """An I-Point Adjustment was removed; its prior state stays in the audit."""
-
-    normalized_name: str
-    display_name: str
-    points: int
-    reason: str
-
-    @property
-    def message(self) -> str:
-        return (
-            f"Removed {self.display_name}'s adjustment of "
-            f"{points_phrase(self.points)}."
-        )
-
-
-@dataclass
-class AdjustmentRejected(ChangeRejected):
-    """The submitted I-Point Adjustment is not valid."""
-
-
-@dataclass
 class RedemptionConfirmed:
     """A pending Redemption was confirmed into an active Confiscation."""
 
@@ -345,21 +289,6 @@ def _coerce_points(points) -> "int | None":
     return None
 
 
-def _coerce_signed_points(points) -> "int | None":
-    """Returns a signed integer candidate, or None for a non-whole-number value.
-
-    Like ``_coerce_points`` but admitting a leading sign, since an Adjustment
-    may subtract.
-    """
-    if isinstance(points, bool):
-        return None
-    if isinstance(points, int):
-        return points
-    if isinstance(points, str):
-        return _whole_int(points.strip(), signed=True)
-    return None
-
-
 def _parse_occurred_on(occurred_on: str | None) -> "str | None":
     """Returns the normalized ISO date, or None when blank or unparseable."""
     raw = (occurred_on or "").strip()
@@ -386,16 +315,6 @@ def _entry_fields(points: int, occurred_on: str, reason: str) -> dict[str, objec
 def _entry_state(entry: IPointEntry) -> dict[str, object]:
     """The auditable snapshot of one stored Entry's editable fields."""
     return _entry_fields(entry.points, entry.occurred_on, entry.reason)
-
-
-def _adjustment_fields(points: int, reason: str) -> dict[str, object]:
-    """The auditable snapshot of an Adjustment's user-editable fields."""
-    return {"points": points, "reason": reason}
-
-
-def _adjustment_state(adjustment: IPointAdjustment) -> dict[str, object]:
-    """The auditable snapshot of one stored Adjustment's editable fields."""
-    return _adjustment_fields(adjustment.points, adjustment.reason)
 
 
 def _confiscation_fields(
@@ -1024,76 +943,6 @@ def remove_confiscation(
     )
 
 
-def _validate_adjustment(
-    normalized_name: str, points, reason: str
-) -> tuple[str, int, str] | AdjustmentRejected:
-    """Validates the shared Adjustment fields: name, non-zero points, reason."""
-    name = (normalized_name or "").strip()
-    if not name:
-        return AdjustmentRejected(reason="A boarder name is required.")
-
-    points_value = _coerce_signed_points(points)
-    if points_value is None or points_value == 0:
-        return AdjustmentRejected(
-            reason="Adjustment points must be a non-zero whole number."
-        )
-
-    clean_reason = (reason or "").strip()
-    if not clean_reason:
-        return AdjustmentRejected(reason="A reason is required.")
-
-    return name, points_value, clean_reason
-
-
-def add_adjustment(
-    conn,
-    normalized_name: str,
-    points,
-    reason: str,
-    recorded_at: str | None = None,
-) -> AdjustmentSaved | AdjustmentRejected:
-    """Validates and adds one signed I-Point Adjustment, auditing it atomically.
-
-    A positive Adjustment adds to the Balance; a subtraction may never take the
-    Balance below zero (ADR 0006), so it is capped at the current Balance. A
-    rejected submission writes nothing.
-    """
-    validated = _validate_adjustment(normalized_name, points, reason)
-    if isinstance(validated, AdjustmentRejected):
-        return validated
-    name, points_value, clean_reason = validated
-
-    if _balance_for(conn, name) + points_value < 0:
-        return AdjustmentRejected(reason=_OVERDRAW)
-
-    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    display_name = resolve_display_name(conn, name)
-
-    with conn:
-        adjustment_id = storage.stage_ipoint_adjustment(
-            conn, name, points_value, clean_reason, stamp
-        )
-        storage.stage_ipoint_audit(
-            conn,
-            _audit_draft(
-                "adjustment",
-                adjustment_id,
-                name,
-                "created",
-                None,
-                _adjustment_fields(points_value, clean_reason),
-                stamp,
-            ),
-        )
-
-    return AdjustmentSaved(
-        normalized_name=name,
-        display_name=display_name,
-        points=points_value,
-        reason=clean_reason,
-    )
-
-
 def log_entry(
     conn,
     normalized_name: str,
@@ -1269,103 +1118,6 @@ def remove_entry(
         display_name=display_name,
         points=entry.points,
         occurred_on=entry.occurred_on,
-    )
-
-
-def edit_adjustment(
-    conn,
-    adjustment_id: int,
-    points,
-    reason: str,
-    recorded_at: str | None = None,
-) -> "AdjustmentEdited | AdjustmentRejected":
-    """Validates and applies an Adjustment edit, auditing the prior state.
-
-    The new signed value must be non-zero and its reason present. A change that
-    would drive the Balance below zero is refused (ADR 0006), writing nothing.
-    """
-    adjustment = storage.get_ipoint_adjustment(conn, adjustment_id)
-    if adjustment is None:
-        return AdjustmentRejected(reason="That I-Point Adjustment no longer exists.")
-
-    validated = _validate_adjustment(adjustment.normalized_name, points, reason)
-    if isinstance(validated, AdjustmentRejected):
-        return validated
-    _, points_value, clean_reason = validated
-
-    projected = _balance_for(conn, adjustment.normalized_name) - adjustment.points
-    if projected + points_value < 0:
-        return AdjustmentRejected(reason=_OVERDRAW)
-
-    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    display_name = resolve_display_name(conn, adjustment.normalized_name)
-
-    with conn:
-        storage.stage_update_ipoint_adjustment(
-            conn, adjustment_id, points_value, clean_reason
-        )
-        storage.stage_ipoint_audit(
-            conn,
-            _audit_draft(
-                "adjustment",
-                adjustment_id,
-                adjustment.normalized_name,
-                "edited",
-                _adjustment_state(adjustment),
-                _adjustment_fields(points_value, clean_reason),
-                stamp,
-            ),
-        )
-
-    return AdjustmentEdited(
-        normalized_name=adjustment.normalized_name,
-        display_name=display_name,
-        points=points_value,
-        reason=clean_reason,
-    )
-
-
-def remove_adjustment(
-    conn,
-    adjustment_id: int,
-    recorded_at: str | None = None,
-) -> "AdjustmentRemoved | AdjustmentRejected":
-    """Removes an Adjustment from the ledger, auditing the prior state.
-
-    A removal that would drive the Balance below zero is refused (ADR 0006),
-    writing nothing.
-    """
-    adjustment = storage.get_ipoint_adjustment(conn, adjustment_id)
-    if adjustment is None:
-        return AdjustmentRejected(reason="That I-Point Adjustment no longer exists.")
-
-    projected = _balance_for(conn, adjustment.normalized_name) - adjustment.points
-    if projected < 0:
-        return AdjustmentRejected(reason=_OVERDRAW)
-
-    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    display_name = resolve_display_name(conn, adjustment.normalized_name)
-
-    with conn:
-        storage.stage_delete_ipoint_adjustment(conn, adjustment_id)
-        storage.stage_ipoint_audit(
-            conn,
-            _audit_draft(
-                "adjustment",
-                adjustment_id,
-                adjustment.normalized_name,
-                "removed",
-                _adjustment_state(adjustment),
-                None,
-                stamp,
-            ),
-        )
-
-    return AdjustmentRemoved(
-        normalized_name=adjustment.normalized_name,
-        display_name=display_name,
-        points=adjustment.points,
-        reason=adjustment.reason,
     )
 
 
