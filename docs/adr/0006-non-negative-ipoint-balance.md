@@ -1,5 +1,10 @@
 # Non-negative I-Point Balance
 
+> Scope: the I-Point Adjustment write path this ADR centres on was retired in
+> Slice 1 of the UI-refresh tracker (#208). The floor still stands: an Entry
+> edit or removal, a Redemption confirmation, and a Confiscation tier edit are
+> each still refused when they would take the Balance below zero.
+
 The I-Point Balance is derived, never stored: every I-Point Entry plus every
 I-Point Adjustment minus every confirmed Redemption. Staff may subtract an
 Adjustment, or edit or remove an Entry, so the arithmetic can naturally fall
