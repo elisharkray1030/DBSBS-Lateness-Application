@@ -101,7 +101,7 @@
                 <h3 class="upload-title">Log I-Point Entry</h3>
                 <form action="{{ ipoint_action }}" method="post">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <div class="form-row">
+                    <div class="form-row form-row--entry">
                         <div class="form-field">
                             <label for="ipoint-quick-points"><strong>Points</strong></label>
                             <input type="number" id="ipoint-quick-points" name="points"
@@ -116,7 +116,7 @@
                             <label for="ipoint-quick-reason"><strong>Reason</strong></label>
                             <input type="text" id="ipoint-quick-reason" name="reason" required>
                         </div>
-                        <div>
+                        <div class="form-action">
                             <button type="submit" class="btn btn-primary">Log Entry</button>
                         </div>
                     </div>
@@ -165,7 +165,6 @@
                 <table class="ipoints-table" aria-label="I-Point history">
                     <thead>
                         <tr>
-                            <th scope="col">Type</th>
                             <th scope="col">Date</th>
                             <th scope="col">Points</th>
                             <th scope="col">Reason</th>
@@ -174,7 +173,6 @@
                     <tbody>
                         {% for entry in ipoint_summary.entries %}
                         <tr>
-                            <td>Entry</td>
                             <td>{{ entry.occurred_on }}</td>
                             <td>{{ entry.points }}</td>
                             <td>{{ entry.reason }}</td>
