@@ -260,6 +260,7 @@ class TestConsistentPageHeading:
         page.locator('.tab-link[data-tab="history"]').click()
 
         assert page.locator("#page-heading").inner_text() == "Search Boarder History"
+        assert page.title() == "Search Boarder History — DBS Boarding School"
         assert page.evaluate("() => document.activeElement.id") == "page-heading"
         assert (
             page.locator('.tab-link[data-tab="history"]').get_attribute("aria-current")
@@ -269,6 +270,18 @@ class TestConsistentPageHeading:
             page.locator('.tab-link[data-tab="reports"]').get_attribute("aria-current")
             is None
         )
+
+    def test_auto_opening_a_month_on_load_does_not_steal_focus(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        html = fresh_client.get("/").get_data(as_text=True).replace(
+            '<script type="application/json" id="initial-month-data">null</script>',
+            '<script type="application/json" id="initial-month-data">"2026-07"</script>',
+        )
+        page.set_content(html)
+
+        assert page.evaluate("() => document.activeElement.id") != "page-heading"
 
     def test_boarder_profile_keeps_its_own_heading(self, fresh_client):
         with app_module.connect() as conn:

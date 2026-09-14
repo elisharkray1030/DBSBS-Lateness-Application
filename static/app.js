@@ -107,7 +107,10 @@
     // bar cannot be a valid ARIA tablist. aria-current carries the state, and
     // a user-initiated switch moves focus to the page H1 so the new view is
     // announced once (a live region on the H1 would repeat the tab name).
-    function activateTab(tabName, { moveFocus = false } = {}) {
+    // The suffix mirrors the layout's default <title>.
+    const SITE_TITLE_SUFFIX = ' — DBS Boarding School';
+
+    function activateTab(tabName, { moveFocus = true } = {}) {
         tabButtons.forEach(btn => {
             btn.classList.remove('active');
             btn.removeAttribute('aria-current');
@@ -124,8 +127,11 @@
 
         const heading = document.getElementById('page-heading');
         const label = tabLabel(tabName);
-        if (heading && label) heading.textContent = label;
-        if (moveFocus && heading) heading.focus();
+        if (heading && label) {
+            heading.textContent = label;
+            document.title = label + SITE_TITLE_SUFFIX;
+            if (moveFocus) heading.focus();
+        }
     }
 
     tabButtons.forEach(button => {
@@ -147,7 +153,7 @@
                 return;
             }
             if (tabName === 'boarders') {
-                activateTab('boarders', { moveFocus: true });
+                activateTab('boarders');
                 return;
             }
             if (hasDirtyBoarderRow()) {
@@ -157,12 +163,12 @@
                     confirmLabel: 'Discard',
                     onConfirm: () => {
                         discardBoarderEdits();
-                        activateTab(tabName, { moveFocus: Boolean(tabName) });
+                        activateTab(tabName);
                     }
                 });
                 return;
             }
-            activateTab(tabName, { moveFocus: Boolean(tabName) });
+            activateTab(tabName);
         });
     });
 
@@ -827,7 +833,7 @@
         if (initialMonthToOpen) {
             // Activate directly (no focus): a page load must not steal focus
             // to the heading the way a user-initiated switch does.
-            activateTab('reports');
+            activateTab('reports', { moveFocus: false });
             viewMonth(initialMonthToOpen);
         }
     });
