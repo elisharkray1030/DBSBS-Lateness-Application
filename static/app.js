@@ -617,15 +617,18 @@
     const monthPickerInput = document.getElementById('report_month');
     const monthPickerToggle = document.getElementById('report-month-toggle');
     const monthPickerPopover = document.getElementById('month-picker-popover');
+    const monthPickerGrid = monthPickerPopover && monthPickerPopover.querySelector('.month-grid');
+    const monthPickerYearLabel = document.getElementById('month-picker-year');
+    const monthPickerPrevYear = document.getElementById('month-picker-prev-year');
+    const monthPickerNextYear = document.getElementById('month-picker-next-year');
 
     // app.js is shared by the home page and pages such as /ipoints, where the
-    // Reports-panel month picker is absent. Skip the whole setup when its
-    // popover is missing so the rest of the script still runs.
-    if (monthPickerPopover) {
-        const monthPickerGrid = monthPickerPopover.querySelector('.month-grid');
-        const monthPickerYearLabel = document.getElementById('month-picker-year');
-        const monthPickerPrevYear = document.getElementById('month-picker-prev-year');
-        const monthPickerNextYear = document.getElementById('month-picker-next-year');
+    // Reports-panel month picker is absent. Run the setup only when every node
+    // it dereferences is present, so the rest of the script still runs.
+    if (
+        monthPickerInput && monthPickerToggle && monthPickerPopover && monthPickerGrid &&
+        monthPickerYearLabel && monthPickerPrevYear && monthPickerNextYear
+    ) {
         let monthPickerBrowsedYear = null;
 
         function monthPickerBounds() {
