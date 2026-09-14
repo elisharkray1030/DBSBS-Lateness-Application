@@ -1226,7 +1226,7 @@ class TestMonthCloseEvaluation:
     )
     def test_tier_is_largest_at_or_below_balance_capped_at_15(self, balance, tier):
         pending = evaluate_month_close(
-            [self._entry(points=balance)], [], [], "2026-09-12"
+            [self._entry(points=balance)], [], "2026-09-12"
         )
 
         assert (pending.tier if pending else None) == tier

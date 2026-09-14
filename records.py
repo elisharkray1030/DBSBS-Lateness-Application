@@ -345,11 +345,10 @@ class Confiscation:
 class IPointSummary:
     """One boarder's derived I-Points position for the I-Points view.
 
-    ``balance`` is derived from the ledger, never stored; ``entries`` and
-    ``adjustments`` power the per-boarder ledger listing and ``audits`` the
-    audit history, without a second read. ``pending`` is the boarder's open
-    pending Redemption, if any, and ``confiscations`` their full Confiscation
-    history.
+    ``balance`` is derived from the ledger, never stored; ``entries`` power the
+    per-boarder ledger listing and ``audits`` the audit history, without a
+    second read. ``pending`` is the boarder's open pending Redemption, if any,
+    and ``confiscations`` their full Confiscation history.
     """
 
     normalized_name: str
@@ -357,7 +356,6 @@ class IPointSummary:
     bed: str
     balance: int
     entries: list[IPointEntry] = field(default_factory=list)
-    adjustments: list[IPointAdjustment] = field(default_factory=list)
     audits: list[IPointAuditNote] = field(default_factory=list)
     pending: Confiscation | None = None
     confiscations: list[Confiscation] = field(default_factory=list)

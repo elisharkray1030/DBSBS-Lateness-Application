@@ -15,7 +15,6 @@ from records import (
     AllTimeEntry,
     BoarderIdentity,
     Confiscation,
-    IPointAdjustment,
     IPointAudit,
     IPointAuditDraft,
     IPointAuditNote,
@@ -377,13 +376,11 @@ def _audit_draft(
 
 def _net_balance(
     entries: list[IPointEntry],
-    adjustments: list[IPointAdjustment],
     confiscations: list[Confiscation],
 ) -> int:
-    """Sums a ledger slice: Entries plus Adjustments minus confirmed redemptions."""
+    """Sums a ledger slice: Entries minus confirmed redemptions."""
     return (
         sum(entry.points for entry in entries)
-        + sum(adjustment.points for adjustment in adjustments)
         - sum(
             confiscation.points_redeemed
             for confiscation in confiscations
@@ -396,7 +393,6 @@ def _balance_for(conn, normalized_name: str) -> int:
     """Derives one boarder's current I-Point Balance from the ledger."""
     return _net_balance(
         storage.list_ipoint_entries(conn, normalized_name),
-        storage.list_ipoint_adjustments(conn, normalized_name),
         storage.list_ipoint_confiscations(conn, normalized_name),
     )
 
@@ -451,7 +447,6 @@ def _tier_for(balance: int) -> "int | None":
 
 def _balance_as_of(
     entries: list[IPointEntry],
-    adjustments: list[IPointAdjustment],
     confiscations: list[Confiscation],
     as_of: date,
 ) -> int:
@@ -465,11 +460,6 @@ def _balance_as_of(
     return _net_balance(
         [entry for entry in entries if _as_date(entry.recorded_at) <= as_of],
         [
-            adjustment
-            for adjustment in adjustments
-            if _as_date(adjustment.recorded_at) <= as_of
-        ],
-        [
             confiscation
             for confiscation in confiscations
             if confiscation.confirmed_at is not None
@@ -480,7 +470,6 @@ def _balance_as_of(
 
 def evaluate_month_close(
     entries: list[IPointEntry],
-    adjustments: list[IPointAdjustment],
     confiscations: list[Confiscation],
     today: str,
     recorded_months: "frozenset[str]" = frozenset(),
@@ -510,7 +499,7 @@ def evaluate_month_close(
     ):
         return None
 
-    tier = _tier_for(_balance_as_of(entries, adjustments, confiscations, month_end))
+    tier = _tier_for(_balance_as_of(entries, confiscations, month_end))
     if tier is None:
         return None
     return PendingRedemption(
@@ -523,7 +512,6 @@ class _BoarderLedger:
     """One boarder's grouped ledger rows for month-close evaluation."""
 
     entries: list[IPointEntry] = field(default_factory=list)
-    adjustments: list[IPointAdjustment] = field(default_factory=list)
     confiscations: list[Confiscation] = field(default_factory=list)
 
 
@@ -536,8 +524,6 @@ def _ledger_by_boarder(conn) -> dict[str, _BoarderLedger]:
 
     for entry in storage.list_ipoint_entries(conn):
         ledger_for(entry.normalized_name).entries.append(entry)
-    for adjustment in storage.list_ipoint_adjustments(conn):
-        ledger_for(adjustment.normalized_name).adjustments.append(adjustment)
     for confiscation in storage.list_ipoint_confiscations(conn):
         ledger_for(confiscation.normalized_name).confiscations.append(confiscation)
     return grouped
@@ -578,7 +564,6 @@ def pending_redemptions(
     for name, ledger in _ledger_by_boarder(conn).items():
         pending = evaluate_month_close(
             ledger.entries,
-            ledger.adjustments,
             ledger.confiscations,
             today,
             recorded.get(name, frozenset()),
@@ -1287,11 +1272,8 @@ def _summary_for(
         normalized_name=key,
         display_name=who.display_name if who else key,
         bed=who.bed if who else "",
-        balance=_net_balance(
-            ledger.entries, ledger.adjustments, ledger.confiscations
-        ),
+        balance=_net_balance(ledger.entries, ledger.confiscations),
         entries=sorted(ledger.entries, key=lambda row: (row.occurred_on, row.id)),
-        adjustments=ledger.adjustments,
         audits=[_audit_note(audit) for audit in audits],
         pending=pending,
         confiscations=attach_confiscation_flags(ledger.confiscations, held, today),
@@ -1303,8 +1285,8 @@ def boarder_balances(
 ) -> list[IPointSummary]:
     """Derives each boarder's I-Point Balance and Confiscation state.
 
-    Balance is that Match Key's Entries plus Adjustments minus confirmed
-    Redemptions — never stored, so it cannot drift. A pending Redemption is
+    Balance is that Match Key's Entries minus confirmed Redemptions — never
+    stored, so it cannot drift. A pending Redemption is
     surfaced separately and does not debit the Balance (ADR 0007). Identity
     fields resolve freshest-first through the All-Time List, falling back to the
     Match Key for a boarder known only through I-Points. Summaries sort by the
@@ -1351,14 +1333,11 @@ def boarder_summary(
     if today is None:
         today = today_iso()
     entries = storage.list_ipoint_entries(conn, normalized_name)
-    adjustments = storage.list_ipoint_adjustments(conn, normalized_name)
     confiscations = storage.list_ipoint_confiscations(conn, normalized_name)
     audits = storage.list_ipoint_audit(conn, normalized_name)
-    if not (entries or adjustments or confiscations or audits):
+    if not (entries or confiscations or audits):
         return None
-    ledger = _BoarderLedger(
-        entries=entries, adjustments=adjustments, confiscations=confiscations
-    )
+    ledger = _BoarderLedger(entries=entries, confiscations=confiscations)
     who = storage.freshest_identity_map(conn).get(normalized_name)
     return _summary_for(
         normalized_name, ledger, who, phone_held_keys(conn), audits, today
