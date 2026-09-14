@@ -848,9 +848,10 @@
             display: none;
         }
 
-        /* Kept in the accessibility tree but off screen: headings that would
-           otherwise repeat the page H1 stay available to heading navigation
-           and landmarks without being seen twice. */
+        /* Kept in the accessibility tree but off screen: a heading that
+           would otherwise repeat the page H1 is not seen twice, while its
+           panel keeps a name (via aria-labelledby) and the H1 -> H2
+           outline stays navigable. */
         .sr-only {
             position: absolute;
             width: 1px;

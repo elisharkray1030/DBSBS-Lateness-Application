@@ -1144,7 +1144,7 @@ class TestImportCopyAlignment:
         html = home_html()
 
         assert ">Punishments</a>" in html
-        assert '<h2 class="sr-only">Punishments</h2>' in html
+        assert '<h2 class="sr-only" id="punishments-heading">Punishments</h2>' in html
         assert "<h3 class=\"upload-title\">Import Monthly Log</h3>" in html
         assert "of 0 punishments" in html or "punishments</p>" in html
 
@@ -3186,9 +3186,9 @@ class TestChromeConsistency:
         # labels (#205), so those panel H2s are visually hidden while
         # staying in the DOM for the heading outline and SR navigation.
         html = home_html()
-        for panel_id in ("reports", "punishments", "boarders"):
+        for panel_id in set(TAB_LABELS) - {"history"}:
             panel = panel_html(html, panel_id)
-            assert re.search(r'<h2 class="sr-only">', panel), (
+            assert re.search(r'<h2[^>]*class="sr-only"', panel), (
                 f"{panel_id} panel heading is not visually hidden"
             )
 
@@ -3197,6 +3197,20 @@ class TestChromeConsistency:
         # keep a visible heading; I-Points is covered on its own page.
         html = home_html()
         assert "<h2>Find a Boarder</h2>" in panel_html(html, "history")
+
+    def test_each_hidden_heading_names_its_panel_region(self):
+        # The three panels whose heading repeats the page H1 keep that
+        # heading in the DOM and use it as the section's accessible name,
+        # so landmark navigation still reaches a named region.
+        html = home_html()
+        for panel_id in set(TAB_LABELS) - {"history"}:
+            panel = panel_html(html, panel_id)
+            assert f'aria-labelledby="{panel_id}-heading"' in panel, (
+                f"{panel_id} panel is not named by its heading"
+            )
+            assert re.search(rf'<h2[^>]*id="{panel_id}-heading"', panel), (
+                f"{panel_id} panel heading lacks its id target"
+            )
 
     def test_section_subheadings_nest_one_level_beneath_panel_titles(self):
         html = home_html()
@@ -3271,9 +3285,10 @@ class TestVisualConsistencyPass:
             """() => {
                 const h = document.querySelector('#reports > h2');
                 const rect = h.getBoundingClientRect();
+                const style = getComputedStyle(h);
                 return {
                     text: h.textContent.trim(),
-                    display: getComputedStyle(h).display,
+                    position: style.position,
                     width: rect.width,
                     height: rect.height,
                 };
@@ -3281,7 +3296,7 @@ class TestVisualConsistencyPass:
         )
 
         assert heading["text"] == "View Reports in Database", heading
-        assert heading["display"] != "none", heading
+        assert heading["position"] == "absolute", heading
         assert heading["width"] <= 1 and heading["height"] <= 1, heading
 
     def test_table_scrollbar_chrome_is_navy_tinted_from_shared_token(self, fresh_client, browser_page):

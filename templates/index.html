@@ -50,7 +50,7 @@
     </section>
 
     <!-- Punishments Panel -->
-    <section id="punishments" class="panel {% if selected_tab == 'punishments' %}active{% endif %} punishments-panel">
+    <section id="punishments" class="panel {% if selected_tab == 'punishments' %}active{% endif %} punishments-panel" aria-labelledby="punishments-heading">
         {% macro punishment_filters() %}
             {% if punishments_month %}<input type="hidden" name="month" value="{{ punishments_month }}">{% endif %}
             {% if punishments_status %}<input type="hidden" name="status" value="{{ punishments_status }}">{% endif %}
@@ -68,7 +68,7 @@
         {% macro punishments_count() -%}
             <p class="punishments-count" aria-live="polite">Showing {{ punishments|length }} of {{ punishments_total }} {{ 'punishment' if punishments_total == 1 else 'punishments' }}</p>
         {%- endmacro %}
-        <h2 class="sr-only">Punishments</h2>
+        <h2 class="sr-only" id="punishments-heading">Punishments</h2>
         <div class="punishments-toolbar">
             <form action="/punishments" method="get" class="punishments-filters">
                 {% if punishments_show_all %}
@@ -157,8 +157,8 @@
     </section>
 
     <!-- Boarders Panel -->
-    <section id="boarders" class="panel {% if selected_tab == 'boarders' %}active{% endif %} boarders-panel">
-        <h2 class="sr-only">Boarders</h2>
+    <section id="boarders" class="panel {% if selected_tab == 'boarders' %}active{% endif %} boarders-panel" aria-labelledby="boarders-heading">
+        <h2 class="sr-only" id="boarders-heading">Boarders</h2>
         <div class="month-detail-toolbar">
             <div class="view-toggle" role="group" aria-label="Boarders view">
                 <a class="btn btn-sm {% if boarders_view == 'all-time' %}btn-neutral{% else %}btn-primary{% endif %}" href="/boarders">Current</a>
@@ -276,8 +276,8 @@
     </section>
 
     <!-- Reports Database Panel -->
-    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
-        <h2 class="sr-only">View Reports in Database</h2>
+    <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel" aria-labelledby="reports-heading">
+        <h2 class="sr-only" id="reports-heading">View Reports in Database</h2>
         <div class="upload-panel">
             <h3 class="upload-title">Import Monthly Log</h3>
             <form action="/" method="POST" enctype="multipart/form-data">
