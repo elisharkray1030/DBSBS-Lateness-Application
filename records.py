@@ -296,20 +296,6 @@ class IPointAuditNote:
 
 
 @dataclass
-class IPointAdjustment:
-    """One manual, signed change to a boarder's I-Point Balance.
-
-    Not tied to a specific Entry; ``points`` is a non-zero signed integer.
-    """
-
-    id: int
-    normalized_name: str
-    points: int
-    reason: str
-    recorded_at: str
-
-
-@dataclass
 class Confiscation:
     """One Phone Confiscation, from pending through released or voided.
 

@@ -459,19 +459,10 @@ class TestMatchKeyMigration:
             VALUES ('entry', 1, 'CHEN, WEI', 'created', '2026-08-01T09:00:00+00:00')
             """
         )
-        conn.execute(
-            """
-            INSERT INTO ipoint_adjustments
-                (normalized_name, points, reason, recorded_at)
-            VALUES ('CHEN, WEI', 3, 'x', '2026-08-01T09:00:00+00:00')
-            """
-        )
-
         storage.create_schema(conn)
 
         assert storage.list_ipoint_entries(conn)[0].normalized_name == "CHEN WEI"
         assert storage.list_ipoint_audit(conn)[0].normalized_name == "CHEN WEI"
-        assert storage.list_ipoint_adjustments(conn)[0].normalized_name == "CHEN WEI"
 
 
 class TestIPointsPage:
