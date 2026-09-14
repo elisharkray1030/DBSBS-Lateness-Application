@@ -433,7 +433,7 @@
                     <div class="boarder-inline-error" hidden></div>
                 </td>
                 <td class="boarder-actions">
-                    <button type="button" class="btn btn-danger btn-sm boarder-remove" aria-label="Remove boarder" title="Remove boarder">
+                    <button type="button" class="btn btn-danger btn-sm btn-icon boarder-remove" aria-label="Remove boarder" title="Remove boarder">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
                     </button>
                 </td>

@@ -10,7 +10,7 @@
             <h3 class="upload-title">Log I-Point Entry</h3>
             <form action="/ipoints/entries" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div class="form-row">
+                <div class="form-row form-row--entry">
                     <div class="form-field">
                         <label for="ipoint-boarder"><strong>Boarder Name</strong></label>
                         <input type="text" id="ipoint-boarder" name="boarder"
@@ -35,7 +35,7 @@
                         <label for="ipoint-reason"><strong>Reason</strong></label>
                         <input type="text" id="ipoint-reason" name="reason" required>
                     </div>
-                    <div>
+                    <div class="form-action">
                         <button type="submit" class="btn btn-primary">Log Entry</button>
                     </div>
                 </div>
@@ -191,7 +191,6 @@
                     <table class="ipoints-table">
                         <thead>
                             <tr>
-                                <th scope="col">Type</th>
                                 <th scope="col">Date</th>
                                 <th scope="col">Points</th>
                                 <th scope="col">Reason</th>
@@ -201,7 +200,6 @@
                         <tbody>
                             {% for entry in summary.entries %}
                             <tr data-entry-id="{{ entry.id }}">
-                                <td>Entry</td>
                                 <td>
                                     <input type="date" name="occurred_on"
                                            form="ipoint-edit-{{ entry.id }}"

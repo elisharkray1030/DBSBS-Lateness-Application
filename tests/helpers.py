@@ -107,6 +107,25 @@ def assert_late_bed_not_bold(cell):
     assert cell.evaluate("el => getComputedStyle(el).fontWeight") in ("400", "normal")
 
 
+def control_rects(page, form_selector, control_selectors):
+    """Returns each named control's bottom and left edges inside a form.
+
+    Browser layout tests assert single-row alignment on the shared bottoms
+    and horizontal ordering on the increasing lefts.
+    """
+    return page.evaluate(
+        """({ formSelector, controlSelectors }) => {
+            const form = document.querySelector(formSelector);
+            return controlSelectors.map(selector => {
+                const el = form.querySelector(selector);
+                const r = el.getBoundingClientRect();
+                return { bottom: r.bottom, left: r.left };
+            });
+        }""",
+        {"formSelector": form_selector, "controlSelectors": control_selectors},
+    )
+
+
 def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10",
                      assigned_at="2026-04-01T09:00:00+00:00", include_report=True):
     """Assigns Punishments (optionally saving their Monthly Report first).

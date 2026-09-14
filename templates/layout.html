@@ -157,15 +157,34 @@
             gap: 6px;
         }
 
+        /* I-Points entry forms need one row: fields flex to share the line
+           and drop to one-per-row when the viewport narrows. Scoped modifier,
+           so the shared two-column .form-row grid is untouched. */
+        .form-row--entry {
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .form-row--entry .form-field {
+            flex: 1 1 7rem;
+        }
+
+        .form-row--entry .form-action {
+            flex: 0 0 auto;
+        }
+
         input[type="text"],
         input[type="file"],
         input[type="month"],
-        input[type="date"] {
+        input[type="date"],
+        input[type="number"] {
             padding: 10px 12px;
             border-radius: 6px;
             border: 1px solid var(--border);
             width: 100%;
             background: var(--surface);
+            /* Native date/number fields default to the browser UI font. */
+            font: inherit;
         }
 
         /* Native controls restyled to the house look: selects match the text
@@ -403,6 +422,7 @@
             padding: 10px 16px;
             border: none;
             border-radius: 6px;
+            font: inherit;
             font-weight: 600;
             font-size: 0.95em;
             cursor: pointer;
@@ -455,6 +475,13 @@
         .btn-sm {
             padding: 6px 12px;
             font-size: 0.85em;
+        }
+
+        /* Compact icon-only row action: the accessible name lives on the
+           button's aria-label, and the glyph keeps the shared .btn svg size. */
+        .btn-icon {
+            padding: 6px;
+            aspect-ratio: 1;
         }
 
         .banner {
@@ -550,10 +577,6 @@
             width: 1%;
             text-align: right;
             white-space: nowrap;
-        }
-
-        .boarder-remove {
-            padding: 6px;
         }
 
         .boarder-inline-error {
@@ -1098,6 +1121,11 @@
 
             .form-row {
                 grid-template-columns: 1fr;
+            }
+
+            .form-row--entry .form-field,
+            .form-row--entry .form-action {
+                flex-basis: 100%;
             }
 
             .month-detail-toolbar {

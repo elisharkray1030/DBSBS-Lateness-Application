@@ -590,6 +590,9 @@ class TestLogEntryRoute:
         assert "Points" in header
         assert "Reason" in header
         assert "Logged" not in header
+        # The Type column became single-valued ("Entry") once Adjustments
+        # were retired, so it is dropped from the ledger header.
+        assert "Type" not in header
 
     def test_logging_shows_success_feedback(self, fresh_client):
         post_csrf(
