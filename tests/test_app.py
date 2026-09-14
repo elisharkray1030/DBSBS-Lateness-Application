@@ -245,7 +245,7 @@ class TestConsistentPageHeading:
         assert 'aria-current="true"' not in punishments
 
     def test_page_title_names_the_current_view(self, fresh_client):
-        for route in ("/", "/?tab=history", "/punishments", "/boarders"):
+        for route in self._PAGES_BY_TAB.values():
             html = fresh_client.get(route).get_data(as_text=True)
             title = re.search(r"<title>(.*?)</title>", html, re.S).group(1).strip()
             assert title == f"{page_h1(html)} — DBS Boarding School", route
@@ -292,7 +292,10 @@ class TestConsistentPageHeading:
     def test_error_page_keeps_a_neutral_heading(self, fresh_client):
         response = fresh_client.post("/boarders/add", data={"name": "Carol", "bed": "602A"})
         assert response.status_code == 403
-        assert page_h1(response.get_data(as_text=True)) == "Invalid request"
+        html = response.get_data(as_text=True)
+        assert page_h1(html) == "Invalid request"
+        title = re.search(r"<title>(.*?)</title>", html, re.S).group(1).strip()
+        assert title == "Invalid request — DBS Boarding School"
 
     def test_report_printing_still_hides_the_page_heading(self, fresh_client, browser_page):
         page = browser_page
