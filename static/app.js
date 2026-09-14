@@ -204,20 +204,26 @@
         });
     });
 
-    // An Entry row's Save only matters once the row differs from the stored
-    // Entry, so compare each control against its initial value and hide clean
-    // rows. The button ships visible so the form stays usable without JS.
+    // An Entry row is dirty when any of its controls differs from the stored
+    // value rendered at load. Save only matters once the row is dirty, so the
+    // button ships visible (usable without JS) and clean rows get hidden.
+    function entryRowIsDirty(row) {
+        return [...row.querySelectorAll('.ipoint-entry-field')].some(
+            field => field.value !== field.defaultValue
+        );
+    }
+
     document.querySelectorAll('tr[data-entry-id]').forEach(row => {
-        const saveButton = row.querySelector('button[form^="ipoint-edit-"]');
-        const fields = row.querySelectorAll('input[form^="ipoint-edit-"]');
-        if (!saveButton || !fields.length) return;
+        const saveButton = row.querySelector('.ipoint-entry-save');
+        if (!saveButton) return;
 
         const updateSaveVisibility = () => {
-            const dirty = [...fields].some(field => field.value !== field.defaultValue);
-            saveButton.classList.toggle('hidden', !dirty);
+            saveButton.classList.toggle('hidden', !entryRowIsDirty(row));
         };
 
-        fields.forEach(field => field.addEventListener('input', updateSaveVisibility));
+        row.querySelectorAll('.ipoint-entry-field').forEach(field => {
+            field.addEventListener('input', updateSaveVisibility);
+        });
         updateSaveVisibility();
     });
 

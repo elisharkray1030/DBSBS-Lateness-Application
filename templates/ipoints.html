@@ -203,18 +203,21 @@
                             <tr data-entry-id="{{ entry.id }}">
                                 <td>
                                     <input type="date" name="occurred_on"
+                                           class="ipoint-entry-field"
                                            form="ipoint-edit-{{ entry.id }}"
                                            value="{{ entry.occurred_on }}"
                                            aria-label="Date for entry {{ entry.id }}" required>
                                 </td>
                                 <td>
                                     <input type="number" name="points"
+                                           class="ipoint-entry-field"
                                            form="ipoint-edit-{{ entry.id }}"
                                            min="1" step="1" value="{{ entry.points }}"
                                            aria-label="Points for entry {{ entry.id }}" required>
                                 </td>
                                 <td>
                                     <input type="text" name="reason"
+                                           class="ipoint-entry-field"
                                            form="ipoint-edit-{{ entry.id }}"
                                            value="{{ entry.reason }}"
                                            aria-label="Reason for entry {{ entry.id }}" required>
@@ -231,7 +234,7 @@
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                     </form>
                                     <button type="submit" form="ipoint-edit-{{ entry.id }}"
-                                            class="btn btn-primary btn-sm">Save</button>
+                                            class="btn btn-primary btn-sm ipoint-entry-save">Save</button>
                                     <button type="submit" form="ipoint-remove-{{ entry.id }}"
                                             class="btn btn-danger btn-sm btn-icon"
                                             aria-label="Remove entry from {{ entry.occurred_on }}"

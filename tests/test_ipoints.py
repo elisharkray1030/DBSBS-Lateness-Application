@@ -2417,7 +2417,7 @@ class TestIPointsInteractions:
         page = browser_page
         page.set_content(self._entry_html(fresh_client))
 
-        save = page.locator('button[form^="ipoint-edit-"]')
+        save = page.locator(".ipoint-entry-save")
         assert save.count() == 1
         assert save.is_hidden()
 
@@ -2426,7 +2426,7 @@ class TestIPointsInteractions:
             ("occurred_on", "2026-08-01", "2026-08-02"),
             ("reason", "Repeated disruption", "corrected"),
         ):
-            field = page.locator(f'input[form^="ipoint-edit-"][name="{name}"]')
+            field = page.locator(f'.ipoint-entry-field[name="{name}"]')
             field.fill(changed)
             assert save.is_visible(), name
             field.fill(original)
