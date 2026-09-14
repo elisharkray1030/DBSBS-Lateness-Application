@@ -204,6 +204,23 @@
         });
     });
 
+    // An Entry row's Save only matters once the row differs from the stored
+    // Entry, so compare each control against its initial value and hide clean
+    // rows. The button ships visible so the form stays usable without JS.
+    document.querySelectorAll('tr[data-entry-id]').forEach(row => {
+        const saveButton = row.querySelector('button[form^="ipoint-edit-"]');
+        const fields = row.querySelectorAll('input[form^="ipoint-edit-"]');
+        if (!saveButton || !fields.length) return;
+
+        const updateSaveVisibility = () => {
+            const dirty = [...fields].some(field => field.value !== field.defaultValue);
+            saveButton.classList.toggle('hidden', !dirty);
+        };
+
+        fields.forEach(field => field.addEventListener('input', updateSaveVisibility));
+        updateSaveVisibility();
+    });
+
     // Month detail view
     let monthRequestToken = 0;
 

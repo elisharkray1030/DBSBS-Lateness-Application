@@ -7,6 +7,7 @@ the lifecycle so no separate storage seam is introduced.
 """
 
 import json
+import re
 import sqlite3
 from datetime import date
 
@@ -2340,3 +2341,153 @@ class TestConfiscationLifecycleBrowser:
         assert "ALICE" in message.upper()
         page.keyboard.press("Enter")
         assert page.evaluate("() => window.__submitCalled").endswith("/release")
+
+
+class TestIPointsInteractions:
+    """Slice 4 (#207): auto-apply the Confiscation filter, reveal a row's Save
+    only once it differs from the stored Entry, and minimise Remove."""
+
+    def _log_entry(self, fresh_client, reason="Repeated disruption"):
+        post_csrf(
+            fresh_client,
+            "/ipoints/entries",
+            data={
+                "boarder": "Alice",
+                "points": "5",
+                "occurred_on": "2026-08-01",
+                "reason": reason,
+            },
+        )
+
+    def _entry_html(self, fresh_client):
+        self._log_entry(fresh_client)
+        return fresh_client.get("/ipoints").get_data(as_text=True)
+
+    def _active_confiscation_html(self, fresh_client):
+        with app_module.connect() as conn:
+            ipoints.log_entry(
+                conn,
+                "ALICE",
+                14,
+                "2020-08-01",
+                "Repeated disruption",
+                recorded_at="2020-08-01T09:00:00+00:00",
+            )
+        fresh_client.get("/ipoints")  # materialise the pending
+        with app_module.connect() as conn:
+            row = storage.get_open_ipoint_confiscation(conn, "ALICE")
+        post_csrf(fresh_client, f"/ipoints/confiscations/{row.id}/confirm")
+        return row.id, fresh_client.get("/ipoints").get_data(as_text=True)
+
+    # --- Auto-apply Confiscation filter ---
+
+    def test_status_select_submits_on_change_and_the_filter_button_is_gone(
+        self, fresh_client
+    ):
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        select = re.search(r'<select[^>]*id="confiscation-status"[^>]*>', html)
+        assert select is not None
+        assert 'onchange="this.form.submit()"' in select.group(0)
+        assert ">Filter<" not in html
+
+    def test_selecting_a_status_submits_the_filter_form(self, fresh_client, browser_page):
+        page = browser_page
+        page.set_content(fresh_client.get("/ipoints").get_data(as_text=True))
+        _stub_form_submit(page)
+
+        page.select_option("#confiscation-status", "released")
+
+        assert page.evaluate("() => window.__submitCalled") == "/ipoints"
+
+    # --- Save-on-change ---
+
+    def test_entry_save_is_visible_in_rendered_html(self, fresh_client):
+        html = self._entry_html(fresh_client)
+        with app_module.connect() as conn:
+            entry_id = _entry_id(conn)
+
+        save = re.search(
+            rf'<button[^>]*form="ipoint-edit-{entry_id}"[^>]*>Save</button>', html
+        )
+        assert save is not None
+        assert "hidden" not in save.group(0)
+
+    def test_entry_save_hides_until_a_field_changes(self, fresh_client, browser_page):
+        page = browser_page
+        page.set_content(self._entry_html(fresh_client))
+
+        save = page.locator('button[form^="ipoint-edit-"]')
+        assert save.count() == 1
+        assert save.is_hidden()
+
+        for name, original, changed in (
+            ("points", "5", "6"),
+            ("occurred_on", "2026-08-01", "2026-08-02"),
+            ("reason", "Repeated disruption", "corrected"),
+        ):
+            field = page.locator(f'input[form^="ipoint-edit-"][name="{name}"]')
+            field.fill(changed)
+            assert save.is_visible(), name
+            field.fill(original)
+            assert save.is_hidden(), name
+
+    # --- Minimal Remove ---
+
+    def test_entry_remove_is_an_icon_only_danger_button(self, fresh_client):
+        html = self._entry_html(fresh_client)
+        with app_module.connect() as conn:
+            entry_id = _entry_id(conn)
+
+        remove = re.search(
+            rf'<button[^>]*form="ipoint-remove-{entry_id}"[^>]*>(.*?)</button>',
+            html,
+            re.S,
+        )
+        assert remove is not None
+        assert "btn-icon" in remove.group(0)
+        assert 'aria-label="Remove entry from 2026-08-01"' in remove.group(0)
+        assert "#icon-trash" in remove.group(1)
+        assert "Remove" not in remove.group(1)
+
+    def test_confiscation_remove_is_an_icon_only_danger_button(self, fresh_client):
+        row_id, html = self._active_confiscation_html(fresh_client)
+
+        remove = re.search(
+            rf'<button[^>]*form="ipoint-confiscation-remove-{row_id}"[^>]*>(.*?)</button>',
+            html,
+            re.S,
+        )
+        assert remove is not None
+        assert "btn-icon" in remove.group(0)
+        assert 'aria-label="Remove the Confiscation for' in remove.group(0)
+        assert "#icon-trash" in remove.group(1)
+
+    def test_entry_remove_is_compact_and_keeps_the_confirm_dialog(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(self._entry_html(fresh_client))
+        _stub_form_submit(page)
+
+        metrics = page.evaluate(
+            """() => {
+                const btn = document.querySelector('button[form^="ipoint-remove-"]');
+                const rect = btn.getBoundingClientRect();
+                const style = getComputedStyle(btn);
+                return {
+                    className: btn.className,
+                    width: rect.width,
+                    height: rect.height,
+                    background: style.backgroundColor,
+                    hasIcon: !!btn.querySelector('svg use'),
+                };
+            }"""
+        )
+        assert "btn-icon" in metrics["className"], metrics
+        assert abs(metrics["width"] - metrics["height"]) < 1, metrics
+        assert metrics["background"] == "rgb(229, 26, 60)", metrics
+        assert metrics["hasIcon"], metrics
+
+        page.locator('button[form^="ipoint-remove-"]').click()
+        assert page.locator("#confirmModal.show").count() == 1
