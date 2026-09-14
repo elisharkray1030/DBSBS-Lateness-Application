@@ -1,5 +1,10 @@
 # Confiscation edit, release, and remove semantics
 
+> Scope: I-Point Adjustments were retired in Slice 1 of the UI-refresh tracker
+> (#208). References below to sharing the floor guard with Adjustments are
+> historical; the guard now applies to Entry edits/removals, Redemption
+> confirmation, and Confiscation tier edits.
+
 Story 27 says staff may edit or remove a Confiscation "freely", but three other
 decisions constrain what that can mean: a pending Redemption's tier is **locked
 at creation** (story 16), a Confiscation's period is **fixed by its tier**
