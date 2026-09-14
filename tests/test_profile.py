@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from helpers import (
+    control_rects,
     post_csrf,
     record,
     seed_ipoint_entry,
@@ -896,6 +897,20 @@ class TestProfileIPointsSection:
 
         assert "Audit History" not in html
 
+    def test_profile_history_omits_the_single_valued_type_column(self, fresh_client):
+        seed_ipoint_entry(name="ALICE", points=5, reason="Repeated disruption")
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+        table = html[html.index('aria-label="I-Point history"') :]
+        header = table[: table.index("</thead>")]
+
+        assert "Date" in header
+        assert "Points" in header
+        assert "Reason" in header
+        # Adjustments are retired, so every remaining row is an Entry: the
+        # Type column no longer carries information.
+        assert "Type" not in header
+
     def test_ipoint_section_repeats_stacked_and_due_flags(self, fresh_client):
         with app_module.connect() as conn:
             ipoints.log_entry(
@@ -1080,3 +1095,23 @@ class TestProfileIPointQuickLog:
         # Tabbing off the last text field reaches the submit control.
         page.keyboard.press("Tab")
         assert page.evaluate("() => document.activeElement.tagName") == "BUTTON"
+
+    def test_quick_log_lays_out_in_one_row(self, fresh_client, browser_page):
+        html = fresh_client.get("/boarder/ALICE").get_data(as_text=True)
+        page = browser_page
+        page.set_content(html)
+
+        rects = control_rects(
+            page,
+            'form[action="/boarder/ALICE/ipoints"]',
+            [
+                "#ipoint-quick-points",
+                "#ipoint-quick-occurred-on",
+                "#ipoint-quick-reason",
+                'button[type="submit"]',
+            ],
+        )
+        bottoms = [r["bottom"] for r in rects]
+        lefts = [r["left"] for r in rects]
+        assert max(bottoms) - min(bottoms) <= 3, rects
+        assert lefts == sorted(lefts) and len(set(lefts)) == len(lefts), lefts

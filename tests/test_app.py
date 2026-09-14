@@ -12,6 +12,7 @@ import pytest
 from helpers import (
     assert_late_bed_not_bold,
     assert_late_name_bold,
+    control_rects,
     delete_csrf,
     history_panel_html,
     month_row,
@@ -4220,3 +4221,127 @@ class TestUiTidinessHoldsEverywhere:
 
         injected = page.wait_for_selector("#boarders .table-scroll .empty-state svg use")
         assert injected.get_attribute("href") == "#icon-inbox"
+
+
+class TestIPointsEntryFormStyling:
+    """Acceptance sweep for #206: one-row entry forms and modern controls."""
+
+    def _input_styles(self, page, selectors):
+        return page.evaluate(
+            """(selectors) => {
+                const sample = selector => {
+                    const s = getComputedStyle(document.querySelector(selector));
+                    return {
+                        padding: [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].join(' '),
+                        border: s.borderTopWidth + ' ' + s.borderTopStyle + ' ' + s.borderTopColor,
+                        radius: s.borderRadius,
+                        background: s.backgroundColor,
+                        fontFamily: s.fontFamily,
+                    };
+                };
+                const styles = {body: getComputedStyle(document.body).fontFamily};
+                for (const [name, selector] of Object.entries(selectors)) {
+                    styles[name] = sample(selector);
+                }
+                return styles;
+            }""",
+            selectors,
+        )
+
+    def test_number_and_date_inputs_match_text_input_styling(self, fresh_client, browser_page):
+        page = browser_page
+        page.set_content(fresh_client.get("/ipoints").get_data(as_text=True))
+
+        styles = self._input_styles(
+            page,
+            {
+                "text": "#ipoint-boarder",
+                "number": "#ipoint-points",
+                "date": "#ipoint-occurred-on",
+            },
+        )
+
+        assert styles["number"] == styles["text"], styles
+        assert styles["date"] == styles["text"], styles
+        assert styles["number"]["fontFamily"] == styles["body"], styles
+        assert styles["date"]["fontFamily"] == styles["body"], styles
+
+    def test_entry_form_lays_out_in_one_row_on_desktop(self, fresh_client, browser_page):
+        page = browser_page
+        page.set_content(fresh_client.get("/ipoints").get_data(as_text=True))
+
+        rects = control_rects(
+            page,
+            'form[action="/ipoints/entries"]',
+            [
+                "#ipoint-boarder",
+                "#ipoint-points",
+                "#ipoint-occurred-on",
+                "#ipoint-reason",
+                'button[type="submit"]',
+            ],
+        )
+
+        bottoms = [r["bottom"] for r in rects]
+        lefts = [r["left"] for r in rects]
+        assert max(bottoms) - min(bottoms) <= 3, rects
+        assert lefts == sorted(lefts) and len(set(lefts)) == len(lefts), lefts
+
+    def test_entry_form_stacks_on_narrow_screens(self, fresh_client, browser_page):
+        page = browser_page
+        page.set_viewport_size({"width": 375, "height": 800})
+        try:
+            page.set_content(fresh_client.get("/ipoints").get_data(as_text=True))
+
+            rects = control_rects(
+                page,
+                'form[action="/ipoints/entries"]',
+                [
+                    "#ipoint-boarder",
+                    "#ipoint-points",
+                    "#ipoint-occurred-on",
+                    "#ipoint-reason",
+                    'button[type="submit"]',
+                ],
+            )
+
+            bottoms = [r["bottom"] for r in rects]
+            lefts = [r["left"] for r in rects]
+            assert max(lefts) - min(lefts) <= 1, rects
+            assert bottoms == sorted(bottoms) and bottoms[-1] - bottoms[0] > 20, rects
+        finally:
+            page.set_viewport_size({"width": 1280, "height": 720})
+
+    def test_boarder_row_remove_uses_the_icon_only_variant(self, fresh_client, browser_page):
+        with app_module.connect() as conn:
+            storage.replace_boarders(conn, [Boarder("ALICE", "Alice", "601A")])
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        page.locator("#boarder-edit").click()
+
+        metrics = page.evaluate(
+            """() => {
+                const btn = document.querySelector('#boarders-table .boarder-remove');
+                const s = getComputedStyle(btn);
+                const rect = btn.getBoundingClientRect();
+                return {
+                    className: btn.className,
+                    width: rect.width,
+                    height: rect.height,
+                    padding: s.paddingTop,
+                    radius: s.borderRadius,
+                    background: s.backgroundColor,
+                    fontFamily: s.fontFamily,
+                    bodyFont: getComputedStyle(document.body).fontFamily,
+                };
+            }"""
+        )
+
+        assert "btn-icon" in metrics["className"], metrics
+        assert abs(metrics["width"] - metrics["height"]) < 1, metrics
+        assert metrics["padding"] == "6px", metrics
+        assert metrics["radius"] == "6px", metrics
+        assert metrics["background"] == "rgb(229, 26, 60)", metrics
+        assert metrics["fontFamily"] == metrics["bodyFont"], metrics
