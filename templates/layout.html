@@ -848,6 +848,21 @@
             display: none;
         }
 
+        /* Kept in the accessibility tree but off screen: headings that would
+           otherwise repeat the page H1 stay available to heading navigation
+           and landmarks without being seen twice. */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
         .assign-panel {
             background: var(--page-bg);
             border: 1px solid var(--border);

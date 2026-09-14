@@ -1144,7 +1144,7 @@ class TestImportCopyAlignment:
         html = home_html()
 
         assert ">Punishments</a>" in html
-        assert "<h2>Punishments</h2>" in html
+        assert '<h2 class="sr-only">Punishments</h2>' in html
         assert "<h3 class=\"upload-title\">Import Monthly Log</h3>" in html
         assert "of 0 punishments" in html or "punishments</p>" in html
 
@@ -3177,9 +3177,26 @@ class TestChromeConsistency:
         expected_headings = dict(TAB_LABELS, history="Find a Boarder")
         for panel_id, label in expected_headings.items():
             panel = panel_html(html, panel_id)
-            assert f"<h2>{label}</h2>" in panel, (
+            assert re.search(rf"<h2[^>]*>{re.escape(label)}</h2>", panel), (
                 f"{panel_id} panel lacks its expected <h2> {label!r}"
             )
+
+    def test_duplicate_panel_headings_are_screen_reader_only(self):
+        # The page H1 now repeats the Reports/Punishments/Boarders tab
+        # labels (#205), so those panel H2s are visually hidden while
+        # staying in the DOM for the heading outline and SR navigation.
+        html = home_html()
+        for panel_id in ("reports", "punishments", "boarders"):
+            panel = panel_html(html, panel_id)
+            assert re.search(r'<h2 class="sr-only">', panel), (
+                f"{panel_id} panel heading is not visually hidden"
+            )
+
+    def test_intentionally_distinct_panel_headings_stay_visible(self):
+        # History ("Find a Boarder") departs from its tab label and must
+        # keep a visible heading; I-Points is covered on its own page.
+        html = home_html()
+        assert "<h2>Find a Boarder</h2>" in panel_html(html, "history")
 
     def test_section_subheadings_nest_one_level_beneath_panel_titles(self):
         html = home_html()
@@ -3245,6 +3262,27 @@ class TestVisualConsistencyPass:
         assert len(colors["panels"]) == 4, colors
         assert set(colors["panels"]) == {"rgb(29, 43, 83)"}, colors  # --navy
         assert colors["modalTitle"] == "rgb(26, 26, 26)", colors  # --text
+
+    def test_duplicate_panel_headings_are_clipped_not_removed(self, browser_page):
+        page = browser_page
+        page.set_content(home_html())
+
+        heading = page.evaluate(
+            """() => {
+                const h = document.querySelector('#reports > h2');
+                const rect = h.getBoundingClientRect();
+                return {
+                    text: h.textContent.trim(),
+                    display: getComputedStyle(h).display,
+                    width: rect.width,
+                    height: rect.height,
+                };
+            }"""
+        )
+
+        assert heading["text"] == "View Reports in Database", heading
+        assert heading["display"] != "none", heading
+        assert heading["width"] <= 1 and heading["height"] <= 1, heading
 
     def test_table_scrollbar_chrome_is_navy_tinted_from_shared_token(self, fresh_client, browser_page):
         with app_module.connect() as conn:

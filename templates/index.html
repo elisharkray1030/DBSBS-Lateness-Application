@@ -68,7 +68,7 @@
         {% macro punishments_count() -%}
             <p class="punishments-count" aria-live="polite">Showing {{ punishments|length }} of {{ punishments_total }} {{ 'punishment' if punishments_total == 1 else 'punishments' }}</p>
         {%- endmacro %}
-        <h2>Punishments</h2>
+        <h2 class="sr-only">Punishments</h2>
         <div class="punishments-toolbar">
             <form action="/punishments" method="get" class="punishments-filters">
                 {% if punishments_show_all %}
@@ -158,7 +158,7 @@
 
     <!-- Boarders Panel -->
     <section id="boarders" class="panel {% if selected_tab == 'boarders' %}active{% endif %} boarders-panel">
-        <h2>Boarders</h2>
+        <h2 class="sr-only">Boarders</h2>
         <div class="month-detail-toolbar">
             <div class="view-toggle" role="group" aria-label="Boarders view">
                 <a class="btn btn-sm {% if boarders_view == 'all-time' %}btn-neutral{% else %}btn-primary{% endif %}" href="/boarders">Current</a>
@@ -277,7 +277,7 @@
 
     <!-- Reports Database Panel -->
     <section id="reports" class="panel {% if selected_tab == 'reports' %}active{% endif %} reports-panel">
-        <h2>View Reports in Database</h2>
+        <h2 class="sr-only">View Reports in Database</h2>
         <div class="upload-panel">
             <h3 class="upload-title">Import Monthly Log</h3>
             <form action="/" method="POST" enctype="multipart/form-data">
