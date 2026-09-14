@@ -103,18 +103,29 @@
         return JSON.parse(document.getElementById('tab-labels').textContent)[tabName] || '';
     }
 
-    function activateTab(tabName) {
-        tabButtons.forEach(btn => btn.classList.remove('active'));
+    // In-page tabs are navigation, not a tab widget: the mixed button/link
+    // bar cannot be a valid ARIA tablist. aria-current carries the state, and
+    // a user-initiated switch moves focus to the page H1 so the new view is
+    // announced once (a live region on the H1 would repeat the tab name).
+    function activateTab(tabName, { moveFocus = false } = {}) {
+        tabButtons.forEach(btn => {
+            btn.classList.remove('active');
+            btn.removeAttribute('aria-current');
+        });
         panels.forEach(panel => panel.classList.remove('active'));
 
         const button = document.querySelector(`.tab-link[data-tab="${tabName}"]`);
-        if (button) button.classList.add('active');
+        if (button) {
+            button.classList.add('active');
+            button.setAttribute('aria-current', 'true');
+        }
         const panel = document.getElementById(tabName);
         if (panel) panel.classList.add('active');
 
         const heading = document.getElementById('page-heading');
         const label = tabLabel(tabName);
         if (heading && label) heading.textContent = label;
+        if (moveFocus && heading) heading.focus();
     }
 
     tabButtons.forEach(button => {
@@ -136,7 +147,7 @@
                 return;
             }
             if (tabName === 'boarders') {
-                activateTab('boarders');
+                activateTab('boarders', { moveFocus: true });
                 return;
             }
             if (hasDirtyBoarderRow()) {
@@ -146,12 +157,12 @@
                     confirmLabel: 'Discard',
                     onConfirm: () => {
                         discardBoarderEdits();
-                        activateTab(tabName);
+                        activateTab(tabName, { moveFocus: Boolean(tabName) });
                     }
                 });
                 return;
             }
-            activateTab(tabName);
+            activateTab(tabName, { moveFocus: Boolean(tabName) });
         });
     });
 
@@ -814,10 +825,9 @@
         const initialMonthEl = document.getElementById('initial-month-data');
         const initialMonthToOpen = initialMonthEl ? JSON.parse(initialMonthEl.textContent) : null;
         if (initialMonthToOpen) {
-            const reportsTab = document.querySelector('[data-tab="reports"]');
-            if (reportsTab) {
-                reportsTab.click();
-            }
+            // Activate directly (no focus): a page load must not steal focus
+            // to the heading the way a user-initiated switch does.
+            activateTab('reports');
             viewMonth(initialMonthToOpen);
         }
     });

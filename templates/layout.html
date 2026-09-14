@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token }}">
-    <title>{% block title %}DBS Boarding School — Lateness Dashboard{% endblock %}</title>
+    <title>{% block title %}{{ page_heading }} — DBS Boarding School{% endblock %}</title>
     <link rel="icon" href="{{ url_for('static', filename='dbslogoF-B.png') }}">
     <style>
         :root {
@@ -860,6 +860,7 @@
             margin: -1px;
             overflow: hidden;
             clip: rect(0, 0, 0, 0);
+            clip-path: inset(50%);
             white-space: nowrap;
             border: 0;
         }
@@ -1362,7 +1363,7 @@
 
 <div class="container">
     {% block heading %}
-    <h1 id="page-heading">{{ page_heading }}</h1>
+    <h1 id="page-heading" tabindex="-1">{{ page_heading }}</h1>
     {% endblock %}
     <script type="application/json" id="tab-labels">{{ tab_labels|tojson }}</script>
 
@@ -1374,23 +1375,30 @@
     {% endif %}
 
 
-    <div class="tabs">
+    {% macro tab_item(label, active, name=None, href=None) -%}
+        {%- if href -%}
+            <a class="tab-link{% if active %} active{% endif %}"{% if name %} data-tab="{{ name }}"{% endif %} href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ label }}</a>
+        {%- else -%}
+            <button class="tab-link{% if active %} active{% endif %}" data-tab="{{ name }}"{% if active %} aria-current="true"{% endif %}>{{ label }}</button>
+        {%- endif -%}
+    {%- endmacro %}
+    <nav class="tabs" aria-label="Primary">
         {% if panels_in_page %}
-        <button class="tab-link {% if selected_tab == 'reports' %}active{% endif %}" data-tab="reports">{{ tab_labels.reports }}</button>
-        <button class="tab-link {% if selected_tab == 'history' %}active{% endif %}" data-tab="history">{{ tab_labels.history }}</button>
+        {{ tab_item(tab_labels.reports, selected_tab == 'reports', name='reports') }}
+        {{ tab_item(tab_labels.history, selected_tab == 'history', name='history') }}
         {% else %}
-        <a class="tab-link" href="/?tab=reports">{{ tab_labels.reports }}</a>
-        <a class="tab-link" href="/?tab=history">{{ tab_labels.history }}</a>
+        {{ tab_item(tab_labels.reports, False, href='/?tab=reports') }}
+        {{ tab_item(tab_labels.history, False, href='/?tab=history') }}
         {% endif %}
-        <a class="tab-link {% if selected_tab == 'punishments' %}active{% endif %}" data-tab="punishments" href="/punishments">{{ tab_labels.punishments }}</a>
-        <a class="tab-link {% if selected_tab == 'ipoints' %}active{% endif %}" href="/ipoints">{{ tab_labels.ipoints }}</a>
+        {{ tab_item(tab_labels.punishments, selected_tab == 'punishments', name='punishments', href='/punishments') }}
+        {{ tab_item(tab_labels.ipoints, selected_tab == 'ipoints', href='/ipoints') }}
         {% if panels_in_page %}
-        <button class="tab-link {% if selected_tab == 'boarders' %}active{% endif %}" data-tab="boarders">{{ tab_labels.boarders }}</button>
+        {{ tab_item(tab_labels.boarders, selected_tab == 'boarders', name='boarders') }}
         {% else %}
-        <a class="tab-link" href="/?tab=boarders">{{ tab_labels.boarders }}</a>
+        {{ tab_item(tab_labels.boarders, False, href='/?tab=boarders') }}
         {% endif %}
-        <a class="tab-link {% if selected_tab == 'statistics' %}active{% endif %}" href="/statistics">{{ tab_labels.statistics }}</a>
-    </div>
+        {{ tab_item(tab_labels.statistics, selected_tab == 'statistics', href='/statistics') }}
+    </nav>
 
     {% block content %}{% endblock %}
 </div>
