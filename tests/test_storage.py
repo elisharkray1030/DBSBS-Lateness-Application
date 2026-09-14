@@ -66,6 +66,18 @@ class TestDropAdjustmentTableMigration:
                 "(normalized_name, points, occurred_on, reason, recorded_at) "
                 "VALUES ('ALICE', 5, '2026-08-01', 'x', '2026-08-01T09:00:00+00:00')"
             )
+            connection.execute(
+                "INSERT INTO ipoint_audit "
+                "(entity_type, entity_id, normalized_name, action, changed_at) "
+                "VALUES ('entry', 1, 'ALICE', 'created', '2026-08-01T09:00:00+00:00')"
+            )
+            connection.execute(
+                "INSERT INTO confiscations "
+                "(normalized_name, trigger_month, points_redeemed, tier, status, "
+                "created_at) "
+                "VALUES ('ALICE', '2026-08', 5, 5, 'pending', "
+                "'2026-08-01T09:00:00+00:00')"
+            )
             connection.commit()
 
             storage.create_schema(connection)
@@ -75,6 +87,12 @@ class TestDropAdjustmentTableMigration:
             assert [
                 entry.normalized_name
                 for entry in storage.list_ipoint_entries(connection)
+            ] == ["ALICE"]
+            assert [row.normalized_name for row in storage.list_ipoint_audit(connection)] == [
+                "ALICE"
+            ]
+            assert [
+                row.normalized_name for row in storage.list_ipoint_confiscations(connection)
             ] == ["ALICE"]
         finally:
             connection.close()

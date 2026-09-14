@@ -223,11 +223,10 @@ Important behavior:
 the seed Master List and rewrites the database Master List from it, so the seed
 is self-contained on a fresh database and a reseed restores any Boarder the
 previous run removed. It generates synthetic lateness logs and ingests them
-  through the same `ingest_log` path the web Import uses. It then seeds I-Point
-  data — Entries and a Confiscation in every status — through the production
-  I-Points lifecycle with fixed stamps, materialising the
-pending Redemptions at a fixed `IPOINT_TODAY` so opening the view writes
-nothing new. Run with
+through the same `ingest_log` path the web Import uses. It then seeds I-Point
+data — Entries and a Confiscation in every status — through the production
+I-Points lifecycle with fixed stamps, materialising the pending Redemptions at a
+fixed `IPOINT_TODAY` so opening the view writes nothing new. Run with
 `python seed_demo_data.py [--db PATH] [--namelist PATH] [--log-dir PATH]`.
 
 ## App layer — `app.py`
