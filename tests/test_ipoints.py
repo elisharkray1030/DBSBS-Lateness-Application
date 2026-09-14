@@ -2548,7 +2548,7 @@ class TestIPointsInteractions:
         page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
         page.evaluate(
             """() => {
-                document.querySelector('form[id^="ipoint-edit-"]').dispatchEvent(
+                document.querySelector('.ipoint-entry-edit-form').dispatchEvent(
                     new Event('submit', { cancelable: true, bubbles: true })
                 );
             }"""
@@ -2556,7 +2556,7 @@ class TestIPointsInteractions:
 
         assert _beforeunload_cancelled(page) is False
 
-    def test_cancelling_the_confirm_modal_re_arms_the_navigation_guard(
+    def test_opening_and_cancelling_the_remove_modal_keeps_the_guard_armed(
         self, fresh_client, browser_page
     ):
         page = browser_page
@@ -2564,6 +2564,8 @@ class TestIPointsInteractions:
 
         page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
 
+        # Opening the Remove dialog is not a submission: cancelling it must
+        # leave the unsaved-edit warning in place.
         for cancel in ("keyboard", "button"):
             page.locator('button[form^="ipoint-remove-"]').click()
             assert page.locator("#confirmModal.show").count() == 1
@@ -2573,3 +2575,17 @@ class TestIPointsInteractions:
                 page.locator("#confirmModal .btn-neutral").click()
             assert page.locator("#confirmModal.show").count() == 0
             assert _beforeunload_cancelled(page) is True, cancel
+
+    def test_confirming_the_remove_does_not_arm_the_navigation_guard(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(self._entry_html(fresh_client))
+        _stub_form_submit(page)
+
+        page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
+        page.locator('button[form^="ipoint-remove-"]').click()
+        page.locator("#confirmModal .btn-danger").click()
+
+        assert page.evaluate("() => window.__submitCalled").endswith("/remove")
+        assert _beforeunload_cancelled(page) is False

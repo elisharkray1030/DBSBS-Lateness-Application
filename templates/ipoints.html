@@ -224,6 +224,7 @@
                                 </td>
                                 <td class="ipoint-row-actions">
                                     <form id="ipoint-edit-{{ entry.id }}"
+                                          class="ipoint-entry-edit-form"
                                           action="/ipoints/entries/{{ entry.id }}/edit" method="post">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                     </form>
