@@ -1,6 +1,12 @@
 # Spec — I-Points ledger, Redemption, and Phone Confiscation
 
-Status: ready-for-agent
+Status: ready-for-agent (I-Point Adjustments retired — see below)
+
+> **Retired in Slice 1 (#214).** The I-Point Adjustment capability this spec
+> describes was retired. Adjustment user stories, the `ipoint_adjustments`
+> schema, and the adjustment implementation and testing decisions below are
+> kept for provenance only and no longer describe the system. Entries,
+> Redemptions, and Phone Confiscations are unaffected.
 
 ## Problem Statement
 
@@ -17,15 +23,17 @@ losing the audit trail that makes the discipline defensible.
 
 Add **Irregularity Points (I-Points)** as a second, persisting disciplinary
 currency. Staff log I-Point Entries (points, date, reason) and I-Point
-Adjustments directly in a new I-Points view. A Boarder's I-Point Balance
-carries across months and never falls below zero. At each local month's close,
+Adjustments directly in a new I-Points view. _(I-Point Adjustments were retired
+in Slice 1, #214; the Balance is now Entries minus confirmed Redemptions.)_ A
+Boarder's I-Point Balance carries across months and never falls below zero. At each local month's close,
 a Boarder whose Balance is
 at least 5 is shown a pending Redemption: the largest tier at or below the
 Balance (5/10/15 → 1 day / 1 week / 1 calendar month) becomes a Phone
 Confiscation when staff confirm it, and the remainder carries forward. The
 pending Redemption is persisted, so its tier stays locked at creation. Every
-Entry, Adjustment, Redemption, and Confiscation is freely editable, voidable,
-or removable, with every change retained in an I-Point Audit History. Phone
+Entry, Redemption, and Confiscation is freely editable, voidable, or removable,
+with every change retained in an I-Point Audit History. _(I-Point Adjustment,
+retired in Slice 1, was editable in the same way.)_ Phone
 Confiscations surface alongside lateness Punishments: the Boarder Profile shows
 both, and the I-Points view flags a Confiscation as Stacked when a lateness
 Phone Hold applies at the same time. The phone is returned only once both gates
@@ -49,12 +57,14 @@ and the app never releases it on its own.
 7. As staff, I want a removal to keep a record of what was removed, so nothing
    vanishes silently.
 8. As staff, I want to add a signed I-Point Adjustment, so I can rebalance a
-   Boarder's I-Points without rewriting history.
+   Boarder's I-Points without rewriting history. _(Retired in Slice 1.)_
 9. As staff, I want to edit or remove an Adjustment, so corrections stay easy.
+   _(Retired in Slice 1.)_
 10. As staff, I want to see every Boarder's I-Point Balance at a glance.
 11. As staff, I want the Balance to combine Entries and Adjustments minus
     confirmed Redemptions, and never fall below zero, so it always reflects
-    what's outstanding.
+    what's outstanding. _(Adjustments retired in Slice 1; the Balance is now
+    Entries minus confirmed Redemptions.)_
 12. As staff, I want the Balance to carry across months, so unresolved points
     aren't lost.
 13. As staff, I want a pending Redemption to appear once a Boarder's Balance
@@ -105,7 +115,8 @@ and the app never releases it on its own.
     released, and voided sets.
 40. As staff, I want server-side validation: Entry points are positive integers,
     Adjustments are non-zero signed integers whose deduction may not exceed the
-    Balance, and required reasons are enforced.
+    Balance, and required reasons are enforced. _(The Adjustment rules were
+    retired in Slice 1.)_
 41. As staff, I want month-close evaluation to use the local calendar date, so a
     month closes at local midnight.
 42. As staff, I want back-dated Entries to change only the running Balance,
@@ -138,6 +149,9 @@ and the app never releases it on its own.
 
 ## Implementation Decisions
 
+> Adjustment decisions below are **retired** (Slice 1, #214); read them as
+> history, not as the system.
+
 - **New lifecycle module** alongside the Punishments module: owns Balance
   computation, pending-Redemption derivation, Redemption confirmation, the
   Confiscation lifecycle, edit/remove/void rules, and audit orchestration. The
@@ -152,7 +166,8 @@ and the app never releases it on its own.
   - `ipoint_entries`: id, normalized_name (Match Key), points (positive int),
     occurred_on (date), reason, recorded_at.
   - `ipoint_adjustments`: id, normalized_name, points (non-zero signed int),
-    reason, recorded_at.
+    reason, recorded_at. _(Retired in Slice 1; the table is dropped on the next
+    `create_schema`.)_
   - `confiscations`: id, normalized_name, display_name, bed (both frozen at
     confirmation), trigger_month, points_redeemed, tier, status
     (`pending | active | released | voided`), created_at, confirmed_at,
@@ -255,6 +270,8 @@ and the app never releases it on its own.
 
 ## Testing Decisions
 
+> Adjustment coverage below is **retired** (Slice 1, #214).
+
 - A good test asserts **external behavior** — the persisted outcome, the
   rendered page, or the computed figure — never which helper was called or how
   a row was written.
@@ -303,8 +320,8 @@ and the app never releases it on its own.
   ADR 0007 supersedes ADR 0005's derived-pending decision with a persisted
   pending Confiscation materialised on read.
 - `CONTEXT.md` carries the glossary: Irregularity Points, I-Point Entry,
-  I-Point Adjustment, I-Point Balance, I-Point Audit History, Redemption, Phone
-  Confiscation, and Stacked.
+  I-Point Balance, I-Point Audit History, Redemption, Phone Confiscation, and
+  Stacked (I-Point Adjustment was retired in Slice 1, #214).
 - "Stacked" is additive, not interchangeable: the phone is released only once
   both gates clear — the lateness Punishment is submitted and the Confiscation
   is released. This is the recorded interpretation of the grilling decision.

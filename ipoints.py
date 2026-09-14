@@ -15,7 +15,6 @@ from records import (
     AllTimeEntry,
     BoarderIdentity,
     Confiscation,
-    IPointAdjustment,
     IPointAudit,
     IPointAuditDraft,
     IPointAuditNote,
@@ -97,62 +96,6 @@ class ChangeRejected:
 @dataclass
 class EntryRejected(ChangeRejected):
     """The submitted I-Point Entry is not valid."""
-
-
-@dataclass
-class AdjustmentSaved:
-    """An I-Point Adjustment was added."""
-
-    normalized_name: str
-    display_name: str
-    points: int
-    reason: str
-
-    @property
-    def message(self) -> str:
-        return (
-            f"Added an adjustment of {points_phrase(self.points)} "
-            f"for {self.display_name}."
-        )
-
-
-@dataclass
-class AdjustmentEdited:
-    """An I-Point Adjustment's points or reason was corrected."""
-
-    normalized_name: str
-    display_name: str
-    points: int
-    reason: str
-
-    @property
-    def message(self) -> str:
-        return (
-            f"Updated {self.display_name}'s adjustment to "
-            f"{points_phrase(self.points)}."
-        )
-
-
-@dataclass
-class AdjustmentRemoved:
-    """An I-Point Adjustment was removed; its prior state stays in the audit."""
-
-    normalized_name: str
-    display_name: str
-    points: int
-    reason: str
-
-    @property
-    def message(self) -> str:
-        return (
-            f"Removed {self.display_name}'s adjustment of "
-            f"{points_phrase(self.points)}."
-        )
-
-
-@dataclass
-class AdjustmentRejected(ChangeRejected):
-    """The submitted I-Point Adjustment is not valid."""
 
 
 @dataclass
@@ -317,15 +260,14 @@ def resolve_display_name(
     return identity.display_name if identity is not None else normalized_name
 
 
-def _whole_int(text: str, *, signed: bool) -> "int | None":
-    """Parses a stripped integer string, optionally admitting a leading sign.
+def _whole_int(text: str) -> "int | None":
+    """Parses a stripped non-negative integer string.
 
     ``str.isdecimal`` (not ``str.isdigit``) gates the digits, so digit-class
     characters such as a superscript ``²`` — which pass ``isdigit`` but have no
     ``int`` value — are refused.
     """
-    body = text[1:] if signed and text[:1] in "+-" else text
-    if not body.isdecimal():
+    if not text.isdecimal():
         return None
     return int(text)
 
@@ -341,22 +283,7 @@ def _coerce_points(points) -> "int | None":
     if isinstance(points, int):
         return points
     if isinstance(points, str):
-        return _whole_int(points.strip(), signed=False)
-    return None
-
-
-def _coerce_signed_points(points) -> "int | None":
-    """Returns a signed integer candidate, or None for a non-whole-number value.
-
-    Like ``_coerce_points`` but admitting a leading sign, since an Adjustment
-    may subtract.
-    """
-    if isinstance(points, bool):
-        return None
-    if isinstance(points, int):
-        return points
-    if isinstance(points, str):
-        return _whole_int(points.strip(), signed=True)
+        return _whole_int(points.strip())
     return None
 
 
@@ -386,16 +313,6 @@ def _entry_fields(points: int, occurred_on: str, reason: str) -> dict[str, objec
 def _entry_state(entry: IPointEntry) -> dict[str, object]:
     """The auditable snapshot of one stored Entry's editable fields."""
     return _entry_fields(entry.points, entry.occurred_on, entry.reason)
-
-
-def _adjustment_fields(points: int, reason: str) -> dict[str, object]:
-    """The auditable snapshot of an Adjustment's user-editable fields."""
-    return {"points": points, "reason": reason}
-
-
-def _adjustment_state(adjustment: IPointAdjustment) -> dict[str, object]:
-    """The auditable snapshot of one stored Adjustment's editable fields."""
-    return _adjustment_fields(adjustment.points, adjustment.reason)
 
 
 def _confiscation_fields(
@@ -458,13 +375,11 @@ def _audit_draft(
 
 def _net_balance(
     entries: list[IPointEntry],
-    adjustments: list[IPointAdjustment],
     confiscations: list[Confiscation],
 ) -> int:
-    """Sums a ledger slice: Entries plus Adjustments minus confirmed redemptions."""
+    """Sums a ledger slice: Entries minus confirmed redemptions."""
     return (
         sum(entry.points for entry in entries)
-        + sum(adjustment.points for adjustment in adjustments)
         - sum(
             confiscation.points_redeemed
             for confiscation in confiscations
@@ -477,7 +392,6 @@ def _balance_for(conn, normalized_name: str) -> int:
     """Derives one boarder's current I-Point Balance from the ledger."""
     return _net_balance(
         storage.list_ipoint_entries(conn, normalized_name),
-        storage.list_ipoint_adjustments(conn, normalized_name),
         storage.list_ipoint_confiscations(conn, normalized_name),
     )
 
@@ -532,7 +446,6 @@ def _tier_for(balance: int) -> "int | None":
 
 def _balance_as_of(
     entries: list[IPointEntry],
-    adjustments: list[IPointAdjustment],
     confiscations: list[Confiscation],
     as_of: date,
 ) -> int:
@@ -546,11 +459,6 @@ def _balance_as_of(
     return _net_balance(
         [entry for entry in entries if _as_date(entry.recorded_at) <= as_of],
         [
-            adjustment
-            for adjustment in adjustments
-            if _as_date(adjustment.recorded_at) <= as_of
-        ],
-        [
             confiscation
             for confiscation in confiscations
             if confiscation.confirmed_at is not None
@@ -561,7 +469,6 @@ def _balance_as_of(
 
 def evaluate_month_close(
     entries: list[IPointEntry],
-    adjustments: list[IPointAdjustment],
     confiscations: list[Confiscation],
     today: str,
     recorded_months: "frozenset[str]" = frozenset(),
@@ -591,7 +498,7 @@ def evaluate_month_close(
     ):
         return None
 
-    tier = _tier_for(_balance_as_of(entries, adjustments, confiscations, month_end))
+    tier = _tier_for(_balance_as_of(entries, confiscations, month_end))
     if tier is None:
         return None
     return PendingRedemption(
@@ -604,7 +511,6 @@ class _BoarderLedger:
     """One boarder's grouped ledger rows for month-close evaluation."""
 
     entries: list[IPointEntry] = field(default_factory=list)
-    adjustments: list[IPointAdjustment] = field(default_factory=list)
     confiscations: list[Confiscation] = field(default_factory=list)
 
 
@@ -617,8 +523,6 @@ def _ledger_by_boarder(conn) -> dict[str, _BoarderLedger]:
 
     for entry in storage.list_ipoint_entries(conn):
         ledger_for(entry.normalized_name).entries.append(entry)
-    for adjustment in storage.list_ipoint_adjustments(conn):
-        ledger_for(adjustment.normalized_name).adjustments.append(adjustment)
     for confiscation in storage.list_ipoint_confiscations(conn):
         ledger_for(confiscation.normalized_name).confiscations.append(confiscation)
     return grouped
@@ -659,7 +563,6 @@ def pending_redemptions(
     for name, ledger in _ledger_by_boarder(conn).items():
         pending = evaluate_month_close(
             ledger.entries,
-            ledger.adjustments,
             ledger.confiscations,
             today,
             recorded.get(name, frozenset()),
@@ -1024,76 +927,6 @@ def remove_confiscation(
     )
 
 
-def _validate_adjustment(
-    normalized_name: str, points, reason: str
-) -> tuple[str, int, str] | AdjustmentRejected:
-    """Validates the shared Adjustment fields: name, non-zero points, reason."""
-    name = (normalized_name or "").strip()
-    if not name:
-        return AdjustmentRejected(reason="A boarder name is required.")
-
-    points_value = _coerce_signed_points(points)
-    if points_value is None or points_value == 0:
-        return AdjustmentRejected(
-            reason="Adjustment points must be a non-zero whole number."
-        )
-
-    clean_reason = (reason or "").strip()
-    if not clean_reason:
-        return AdjustmentRejected(reason="A reason is required.")
-
-    return name, points_value, clean_reason
-
-
-def add_adjustment(
-    conn,
-    normalized_name: str,
-    points,
-    reason: str,
-    recorded_at: str | None = None,
-) -> AdjustmentSaved | AdjustmentRejected:
-    """Validates and adds one signed I-Point Adjustment, auditing it atomically.
-
-    A positive Adjustment adds to the Balance; a subtraction may never take the
-    Balance below zero (ADR 0006), so it is capped at the current Balance. A
-    rejected submission writes nothing.
-    """
-    validated = _validate_adjustment(normalized_name, points, reason)
-    if isinstance(validated, AdjustmentRejected):
-        return validated
-    name, points_value, clean_reason = validated
-
-    if _balance_for(conn, name) + points_value < 0:
-        return AdjustmentRejected(reason=_OVERDRAW)
-
-    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    display_name = resolve_display_name(conn, name)
-
-    with conn:
-        adjustment_id = storage.stage_ipoint_adjustment(
-            conn, name, points_value, clean_reason, stamp
-        )
-        storage.stage_ipoint_audit(
-            conn,
-            _audit_draft(
-                "adjustment",
-                adjustment_id,
-                name,
-                "created",
-                None,
-                _adjustment_fields(points_value, clean_reason),
-                stamp,
-            ),
-        )
-
-    return AdjustmentSaved(
-        normalized_name=name,
-        display_name=display_name,
-        points=points_value,
-        reason=clean_reason,
-    )
-
-
 def log_entry(
     conn,
     normalized_name: str,
@@ -1272,103 +1105,6 @@ def remove_entry(
     )
 
 
-def edit_adjustment(
-    conn,
-    adjustment_id: int,
-    points,
-    reason: str,
-    recorded_at: str | None = None,
-) -> "AdjustmentEdited | AdjustmentRejected":
-    """Validates and applies an Adjustment edit, auditing the prior state.
-
-    The new signed value must be non-zero and its reason present. A change that
-    would drive the Balance below zero is refused (ADR 0006), writing nothing.
-    """
-    adjustment = storage.get_ipoint_adjustment(conn, adjustment_id)
-    if adjustment is None:
-        return AdjustmentRejected(reason="That I-Point Adjustment no longer exists.")
-
-    validated = _validate_adjustment(adjustment.normalized_name, points, reason)
-    if isinstance(validated, AdjustmentRejected):
-        return validated
-    _, points_value, clean_reason = validated
-
-    projected = _balance_for(conn, adjustment.normalized_name) - adjustment.points
-    if projected + points_value < 0:
-        return AdjustmentRejected(reason=_OVERDRAW)
-
-    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    display_name = resolve_display_name(conn, adjustment.normalized_name)
-
-    with conn:
-        storage.stage_update_ipoint_adjustment(
-            conn, adjustment_id, points_value, clean_reason
-        )
-        storage.stage_ipoint_audit(
-            conn,
-            _audit_draft(
-                "adjustment",
-                adjustment_id,
-                adjustment.normalized_name,
-                "edited",
-                _adjustment_state(adjustment),
-                _adjustment_fields(points_value, clean_reason),
-                stamp,
-            ),
-        )
-
-    return AdjustmentEdited(
-        normalized_name=adjustment.normalized_name,
-        display_name=display_name,
-        points=points_value,
-        reason=clean_reason,
-    )
-
-
-def remove_adjustment(
-    conn,
-    adjustment_id: int,
-    recorded_at: str | None = None,
-) -> "AdjustmentRemoved | AdjustmentRejected":
-    """Removes an Adjustment from the ledger, auditing the prior state.
-
-    A removal that would drive the Balance below zero is refused (ADR 0006),
-    writing nothing.
-    """
-    adjustment = storage.get_ipoint_adjustment(conn, adjustment_id)
-    if adjustment is None:
-        return AdjustmentRejected(reason="That I-Point Adjustment no longer exists.")
-
-    projected = _balance_for(conn, adjustment.normalized_name) - adjustment.points
-    if projected < 0:
-        return AdjustmentRejected(reason=_OVERDRAW)
-
-    stamp = recorded_at or datetime.now(tz=timezone.utc).isoformat()
-    display_name = resolve_display_name(conn, adjustment.normalized_name)
-
-    with conn:
-        storage.stage_delete_ipoint_adjustment(conn, adjustment_id)
-        storage.stage_ipoint_audit(
-            conn,
-            _audit_draft(
-                "adjustment",
-                adjustment_id,
-                adjustment.normalized_name,
-                "removed",
-                _adjustment_state(adjustment),
-                None,
-                stamp,
-            ),
-        )
-
-    return AdjustmentRemoved(
-        normalized_name=adjustment.normalized_name,
-        display_name=display_name,
-        points=adjustment.points,
-        reason=adjustment.reason,
-    )
-
-
 def _describe_change(action: str, before, after, entity_type: str) -> str:
     """Words one audit row's prior and new state for the history table."""
     if entity_type == "confiscation":
@@ -1535,11 +1271,8 @@ def _summary_for(
         normalized_name=key,
         display_name=who.display_name if who else key,
         bed=who.bed if who else "",
-        balance=_net_balance(
-            ledger.entries, ledger.adjustments, ledger.confiscations
-        ),
+        balance=_net_balance(ledger.entries, ledger.confiscations),
         entries=sorted(ledger.entries, key=lambda row: (row.occurred_on, row.id)),
-        adjustments=ledger.adjustments,
         audits=[_audit_note(audit) for audit in audits],
         pending=pending,
         confiscations=attach_confiscation_flags(ledger.confiscations, held, today),
@@ -1551,8 +1284,8 @@ def boarder_balances(
 ) -> list[IPointSummary]:
     """Derives each boarder's I-Point Balance and Confiscation state.
 
-    Balance is that Match Key's Entries plus Adjustments minus confirmed
-    Redemptions — never stored, so it cannot drift. A pending Redemption is
+    Balance is that Match Key's Entries minus confirmed Redemptions — never
+    stored, so it cannot drift. A pending Redemption is
     surfaced separately and does not debit the Balance (ADR 0007). Identity
     fields resolve freshest-first through the All-Time List, falling back to the
     Match Key for a boarder known only through I-Points. Summaries sort by the
@@ -1599,14 +1332,11 @@ def boarder_summary(
     if today is None:
         today = today_iso()
     entries = storage.list_ipoint_entries(conn, normalized_name)
-    adjustments = storage.list_ipoint_adjustments(conn, normalized_name)
     confiscations = storage.list_ipoint_confiscations(conn, normalized_name)
     audits = storage.list_ipoint_audit(conn, normalized_name)
-    if not (entries or adjustments or confiscations or audits):
+    if not (entries or confiscations or audits):
         return None
-    ledger = _BoarderLedger(
-        entries=entries, adjustments=adjustments, confiscations=confiscations
-    )
+    ledger = _BoarderLedger(entries=entries, confiscations=confiscations)
     who = storage.freshest_identity_map(conn).get(normalized_name)
     return _summary_for(
         normalized_name, ledger, who, phone_held_keys(conn), audits, today

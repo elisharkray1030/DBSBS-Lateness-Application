@@ -19,10 +19,6 @@ import ipoints
 import punishments
 import storage
 from ipoints import (
-    AdjustmentEdited,
-    AdjustmentRejected,
-    AdjustmentRemoved,
-    AdjustmentSaved,
     ConfiscationEdited,
     ConfiscationRejected,
     ConfiscationReleased,
@@ -36,7 +32,7 @@ from ipoints import (
     log_entry,
     release_due_for,
 )
-from records import IPointEntry
+from records import IPointAuditDraft, IPointEntry
 
 
 def _entry_id(conn, name="ALICE"):
@@ -44,11 +40,11 @@ def _entry_id(conn, name="ALICE"):
 
 
 def _seed_offset(conn, name, points):
-    """Writes a raw negative Entry to stand in for a subtractive Adjustment.
+    """Writes a raw negative Entry to reach a below-zero-prone ledger state.
 
     ADR 0006 ties the non-negative floor to a +N Entry offset by a −N debit.
-    Until Adjustments land (#178) the only way to reach that offsetting state
-    is a direct row, so the floor guard can be exercised now.
+    No lifecycle write can create that offsetting state, so a direct row is the
+    fixture that exercises the floor guards.
     """
     conn.execute(
         """
@@ -463,19 +459,10 @@ class TestMatchKeyMigration:
             VALUES ('entry', 1, 'CHEN, WEI', 'created', '2026-08-01T09:00:00+00:00')
             """
         )
-        conn.execute(
-            """
-            INSERT INTO ipoint_adjustments
-                (normalized_name, points, reason, recorded_at)
-            VALUES ('CHEN, WEI', 3, 'x', '2026-08-01T09:00:00+00:00')
-            """
-        )
-
         storage.create_schema(conn)
 
         assert storage.list_ipoint_entries(conn)[0].normalized_name == "CHEN WEI"
         assert storage.list_ipoint_audit(conn)[0].normalized_name == "CHEN WEI"
-        assert storage.list_ipoint_adjustments(conn)[0].normalized_name == "CHEN WEI"
 
 
 class TestIPointsPage:
@@ -517,6 +504,52 @@ class TestIPointsPage:
         html = self._page(fresh_client)
 
         assert "No I-Point Entries" in html
+
+
+class TestLegacyAdjustmentAudit:
+    """A pre-retirement Adjustment audit row must still render, not crash.
+
+    Adjustments were retired, but their audit rows survive. The audit
+    description must keep its adjustment branch, or an old row falls through
+    to the Entry branch and reads ``occurred_on`` — a KeyError on both the
+    I-Points view and the Boarder Profile.
+    """
+
+    def _seed_legacy_adjustment(self, conn):
+        storage.stage_ipoint_audit(
+            conn,
+            IPointAuditDraft(
+                entity_type="adjustment",
+                entity_id=1,
+                normalized_name="ALICE",
+                action="created",
+                before_state=None,
+                after_state=json.dumps({"points": 4, "reason": "Goodwill"}),
+                changed_at="2026-08-25T09:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    def test_ipoints_view_describes_the_legacy_adjustment(self, fresh_client):
+        with app_module.connect() as conn:
+            self._seed_legacy_adjustment(conn)
+
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        assert "Created adjustment of 4: Goodwill" in html
+
+    def test_boarder_profile_renders_with_a_legacy_adjustment(self, fresh_client):
+        with app_module.connect() as conn:
+            self._seed_legacy_adjustment(conn)
+
+        response = fresh_client.get("/boarder/ALICE")
+        html = response.get_data(as_text=True)
+
+        assert response.status_code == 200
+        # The profile deliberately omits audit history, so it must not claim
+        # there is no history at all; the audit note lives on /ipoints.
+        assert "Audit History" not in html
+        assert "No I-Point Entries or Confiscations for this boarder." in html
 
 
 class TestLogEntryRoute:
@@ -1139,554 +1172,6 @@ class TestIPointsEditRemoveBrowser:
         assert page.evaluate("() => window.__submitCalled").endswith("/remove")
 
 
-class TestAddAdjustment:
-    def test_adds_a_positive_adjustment_and_reports_success(self, conn):
-        outcome = ipoints.add_adjustment(
-            conn, normalized_name="ALICE", points=5, reason="Correction"
-        )
-
-        assert isinstance(outcome, AdjustmentSaved)
-        assert "5" in outcome.message
-        assert "ALICE" in outcome.message
-
-    def test_a_positive_adjustment_is_persisted(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 5, "Correction")
-
-        adjustments = storage.list_ipoint_adjustments(conn, "ALICE")
-
-        assert len(adjustments) == 1
-        assert adjustments[0].points == 5
-        assert adjustments[0].reason == "Correction"
-
-    def test_a_signed_string_value_is_accepted(self, conn):
-        seed_entry(conn, name="ALICE", points=5)
-
-        outcome = ipoints.add_adjustment(conn, "ALICE", "-3", "Correction")
-
-        assert isinstance(outcome, AdjustmentSaved)
-        assert storage.list_ipoint_adjustments(conn, "ALICE")[0].points == -3
-
-    def test_adjustment_writes_its_audit_row(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 5, "Correction")
-
-        audits = storage.list_ipoint_audit(conn, "ALICE")
-
-        assert len(audits) == 1
-        assert audits[0].entity_type == "adjustment"
-        assert audits[0].action == "created"
-        assert audits[0].before_state is None
-        assert json.loads(audits[0].after_state) == {
-            "points": 5,
-            "reason": "Correction",
-        }
-        assert audits[0].entity_id == storage.list_ipoint_adjustments(conn, "ALICE")[0].id
-
-    def test_zero_points_rejected(self, conn):
-        outcome = ipoints.add_adjustment(conn, "ALICE", 0, "Correction")
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert storage.list_ipoint_adjustments(conn) == []
-
-    def test_blank_reason_rejected(self, conn):
-        outcome = ipoints.add_adjustment(conn, "ALICE", 5, "  ")
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert "reason" in outcome.reason.lower()
-        assert storage.list_ipoint_adjustments(conn) == []
-
-    def test_non_integer_points_rejected(self, conn):
-        for points in ("five", "1.5", 1.5, True, "²"):
-            outcome = ipoints.add_adjustment(conn, "ALICE", points, "x")
-
-            assert isinstance(outcome, AdjustmentRejected)
-
-        assert storage.list_ipoint_adjustments(conn) == []
-
-    def test_blank_boarder_rejected(self, conn):
-        outcome = ipoints.add_adjustment(conn, "  ", 5, "x")
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert storage.list_ipoint_adjustments(conn) == []
-
-    def test_rejected_adjustment_writes_no_audit_row(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 0, "Correction")
-
-        assert storage.list_ipoint_audit(conn) == []
-
-
-class TestAdjustmentBalance:
-    def _summary(self, conn, name="ALICE"):
-        return next(
-            s for s in ipoints.boarder_balances(conn) if s.normalized_name == name
-        )
-
-    def test_balance_combines_entries_and_adjustments(self, conn):
-        seed_entry(conn, name="ALICE", points=5)
-        ipoints.add_adjustment(conn, "ALICE", -2, "Correction")
-
-        assert self._summary(conn).balance == 3
-
-    def test_a_positive_adjustment_raises_the_balance_alone(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 4, "Goodwill")
-
-        assert self._summary(conn).balance == 4
-
-    def test_summary_carries_the_adjustments(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 2, "Goodwill")
-
-        adjustments = self._summary(conn).adjustments
-
-        assert len(adjustments) == 1
-        assert adjustments[0].points == 2
-        assert adjustments[0].reason == "Goodwill"
-
-    def test_a_subtraction_equal_to_the_balance_is_allowed(self, conn):
-        seed_entry(conn, name="ALICE", points=5)
-
-        outcome = ipoints.add_adjustment(conn, "ALICE", -5, "Clear")
-
-        assert isinstance(outcome, AdjustmentSaved)
-        assert self._summary(conn).balance == 0
-
-    def test_a_subtraction_beyond_the_balance_is_refused(self, conn):
-        seed_entry(conn, name="ALICE", points=5)
-
-        outcome = ipoints.add_adjustment(conn, "ALICE", -6, "Too much")
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert "below zero" in outcome.reason.lower()
-        assert storage.list_ipoint_adjustments(conn) == []
-        assert [a.action for a in storage.list_ipoint_audit(conn, "ALICE")] == [
-            "created"
-        ]
-
-
-class TestEditAdjustment:
-    def test_edits_points_and_reason(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-        adjustment_id = _adjustment_id(conn)
-
-        outcome = ipoints.edit_adjustment(conn, adjustment_id, 2, "corrected")
-
-        assert isinstance(outcome, AdjustmentEdited)
-        adjustment = storage.list_ipoint_adjustments(conn)[0]
-        assert adjustment.points == 2
-        assert adjustment.reason == "corrected"
-
-    def test_a_signed_edit_can_flip_the_sign(self, conn):
-        seed_entry(conn, name="ALICE", points=5)
-        ipoints.add_adjustment(conn, "ALICE", 2, "first")
-
-        outcome = ipoints.edit_adjustment(conn, _adjustment_id(conn), -4, "flip")
-
-        assert isinstance(outcome, AdjustmentEdited)
-        assert storage.list_ipoint_adjustments(conn)[0].points == -4
-
-    def test_edit_retains_the_prior_state_in_the_audit(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-        adjustment_id = _adjustment_id(conn)
-
-        ipoints.edit_adjustment(conn, adjustment_id, 2, "corrected")
-
-        audits = storage.list_ipoint_audit(conn, "ALICE")
-        assert [audit.action for audit in audits] == ["edited", "created"]
-        assert audits[0].entity_type == "adjustment"
-        assert audits[0].entity_id == adjustment_id
-        assert json.loads(audits[0].before_state) == {"points": 3, "reason": "first"}
-        assert json.loads(audits[0].after_state) == {
-            "points": 2,
-            "reason": "corrected",
-        }
-
-    def test_edit_message_names_the_boarder(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-
-        outcome = ipoints.edit_adjustment(conn, _adjustment_id(conn), 2, "x")
-
-        assert "ALICE" in outcome.message
-
-    def test_edit_rejects_zero_points_without_writing(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-
-        outcome = ipoints.edit_adjustment(conn, _adjustment_id(conn), 0, "x")
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert storage.list_ipoint_adjustments(conn)[0].points == 3
-        assert [audit.action for audit in storage.list_ipoint_audit(conn)] == ["created"]
-
-    def test_edit_rejects_a_blank_reason(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-
-        outcome = ipoints.edit_adjustment(conn, _adjustment_id(conn), 2, "  ")
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert storage.list_ipoint_adjustments(conn)[0].reason == "first"
-
-    def test_edit_unknown_adjustment_rejected(self, conn):
-        outcome = ipoints.edit_adjustment(conn, 999, 2, "x")
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert storage.list_ipoint_audit(conn) == []
-
-    def test_edit_that_would_go_negative_is_refused(self, conn):
-        seed_entry(conn, name="ALICE", points=5)
-        ipoints.add_adjustment(conn, "ALICE", -3, "first")
-        adjustment_id = _adjustment_id(conn)
-
-        outcome = ipoints.edit_adjustment(conn, adjustment_id, -6, "too far")
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert storage.list_ipoint_adjustments(conn)[0].points == -3
-
-
-class TestRemoveAdjustment:
-    def test_remove_deletes_the_adjustment_and_keeps_the_audit(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-
-        outcome = ipoints.remove_adjustment(conn, _adjustment_id(conn))
-
-        assert isinstance(outcome, AdjustmentRemoved)
-        assert storage.list_ipoint_adjustments(conn) == []
-        audits = storage.list_ipoint_audit(conn, "ALICE")
-        assert [audit.action for audit in audits] == ["removed", "created"]
-        assert json.loads(audits[0].before_state) == {"points": 3, "reason": "first"}
-        assert audits[0].entity_type == "adjustment"
-
-    def test_remove_message_names_the_boarder(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-
-        outcome = ipoints.remove_adjustment(conn, _adjustment_id(conn))
-
-        assert "ALICE" in outcome.message
-
-    def test_remove_unknown_adjustment_rejected(self, conn):
-        outcome = ipoints.remove_adjustment(conn, 999)
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert storage.list_ipoint_audit(conn) == []
-
-    def test_removing_a_positive_adjustment_that_covers_a_debt_is_allowed(self, conn):
-        seed_entry(conn, name="ALICE", points=5)
-        ipoints.add_adjustment(conn, "ALICE", -5, "offset")
-
-        outcome = ipoints.remove_adjustment(conn, _adjustment_id(conn))
-
-        assert isinstance(outcome, AdjustmentRemoved)
-        assert ipoints.boarder_balances(conn)[0].balance == 5
-
-    def test_removing_a_positive_adjustment_that_would_go_negative_is_refused(self, conn):
-        _seed_offset(conn, "ALICE", -2)
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-
-        outcome = ipoints.remove_adjustment(conn, _adjustment_id(conn))
-
-        assert isinstance(outcome, AdjustmentRejected)
-        assert "below zero" in outcome.reason.lower()
-        assert len(storage.list_ipoint_adjustments(conn)) == 1
-
-
-class TestAdjustmentAuditHistory:
-    def test_summary_carries_newest_first_adjustment_notes(self, conn):
-        ipoints.add_adjustment(conn, "ALICE", 3, "first")
-        adjustment_id = storage.list_ipoint_adjustments(conn, "ALICE")[0].id
-        ipoints.edit_adjustment(conn, adjustment_id, 2, "corrected")
-
-        summary = next(
-            s for s in ipoints.boarder_balances(conn) if s.normalized_name == "ALICE"
-        )
-
-        assert [note.action for note in summary.audits] == ["Edited", "Created"]
-        assert "first" in summary.audits[0].description
-        assert "corrected" in summary.audits[0].description
-
-
-def _adjustment_id(conn, name="ALICE"):
-    return storage.list_ipoint_adjustments(conn, name)[0].id
-
-
-class TestAdjustmentForm:
-    def _page(self, client):
-        response = client.get("/ipoints")
-        assert response.status_code == 200
-        return response.get_data(as_text=True)
-
-    def test_page_has_a_labelled_adjustment_form(self, fresh_client):
-        html = self._page(fresh_client)
-
-        assert 'action="/ipoints/adjustments"' in html
-        assert 'for="adjustment-boarder"' in html
-        assert 'for="adjustment-points"' in html
-        assert 'for="adjustment-reason"' in html
-
-    def test_ledger_has_a_type_column(self, fresh_client):
-        post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "4", "reason": "Goodwill"},
-        )
-        html = self._page(fresh_client)
-        header = html[html.index("<thead>") : html.index("</thead>")]
-
-        assert "Type" in header
-        assert "Entry" in html
-        assert "Adjustment" in html
-
-
-class TestAddAdjustmentRoute:
-    def test_adding_redirects_and_lists_the_adjustment(self, fresh_client):
-        response = post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "4", "reason": "Goodwill"},
-        )
-
-        assert response.status_code == 302
-        assert response.headers["Location"].endswith("/ipoints")
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-        assert "Goodwill" in html
-        assert "Balance: 4" in html
-        assert "Adjustment" in html
-
-    def test_zero_points_shows_error_and_saves_nothing(self, fresh_client):
-        post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "0", "reason": "x"},
-        )
-
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-        assert "banner-error" in html
-        assert "No I-Point Entries" in html
-
-    def test_subtraction_beyond_the_balance_shows_error(self, fresh_client):
-        post_csrf(
-            fresh_client,
-            "/ipoints/entries",
-            data={
-                "boarder": "Alice",
-                "points": "5",
-                "occurred_on": "2026-08-01",
-                "reason": "x",
-            },
-        )
-        post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "-6", "reason": "Too much"},
-        )
-
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-        assert "banner-error" in html
-        assert "below zero" in html.lower()
-
-    def test_adding_without_csrf_is_rejected(self, fresh_client):
-        response = fresh_client.post(
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "4", "reason": "Goodwill"},
-        )
-
-        assert response.status_code == 403
-        with app_module.connect() as conn:
-            assert storage.list_ipoint_adjustments(conn) == []
-
-
-class TestEditAdjustmentRoute:
-    def _seed(self, fresh_client):
-        post_csrf(
-            fresh_client,
-            "/ipoints/entries",
-            data={
-                "boarder": "Alice",
-                "points": "5",
-                "occurred_on": "2026-08-01",
-                "reason": "entry",
-            },
-        )
-        post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "4", "reason": "Goodwill"},
-        )
-        with app_module.connect() as conn:
-            return _adjustment_id(conn)
-
-    def test_edit_updates_the_adjustment_and_flashes_success(self, fresh_client):
-        adjustment_id = self._seed(fresh_client)
-
-        response = post_csrf(
-            fresh_client,
-            f"/ipoints/adjustments/{adjustment_id}/edit",
-            data={"points": "-2", "reason": "corrected"},
-        )
-
-        assert response.status_code == 302
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-        assert "corrected" in html
-        assert "Balance: 3" in html
-        assert "banner-success" in html
-
-    def test_edit_invalid_points_shows_error_and_keeps_the_adjustment(self, fresh_client):
-        adjustment_id = self._seed(fresh_client)
-
-        post_csrf(
-            fresh_client,
-            f"/ipoints/adjustments/{adjustment_id}/edit",
-            data={"points": "0", "reason": "x"},
-        )
-
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-        assert "banner-error" in html
-        assert 'value="Goodwill"' in html
-
-    def test_edit_without_csrf_is_rejected(self, fresh_client):
-        adjustment_id = self._seed(fresh_client)
-
-        response = fresh_client.post(
-            f"/ipoints/adjustments/{adjustment_id}/edit",
-            data={"points": "2", "reason": "corrected"},
-        )
-
-        assert response.status_code == 403
-        with app_module.connect() as conn:
-            assert storage.list_ipoint_adjustments(conn)[0].points == 4
-
-    def test_overdraw_refusal_is_surfaced_as_page_feedback(self, fresh_client):
-        adjustment_id = self._seed(fresh_client)
-
-        post_csrf(
-            fresh_client,
-            f"/ipoints/adjustments/{adjustment_id}/edit",
-            data={"points": "-6", "reason": "too far"},
-        )
-
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-        assert "banner-error" in html
-        assert "below zero" in html.lower()
-        with app_module.connect() as conn:
-            assert storage.list_ipoint_adjustments(conn)[0].points == 4
-
-
-class TestRemoveAdjustmentRoute:
-    def _seed(self, fresh_client):
-        post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "4", "reason": "Goodwill"},
-        )
-        with app_module.connect() as conn:
-            return _adjustment_id(conn)
-
-    def test_remove_deletes_the_adjustment_and_keeps_the_audit(self, fresh_client):
-        adjustment_id = self._seed(fresh_client)
-
-        response = post_csrf(
-            fresh_client, f"/ipoints/adjustments/{adjustment_id}/remove"
-        )
-
-        assert response.status_code == 302
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-        assert "Balance: 0" in html
-        assert "Audit History" in html
-        assert "Goodwill" in html
-        assert "adjustment" in html.lower()
-
-    def test_remove_without_csrf_is_rejected(self, fresh_client):
-        adjustment_id = self._seed(fresh_client)
-
-        response = fresh_client.post(f"/ipoints/adjustments/{adjustment_id}/remove")
-
-        assert response.status_code == 403
-        with app_module.connect() as conn:
-            assert len(storage.list_ipoint_adjustments(conn)) == 1
-
-    def test_overdraw_refusal_is_surfaced_as_page_feedback(self, fresh_client):
-        with app_module.connect() as conn:
-            _seed_offset(conn, "ALICE", -2)
-        post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "3", "reason": "Goodwill"},
-        )
-        with app_module.connect() as conn:
-            adjustment_id = _adjustment_id(conn)
-
-        post_csrf(fresh_client, f"/ipoints/adjustments/{adjustment_id}/remove")
-
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-        assert "banner-error" in html
-        assert "below zero" in html.lower()
-        with app_module.connect() as conn:
-            assert len(storage.list_ipoint_adjustments(conn, "ALICE")) == 1
-
-
-class TestAdjustmentEditingControls:
-    def test_page_renders_labelled_adjustment_edit_and_remove_controls(self, fresh_client):
-        post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "4", "reason": "Goodwill"},
-        )
-        with app_module.connect() as conn:
-            adjustment_id = _adjustment_id(conn)
-
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-
-        assert f'action="/ipoints/adjustments/{adjustment_id}/edit"' in html
-        assert f'action="/ipoints/adjustments/{adjustment_id}/remove"' in html
-        assert f'form="ipoint-adjustment-edit-{adjustment_id}"' in html
-        assert f'form="ipoint-adjustment-remove-{adjustment_id}"' in html
-        assert 'aria-label="Reason for adjustment' in html
-        assert 'aria-label="Remove adjustment from' in html
-
-
-class TestAdjustmentBrowser:
-    def test_adjustment_inline_edit_and_remove_are_keyboard_operable(
-        self, fresh_client, browser_page
-    ):
-        post_csrf(
-            fresh_client,
-            "/ipoints/adjustments",
-            data={"boarder": "Alice", "points": "4", "reason": "Goodwill"},
-        )
-        html = fresh_client.get("/ipoints").get_data(as_text=True)
-
-        page = browser_page
-        page.set_content(html)
-        _stub_form_submit(page)
-        page.evaluate(
-            """() => {
-                window.__adjustmentPayload = null;
-                window.__adjustmentAction = null;
-                document.querySelector('form[id^="ipoint-adjustment-edit-"]').addEventListener('submit', event => {
-                    event.preventDefault();
-                    const form = event.target;
-                    window.__adjustmentAction = form.getAttribute('action');
-                    window.__adjustmentPayload = Object.fromEntries(new FormData(form).entries());
-                });
-            }"""
-        )
-
-        reason = page.locator('input[aria-label^="Reason for adjustment"]')
-        reason.fill("corrected")
-        page.locator('button[form^="ipoint-adjustment-edit-"]').focus()
-        page.keyboard.press("Enter")
-
-        payload = page.evaluate("() => window.__adjustmentPayload")
-        assert payload is not None
-        assert payload["reason"] == "corrected"
-        assert payload["points"] == "4"
-        assert page.evaluate("() => window.__adjustmentAction").endswith("/edit")
-
-        page.locator('button[form^="ipoint-adjustment-remove-"]').focus()
-        page.keyboard.press("Enter")
-
-        assert page.locator("#confirmModal.show").count() == 1
-        message = page.locator("#confirm-modal-message").text_content()
-        assert "ALICE" in message.upper()
-        page.keyboard.press("Enter")
-        assert page.evaluate("() => window.__submitCalled").endswith("/remove")
-
-
 # --- #179 Pending Redemption and Phone Confiscation confirmation -------------
 
 
@@ -1737,7 +1222,7 @@ class TestMonthCloseEvaluation:
     )
     def test_tier_is_largest_at_or_below_balance_capped_at_15(self, balance, tier):
         pending = evaluate_month_close(
-            [self._entry(points=balance)], [], [], "2026-09-12"
+            [self._entry(points=balance)], [], "2026-09-12"
         )
 
         assert (pending.tier if pending else None) == tier
@@ -1931,13 +1416,7 @@ class TestConfirmRedemption:
         seed_entry(conn, points=10)
         _materialise(conn)
         row = _open_row(conn)
-        ipoints.add_adjustment(
-            conn,
-            "ALICE",
-            -6,
-            "offset",
-            recorded_at="2026-09-01T09:00:00+00:00",
-        )
+        _seed_offset(conn, "ALICE", -6)
 
         outcome = ipoints.confirm_redemption(conn, row.id, today="2026-09-15")
 
@@ -2094,13 +1573,7 @@ class TestRedemptionRoutes:
         self._seed_pending(fresh_client, points=10)
         row_id = self._open_id()
         with app_module.connect() as conn:
-            ipoints.add_adjustment(
-                conn,
-                "ALICE",
-                -6,
-                "offset",
-                recorded_at="2026-09-01T09:00:00+00:00",
-            )
+            _seed_offset(conn, "ALICE", -6)
 
         response = post_csrf(
             fresh_client, f"/ipoints/confiscations/{row_id}/confirm"

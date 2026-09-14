@@ -42,32 +42,6 @@
             </form>
         </div>
 
-        <div class="upload-panel">
-            <h3 class="upload-title">Add I-Point Adjustment</h3>
-            <form action="/ipoints/adjustments" method="post">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div class="form-row">
-                    <div class="form-field">
-                        <label for="adjustment-boarder"><strong>Boarder Name</strong></label>
-                        <input type="text" id="adjustment-boarder" name="boarder"
-                               list="ipoint-boarders" autocomplete="off" required>
-                    </div>
-                    <div class="form-field">
-                        <label for="adjustment-points"><strong>Points</strong></label>
-                        <input type="number" id="adjustment-points" name="points"
-                               step="1" required>
-                    </div>
-                    <div class="form-field">
-                        <label for="adjustment-reason"><strong>Reason</strong></label>
-                        <input type="text" id="adjustment-reason" name="reason" required>
-                    </div>
-                    <div>
-                        <button type="submit" class="btn btn-primary">Add Adjustment</button>
-                    </div>
-                </div>
-            </form>
-        </div>
-
         <div class="upload-panel" id="confiscations">
             <h3 class="upload-title">Phone Confiscations</h3>
             <form action="/ipoints" method="get" class="ipoint-filter-form">
@@ -212,7 +186,7 @@
                     </div>
                 </div>
                 {% endif %}
-                {% if summary.entries or summary.adjustments %}
+                {% if summary.entries %}
                 <div class="table-scroll">
                     <table class="ipoints-table">
                         <thead>
@@ -262,42 +236,6 @@
                                     <button type="submit" form="ipoint-remove-{{ entry.id }}"
                                             class="btn btn-danger btn-sm"
                                             aria-label="Remove entry from {{ entry.occurred_on }}">Remove</button>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                            {% for adjustment in summary.adjustments %}
-                            <tr data-adjustment-id="{{ adjustment.id }}">
-                                <td>Adjustment</td>
-                                <td>—</td>
-                                <td>
-                                    <input type="number" name="points"
-                                           form="ipoint-adjustment-edit-{{ adjustment.id }}"
-                                           step="1" value="{{ adjustment.points }}"
-                                           aria-label="Points for adjustment {{ adjustment.id }}" required>
-                                </td>
-                                <td>
-                                    <input type="text" name="reason"
-                                           form="ipoint-adjustment-edit-{{ adjustment.id }}"
-                                           value="{{ adjustment.reason }}"
-                                           aria-label="Reason for adjustment {{ adjustment.id }}" required>
-                                </td>
-                                <td class="ipoint-row-actions">
-                                    <form id="ipoint-adjustment-edit-{{ adjustment.id }}"
-                                          action="/ipoints/adjustments/{{ adjustment.id }}/edit" method="post">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                    </form>
-                                    <form id="ipoint-adjustment-remove-{{ adjustment.id }}"
-                                          class="ipoint-remove-form"
-                                          action="/ipoints/adjustments/{{ adjustment.id }}/remove" method="post"
-                                          data-remove-title="Remove I-Point Adjustment?"
-                                          data-remove-message="Remove the {{ adjustment.points }} I-Point Adjustment for {{ summary.display_name }}? It leaves the Balance but stays in the Audit History.">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                    </form>
-                                    <button type="submit" form="ipoint-adjustment-edit-{{ adjustment.id }}"
-                                            class="btn btn-primary btn-sm">Save</button>
-                                    <button type="submit" form="ipoint-adjustment-remove-{{ adjustment.id }}"
-                                            class="btn btn-danger btn-sm"
-                                            aria-label="Remove adjustment from {{ adjustment.reason }}">Remove</button>
                                 </td>
                             </tr>
                             {% endfor %}
