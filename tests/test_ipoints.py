@@ -1157,7 +1157,7 @@ class TestIPointsEditRemoveBrowser:
             """() => {
                 window.__editPayload = null;
                 window.__editAction = null;
-                document.querySelector('form[id^="ipoint-edit-"]').addEventListener('submit', event => {
+                document.querySelector('.ipoint-entry-edit-form').addEventListener('submit', event => {
                     event.preventDefault();
                     const form = event.target;
                     window.__editAction = form.getAttribute('action');
@@ -1168,7 +1168,7 @@ class TestIPointsEditRemoveBrowser:
 
         reason = page.locator('input[aria-label^="Reason for entry"]')
         reason.fill("corrected")
-        page.locator('button[form^="ipoint-edit-"]').focus()
+        page.locator(".ipoint-entry-save").focus()
         page.keyboard.press("Enter")
 
         payload = page.evaluate("() => window.__editPayload")

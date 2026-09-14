@@ -176,9 +176,13 @@
         });
     });
 
+    // A Save or a confirmed Remove is a deliberate navigation, not an
+    // abandoned edit: those submissions silence the unload guard below. The
+    // flag resets when the page is restored from the back/forward cache.
+    let entrySubmitting = false;
+
     // Removing an I-Point Entry is destructive but audited: route it through
-    // the shared confirm dialog, whose wording each form carries. A confirmed
-    // Remove is a deliberate navigation, so it silences the unload guard.
+    // the shared confirm dialog, whose wording each form carries.
     document.querySelectorAll('form.ipoint-remove-form').forEach(form => {
         form.addEventListener('submit', function(event) {
             event.preventDefault();
@@ -600,14 +604,13 @@
         boarderCancelButton.addEventListener('click', discardBoarderEdits);
     }
 
-    // Saving or confirming a Remove is a deliberate navigation, not an
-    // abandoned edit, so those submissions silence the unload guard below.
-    // The flag resets when the page is restored from the back/forward cache.
+    // Entry rows only exist on /ipoints; this returns false everywhere else.
     function hasDirtyEntryRow() {
         return [...document.querySelectorAll('tr[data-entry-id]')].some(entryRowIsDirty);
     }
 
-    let entrySubmitting = false;
+    // Saving an Entry edit is the same deliberate navigation as a confirmed
+    // Remove, so it sets the flag the unload guard reads.
     document.querySelectorAll('form.ipoint-entry-edit-form').forEach(form => {
         form.addEventListener('submit', () => { entrySubmitting = true; });
     });
