@@ -596,10 +596,34 @@
         boarderCancelButton.addEventListener('click', discardBoarderEdits);
     }
 
+    // Saving or removing an Entry is a deliberate navigation, not an
+    // abandoned edit, so those submissions silence the unload guard below.
+    // Cancelling the confirm modal re-arms it.
+    function hasDirtyEntryRow() {
+        return [...document.querySelectorAll('tr[data-entry-id]')].some(entryRowIsDirty);
+    }
+
+    let entrySubmitting = false;
+    document.querySelectorAll('form[id^="ipoint-edit-"], form[id^="ipoint-remove-"]').forEach(form => {
+        form.addEventListener('submit', () => { entrySubmitting = true; });
+    });
+    window.addEventListener('pageshow', () => { entrySubmitting = false; });
+
+    const confirmModal = document.getElementById('confirmModal');
+    if (confirmModal) {
+        confirmModal.querySelector('.btn-neutral').addEventListener('click', () => {
+            entrySubmitting = false;
+        });
+        confirmModal.addEventListener('keydown', event => {
+            if (event.key === 'Escape') entrySubmitting = false;
+        });
+    }
+
     // Unsaved-edit guard for full page navigation (brand link, Back, refresh).
     // Tab clicks keep their own in-page confirm guard above.
     window.addEventListener('beforeunload', function(event) {
-        if (hasDirtyBoarderRow()) {
+        if (entrySubmitting) return;
+        if (hasDirtyBoarderRow() || hasDirtyEntryRow()) {
             event.preventDefault();
             event.returnValue = '';
             return '';

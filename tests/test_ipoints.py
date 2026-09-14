@@ -1125,6 +1125,17 @@ def _stub_form_submit(page):
     )
 
 
+def _beforeunload_cancelled(page):
+    """Dispatches a cancelable beforeunload and reports whether it was cancelled."""
+    return page.evaluate(
+        """() => {
+            const event = new Event('beforeunload', { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        }"""
+    )
+
+
 class TestIPointsEditRemoveBrowser:
     def test_inline_edit_and_remove_are_keyboard_operable(self, fresh_client, browser_page):
         post_csrf(
@@ -2512,3 +2523,53 @@ class TestIPointsInteractions:
 
         page.locator('button[form^="ipoint-remove-"]').click()
         assert page.locator("#confirmModal.show").count() == 1
+
+    # --- Unsaved-edit navigation guard ---
+
+    def test_dirty_entry_row_arms_the_navigation_guard(self, fresh_client, browser_page):
+        page = browser_page
+        page.set_content(self._entry_html(fresh_client))
+
+        assert _beforeunload_cancelled(page) is False
+
+        reason = page.locator('.ipoint-entry-field[name="reason"]')
+        reason.fill("corrected")
+        assert _beforeunload_cancelled(page) is True
+
+        reason.fill("Repeated disruption")
+        assert _beforeunload_cancelled(page) is False
+
+    def test_saving_the_row_does_not_arm_the_navigation_guard(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(self._entry_html(fresh_client))
+
+        page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
+        page.evaluate(
+            """() => {
+                document.querySelector('form[id^="ipoint-edit-"]').dispatchEvent(
+                    new Event('submit', { cancelable: true, bubbles: true })
+                );
+            }"""
+        )
+
+        assert _beforeunload_cancelled(page) is False
+
+    def test_cancelling_the_confirm_modal_re_arms_the_navigation_guard(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(self._entry_html(fresh_client))
+
+        page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
+
+        for cancel in ("keyboard", "button"):
+            page.locator('button[form^="ipoint-remove-"]').click()
+            assert page.locator("#confirmModal.show").count() == 1
+            if cancel == "keyboard":
+                page.keyboard.press("Escape")
+            else:
+                page.locator("#confirmModal .btn-neutral").click()
+            assert page.locator("#confirmModal.show").count() == 0
+            assert _beforeunload_cancelled(page) is True, cancel
