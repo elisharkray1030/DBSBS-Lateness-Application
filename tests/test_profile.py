@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from helpers import (
+    control_rects,
     post_csrf,
     record,
     seed_ipoint_entry,
@@ -1100,20 +1101,15 @@ class TestProfileIPointQuickLog:
         page = browser_page
         page.set_content(html)
 
-        rects = page.evaluate(
-            """() => {
-                const form = document.querySelector('form[action="/boarder/ALICE/ipoints"]');
-                const els = [
-                    form.querySelector('#ipoint-quick-points'),
-                    form.querySelector('#ipoint-quick-occurred-on'),
-                    form.querySelector('#ipoint-quick-reason'),
-                    form.querySelector('button[type="submit"]'),
-                ];
-                return els.map(el => {
-                    const r = el.getBoundingClientRect();
-                    return {bottom: r.bottom, left: r.left};
-                });
-            }"""
+        rects = control_rects(
+            page,
+            'form[action="/boarder/ALICE/ipoints"]',
+            [
+                "#ipoint-quick-points",
+                "#ipoint-quick-occurred-on",
+                "#ipoint-quick-reason",
+                'button[type="submit"]',
+            ],
         )
         bottoms = [r["bottom"] for r in rects]
         lefts = [r["left"] for r in rects]

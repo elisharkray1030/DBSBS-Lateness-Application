@@ -12,6 +12,7 @@ import pytest
 from helpers import (
     assert_late_bed_not_bold,
     assert_late_name_bold,
+    control_rects,
     delete_csrf,
     history_panel_html,
     month_row,
@@ -4265,24 +4266,11 @@ class TestIPointsEntryFormStyling:
         assert styles["number"]["fontFamily"] == styles["body"], styles
         assert styles["date"]["fontFamily"] == styles["body"], styles
 
-    def _control_rects(self, page, form_selector, control_selectors):
-        return page.evaluate(
-            """({formSelector, controlSelectors}) => {
-                const form = document.querySelector(formSelector);
-                return controlSelectors.map(selector => {
-                    const el = form.querySelector(selector);
-                    const r = el.getBoundingClientRect();
-                    return {bottom: r.bottom, left: r.left};
-                });
-            }""",
-            {"formSelector": form_selector, "controlSelectors": control_selectors},
-        )
-
     def test_entry_form_lays_out_in_one_row_on_desktop(self, fresh_client, browser_page):
         page = browser_page
         page.set_content(fresh_client.get("/ipoints").get_data(as_text=True))
 
-        rects = self._control_rects(
+        rects = control_rects(
             page,
             'form[action="/ipoints/entries"]',
             [
@@ -4305,7 +4293,7 @@ class TestIPointsEntryFormStyling:
         try:
             page.set_content(fresh_client.get("/ipoints").get_data(as_text=True))
 
-            rects = self._control_rects(
+            rects = control_rects(
                 page,
                 'form[action="/ipoints/entries"]',
                 [
