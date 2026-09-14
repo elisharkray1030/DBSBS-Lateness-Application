@@ -31,8 +31,9 @@ at least 5 is shown a pending Redemption: the largest tier at or below the
 Balance (5/10/15 → 1 day / 1 week / 1 calendar month) becomes a Phone
 Confiscation when staff confirm it, and the remainder carries forward. The
 pending Redemption is persisted, so its tier stays locked at creation. Every
-Entry, Adjustment, Redemption, and Confiscation is freely editable, voidable,
-or removable, with every change retained in an I-Point Audit History. Phone
+Entry, Redemption, and Confiscation is freely editable, voidable, or removable,
+with every change retained in an I-Point Audit History. _(I-Point Adjustment,
+retired in Slice 1, was editable in the same way.)_ Phone
 Confiscations surface alongside lateness Punishments: the Boarder Profile shows
 both, and the I-Points view flags a Confiscation as Stacked when a lateness
 Phone Hold applies at the same time. The phone is returned only once both gates
