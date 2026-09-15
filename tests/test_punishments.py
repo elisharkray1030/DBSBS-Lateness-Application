@@ -369,6 +369,26 @@ class TestPunishmentAudit:
         assert row.void_reason == "left school"
         assert self._punishment_audits(conn, punishment.id)[0].note == "left school"
 
+    def test_failed_assignment_audit_stage_rolls_back_the_punishments(
+        self, conn, monkeypatch
+    ):
+        def boom(*args, **kwargs):
+            raise RuntimeError("audit boom")
+
+        monkeypatch.setattr(storage, "stage_discipline_audit", boom)
+
+        with pytest.raises(RuntimeError):
+            assign_batch(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                exemptions=set(),
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+
+        assert storage.list_punishments(conn) == []
+
     def test_failed_audit_stage_rolls_back_the_status_write(self, conn, monkeypatch):
         punishment = self._assign_one(conn)
 

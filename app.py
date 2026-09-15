@@ -308,9 +308,10 @@ def connect(read_only: bool = False) -> "Iterator[sqlite3.Connection]":
     state-changing routes and startup init use the default read-write form.
 
     The connection owns the transaction: a clean exit commits, an exception
-    rolls back, and the connection always closes. This lets the lifecycle
-    functions stage their writes without committing, while direct callers
-    still persist.
+    rolls back, and it always closes. This lets the lifecycle functions stage
+    the record and its Discipline Audit row without committing (they also wrap
+    in ``with conn:`` so a raw connection behaves the same), while direct
+    callers that stage a single write still persist.
     """
     db_path = _db_path()
     if read_only and db_path != ":memory:":
@@ -1714,7 +1715,6 @@ def _punishments_redirect():
 def transition_punishment(punishment_id):
     target = request.form.get('to', '').strip()
     note = request.form.get('note', '').strip() or None
-    void_reason = request.form.get('void_reason', '').strip() or None
 
     def attempt():
         with connect() as conn:
@@ -1722,7 +1722,6 @@ def transition_punishment(punishment_id):
                 conn,
                 punishment_id=punishment_id,
                 target=target,
-                void_reason=void_reason,
                 note=note,
             )
 
