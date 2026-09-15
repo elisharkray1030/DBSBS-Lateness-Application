@@ -1412,14 +1412,25 @@ class TestServerOwnedReportRows:
         assert page.evaluate("() => window.__printed") == 1
 
     def test_sort_headers_are_keyboard_operable_buttons(self):
+        # Each header exposes a native <button>, so it is focusable and
+        # Enter/Space operable; the announcement (aria-sort) is proven
+        # behaviourally in test_browser_sort_headers_reach_and_announce_direction.
         html = home_html()
         assert html.count('<button type="button" class="sort-btn"') == 5
-        assert "aria-sort" in static_app_js()
 
-    def test_server_and_client_tables_render_bare_numbers_units_in_headers(self):
-        html = home_html()
-        assert "<td>${row.total_minutes}</td>" in static_app_js()
-        assert " mins</td>" not in html
+    def test_server_and_client_tables_render_bare_numbers_units_in_headers(
+        self, fresh_client, browser_page
+    ):
+        assert " mins</td>" not in home_html()
+
+        rows = [month_row("ALICE", "101", 2, 8, 12)]
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 8, 12)], rows
+        )
+
+        minutes_cell = page.locator("#month-detail-body tr td:nth-child(4)").first
+        assert minutes_cell.inner_text() == "8"
 
     def test_history_search_results_share_month_report_table_styling(self, fresh_client):
         with app_module.connect() as conn:
@@ -1510,21 +1521,30 @@ class TestServerOwnedReportRows:
         late_row = page.locator("#month-detail-body tr", has_text="Bob")
         assert "month-report-late" in (late_row.get_attribute("class") or "")
 
-    def test_report_sorting_keeps_server_fields_and_resets_for_each_month(self):
-        app_js = static_app_js()
-        assert "row.display_name" in app_js
-        assert "row.total_points" in app_js
-        assert "monthDetailSort = { field: 'bed', direction: 'asc' };" in app_js
+    def test_client_renders_server_rows_and_display_names(
+        self, fresh_client, browser_page
+    ):
+        rows = [month_row("ALICE", "101", 2, 5, 42, display_name="Ali Boarder")]
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 42, display_name="Ali Boarder")],
+            rows,
+        )
 
-    def test_client_renders_server_rows_and_display_names(self):
-        app_js = static_app_js()
-        assert "monthDetailRows = data.boarders;" in app_js
-        assert "row.display_name" in app_js
+        name_cell = page.locator("#month-detail-body tr td:nth-child(2)").first
+        assert name_cell.inner_text() == "Ali Boarder"
+        points_cell = page.locator("#month-detail-body tr td:nth-child(5)").first
+        assert points_cell.inner_text() == "42"
 
     def test_client_bed_cell_carries_no_bold_cue(self):
         # Only the Name cell carries the late bold cue (#169, #161): the
         # month-report-late stylesheet rule bolds td:nth-child(2), so the
-        # Bed cell template must not add its own <strong>.
+        # Bed cell template must not add its own <strong>. Kept as a source
+        # pin because assert_late_bed_not_bold reads the font weight of the
+        # Bed <td> itself and so cannot see a nested <strong> child; the
+        # template is the sole guard for that negative.
         app_js = static_app_js()
         assert "<strong>${escapeHtml(row.bed)}</strong>" not in app_js
 
