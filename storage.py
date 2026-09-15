@@ -1092,10 +1092,16 @@ def assign_punishments(
     boarders: Iterable[BoarderRecord],
     deadline: str,
     assigned_at: str,
-) -> None:
-    """Saves one punishment per boarder, snapshotting name, bed, and points."""
+) -> list[Punishment]:
+    """Stages one punishment per boarder on the open transaction.
+
+    Snapshots name, bed, and points, and returns the staged rows so the caller
+    can pair each with its Discipline Audit row. Does not commit; the
+    Punishments lifecycle owns the transaction (matching the I-Points seam).
+    """
+    inserted: list[Punishment] = []
     for boarder in boarders:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO punishments (
                 normalized_name, display_name, bed, month, points_owed,
@@ -1112,7 +1118,20 @@ def assign_punishments(
                 assigned_at,
             ),
         )
-    conn.commit()
+        inserted.append(
+            Punishment(
+                id=cursor.lastrowid or 0,
+                normalized_name=boarder.name,
+                display_name=boarder.display_name,
+                bed=boarder.bed,
+                month=month,
+                points_owed=boarder.total_points,
+                deadline=deadline,
+                status="assigned",
+                assigned_at=assigned_at,
+            )
+        )
+    return inserted
 
 
 def _punishment_from_row(row) -> Punishment:
@@ -1209,9 +1228,11 @@ def transition_punishment(
     status: str,
     timestamp: str,
     void_reason: str | None = None,
-) -> None:
-    """Applies a new status and stamps the matching timestamp column.
+) -> Punishment | None:
+    """Stages a new status and stamps the matching timestamp column.
 
+    Returns the updated row so the caller can pair it with its Discipline
+    Audit row. Does not commit; the Punishments lifecycle owns the transaction.
     Rejects an unknown status with a ValueError before any write, so a
     malformed request can never leak a raw key-lookup crash.
     """
@@ -1246,7 +1267,7 @@ def transition_punishment(
             """,
             (status, timestamp, punishment_id),
         )
-    conn.commit()
+    return get_punishment(conn, punishment_id)
 
 
 def stage_ipoint_entry(

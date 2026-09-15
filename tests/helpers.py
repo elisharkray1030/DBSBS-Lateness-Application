@@ -143,6 +143,7 @@ def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10"
         deadline=deadline,
         assigned_at=assigned_at,
     )
+    conn.commit()
     return storage.list_punishments(conn)
 
 
