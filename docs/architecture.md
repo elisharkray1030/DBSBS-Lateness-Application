@@ -43,7 +43,11 @@ Important behavior:
 `storage.py` owns all persistence. Every function takes the connection, so the
 same module works against a file-backed connection in production and an
 in-memory (`:memory:`) connection in tests. No storage function reads a
-`DB_PATH` module global.
+`DB_PATH` module global. The connection owns its transaction: the app adapter's
+`connect()` commits on a clean exit and rolls back on an exception, so storage
+functions can stage part of a larger change without committing while direct
+callers that stage a single write still persist. The lifecycle additionally
+wraps its staging in `with conn:`, so a raw connection behaves the same.
 
 Important behavior:
 
@@ -62,7 +66,7 @@ Important behavior:
 - `list_all_time_boarders(conn)` derives the All-Time List live: the Master
   List unioned with the distinct Match Keys found in `boarder_history`,
   `punishments`, and the I-Point ledger (`ipoint_entries`, `confiscations`,
-  and surviving `ipoint_audit` rows, so audit-only survivors stay
+  and surviving `discipline_audit` rows, so audit-only survivors stay
   discoverable). Identity resolves freshest-first
   from the current Master List entry or the latest snapshot across Boarder
   History, Punishments, and confirmed Confiscations (whose frozen display name
@@ -89,6 +93,10 @@ Important behavior:
   `stage_discipline_audit(conn, audit)` stage one ledger row and one shared
   Discipline Audit row on the open transaction; the lifecycle owns the commit,
   so the record and its audit travel together or not at all.
+- `assign_punishments(conn, ...)` and `transition_punishment(conn, ...)` stage
+  the Punishment write on the open transaction and return the staged row(s); the
+  Punishments lifecycle pairs each with its `stage_discipline_audit` row, so a
+  Punishment assignment or transition never lands without provenance.
 - `list_ipoint_entries(conn[, name])`,
   `list_ipoint_confiscations(conn[, name][, statuses])`, and
   `list_discipline_audit(conn[, name])` read the ledger and its history,

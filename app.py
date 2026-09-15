@@ -5,10 +5,10 @@ import secrets
 import sqlite3
 import tempfile
 import time
-from contextlib import closing
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Callable, Iterator, cast
 from urllib.parse import quote, urlencode
 
 try:
@@ -299,12 +299,19 @@ def _archive_import(month_label: str, payload: bytes) -> None:
     )
 
 
-def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
+@contextmanager
+def connect(read_only: bool = False) -> "Iterator[sqlite3.Connection]":
     """Opens a file-backed history store connection for the current call site.
 
     Pure-read surfaces pass ``read_only=True`` so readers never contend for
     the write lock on the shared-NAS database. The mixed import view, all
     state-changing routes and startup init use the default read-write form.
+
+    The connection owns the transaction: a clean exit commits, an exception
+    rolls back, and it always closes. This lets the lifecycle functions stage
+    the record and its Discipline Audit row without committing (they also wrap
+    in ``with conn:`` so a raw connection behaves the same), while direct
+    callers that stage a single write still persist.
     """
     db_path = _db_path()
     if read_only and db_path != ":memory:":
@@ -313,10 +320,18 @@ def connect(read_only: bool = False) -> "closing[sqlite3.Connection]":
             uri=True,
             timeout=NAS_BUSY_TIMEOUT_S,
         )
-        return closing(conn)
-    conn = sqlite3.connect(db_path, timeout=NAS_BUSY_TIMEOUT_S)
-    conn.execute("PRAGMA journal_mode=DELETE")
-    return closing(conn)
+    else:
+        conn = sqlite3.connect(db_path, timeout=NAS_BUSY_TIMEOUT_S)
+        conn.execute("PRAGMA journal_mode=DELETE")
+    try:
+        yield conn
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+    finally:
+        conn.close()
 
 
 SEED_FLAG = "boarders_seeded"
@@ -1699,7 +1714,7 @@ def _punishments_redirect():
 @bp.route('/punishment/<int:punishment_id>/transition', methods=['POST'])
 def transition_punishment(punishment_id):
     target = request.form.get('to', '').strip()
-    void_reason = request.form.get('void_reason', '').strip() or None
+    note = request.form.get('note', '').strip() or None
 
     def attempt():
         with connect() as conn:
@@ -1707,7 +1722,7 @@ def transition_punishment(punishment_id):
                 conn,
                 punishment_id=punishment_id,
                 target=target,
-                void_reason=void_reason,
+                note=note,
             )
 
         if isinstance(outcome, TransitionRejected):

@@ -61,7 +61,7 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="to" value="{{ action.target }}">
                 {{ punishment_filters() }}
-                {% if action.reason_input %}<input type="text" name="void_reason" placeholder="Reason (optional)" aria-label="Void reason (optional)">{% endif %}
+                <input type="text" name="note" placeholder="Note (optional)" aria-label="Transition note (optional)">
                 <button type="submit" class="btn btn-{{ action.style }} btn-sm">{{ action.label }}</button>
             </form>
         {%- endmacro %}

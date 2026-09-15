@@ -1,7 +1,12 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-from records import BoarderRecord, Punishment
+from records import (
+    BoarderRecord,
+    DisciplineAuditDraft,
+    Punishment,
+    punishment_audit_snapshot,
+)
 
 import storage
 
@@ -101,8 +106,9 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 class OfferedAction:
     """One transition button the Punishments view offers on a row.
 
-    ``reason_input`` marks the void variant: its form gains the optional
-    reason field and the data attributes feeding the confirm dialog.
+    ``reason_input`` marks the void variant: its form carries the ``void-form``
+    class and the data attributes feeding the confirm dialog. The optional note
+    field is rendered on every transition form, void included.
     """
 
     target: str
@@ -190,45 +196,78 @@ def transition(
     target: str,
     timestamp: str | None = None,
     void_reason: str | None = None,
+    note: str | None = None,
 ) -> TransitionSaved | TransitionRejected:
-    """Moves a punishment to a new status if the transition is legal."""
+    """Moves a punishment to a new status if the transition is legal.
+
+    The status write and its Discipline Audit row are staged in one
+    transaction, so a transition can never land without provenance. A
+    ``note`` is accepted on every target; on a void it also fills the
+    Punishment's ``void_reason`` (and vice versa) so the domain field and the
+    audit note never disagree.
+    """
     if timestamp is None:
         timestamp = datetime.now(tz=timezone.utc).isoformat()
 
-    punishment = storage.get_punishment(conn, punishment_id)
-    if punishment is None:
-        return TransitionRejected(
-            current_status="unknown", target=target, display_name="?"
-        )
+    with conn:
+        punishment = storage.get_punishment(conn, punishment_id)
+        if punishment is None:
+            return TransitionRejected(
+                current_status="unknown", target=target, display_name="?"
+            )
 
-    if target not in VALID_TRANSITIONS.get(punishment.status, set()):
-        return TransitionRejected(
-            current_status=punishment.status,
-            target=target,
-            display_name=punishment.display_name,
-        )
-
-    if target == "overdue" and punishment.status == "assigned":
-        transition_date = _timestamp_date(timestamp)
-        deadline = date.fromisoformat(punishment.deadline)
-        if transition_date < deadline:
+        if target not in VALID_TRANSITIONS.get(punishment.status, set()):
             return TransitionRejected(
                 current_status=punishment.status,
                 target=target,
                 display_name=punishment.display_name,
-                reason_message=(
-                    f"Cannot mark {punishment.display_name} overdue before its "
-                    f"deadline of {punishment.deadline}."
-                ),
             )
 
-    storage.transition_punishment(
-        conn,
-        punishment_id,
-        target,
-        timestamp=timestamp,
-        void_reason=void_reason,
-    )
+        if target == "overdue" and punishment.status == "assigned":
+            transition_date = _timestamp_date(timestamp)
+            deadline = date.fromisoformat(punishment.deadline)
+            if transition_date < deadline:
+                return TransitionRejected(
+                    current_status=punishment.status,
+                    target=target,
+                    display_name=punishment.display_name,
+                    reason_message=(
+                        f"Cannot mark {punishment.display_name} overdue before "
+                        f"its deadline of {punishment.deadline}."
+                    ),
+                )
+
+        if target == "voided":
+            reason = note if note is not None else void_reason
+            stored_reason = reason
+            audit_note = reason
+        else:
+            stored_reason = None
+            audit_note = note
+
+        updated = storage.transition_punishment(
+            conn,
+            punishment_id,
+            target,
+            timestamp=timestamp,
+            void_reason=stored_reason,
+        )
+        storage.stage_discipline_audit(
+            conn,
+            DisciplineAuditDraft(
+                entity_type="punishment",
+                entity_id=punishment_id,
+                normalized_name=punishment.normalized_name,
+                action=target,
+                before_state=punishment_audit_snapshot(punishment),
+                after_state=(
+                    punishment_audit_snapshot(updated) if updated is not None else None
+                ),
+                changed_at=timestamp,
+                note=audit_note,
+            ),
+        )
+
     return TransitionSaved(
         status=target,
         display_name=punishment.display_name,
@@ -274,7 +313,24 @@ def assign_batch(
             ),
         )
 
-    storage.assign_punishments(conn, month, eligible, deadline, assigned_at)
+    with conn:
+        inserted = storage.assign_punishments(
+            conn, month, eligible, deadline, assigned_at
+        )
+        for punishment in inserted:
+            storage.stage_discipline_audit(
+                conn,
+                DisciplineAuditDraft(
+                    entity_type="punishment",
+                    entity_id=punishment.id,
+                    normalized_name=punishment.normalized_name,
+                    action="assigned",
+                    before_state=None,
+                    after_state=punishment_audit_snapshot(punishment),
+                    changed_at=assigned_at,
+                    note=None,
+                ),
+            )
     return AssignmentSaved(
         count=len(eligible),
         names=[boarder.display_name for boarder in eligible],

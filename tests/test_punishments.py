@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from datetime import datetime
 from helpers import record
@@ -269,6 +271,143 @@ class TestTransition:
 
         row = storage.get_punishment(conn, punishment.id)
         assert row.submitted_at > row.deadline
+
+
+class TestPunishmentAudit:
+    def _assign_one(self, conn):
+        outcome = assign_batch(
+            conn,
+            month="2026-03",
+            boarders=[record("ALICE", "101", 2, 5, 7)],
+            exemptions=set(),
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+        assert isinstance(outcome, AssignmentSaved)
+        return storage.list_punishments(conn, statuses=("assigned",))[0]
+
+    def _punishment_audits(self, conn, punishment_id):
+        return [
+            audit
+            for audit in storage.list_discipline_audit(conn)
+            if audit.entity_type == "punishment"
+            and audit.entity_id == punishment_id
+        ]
+
+    def test_assignment_writes_one_assigned_event_per_punishment(self, conn):
+        assign_batch(
+            conn,
+            month="2026-03",
+            boarders=[
+                record("ALICE", "101", 2, 5, 7),
+                record("BOB", "102", 1, 19, 20),
+            ],
+            exemptions=set(),
+            deadline="2026-04-10",
+            assigned_at="2026-04-01T09:00:00+00:00",
+        )
+
+        audits = [
+            audit
+            for audit in storage.list_discipline_audit(conn)
+            if audit.entity_type == "punishment"
+        ]
+        assert len(audits) == 2
+        assert all(audit.action == "assigned" for audit in audits)
+        assert all(audit.before_state is None for audit in audits)
+        after = json.loads(audits[0].after_state)
+        assert after["status"] == "assigned"
+        assert after["deadline"] == "2026-04-10"
+
+    def test_transition_records_before_and_after_with_note(self, conn):
+        punishment = self._assign_one(conn)
+
+        result = transition(
+            conn,
+            punishment.id,
+            "overdue",
+            timestamp="2026-04-10T09:00:00+00:00",
+            note="chased at break",
+        )
+
+        assert not isinstance(result, TransitionRejected)
+        audits = self._punishment_audits(conn, punishment.id)
+        assert [audit.action for audit in audits] == ["overdue", "assigned"]
+        overdue = audits[0]
+        assert overdue.changed_at == "2026-04-10T09:00:00+00:00"
+        assert overdue.note == "chased at break"
+        assert json.loads(overdue.before_state)["status"] == "assigned"
+        assert json.loads(overdue.after_state)["status"] == "overdue"
+
+    def test_rejected_transition_writes_no_audit(self, conn):
+        punishment = self._assign_one(conn)
+
+        result = transition(
+            conn,
+            punishment.id,
+            "phone_held",
+            timestamp="2026-04-02T09:00:00+00:00",
+        )
+
+        assert isinstance(result, TransitionRejected)
+        assert [
+            audit.action for audit in self._punishment_audits(conn, punishment.id)
+        ] == ["assigned"]
+
+    def test_void_note_also_populates_the_void_reason(self, conn):
+        punishment = self._assign_one(conn)
+
+        transition(
+            conn,
+            punishment.id,
+            "voided",
+            timestamp="2026-04-02T09:00:00+00:00",
+            note="left school",
+        )
+
+        row = storage.get_punishment(conn, punishment.id)
+        assert row.void_reason == "left school"
+        assert self._punishment_audits(conn, punishment.id)[0].note == "left school"
+
+    def test_failed_assignment_audit_stage_rolls_back_the_punishments(
+        self, conn, monkeypatch
+    ):
+        def boom(*args, **kwargs):
+            raise RuntimeError("audit boom")
+
+        monkeypatch.setattr(storage, "stage_discipline_audit", boom)
+
+        with pytest.raises(RuntimeError):
+            assign_batch(
+                conn,
+                month="2026-03",
+                boarders=[record("ALICE", "101", 2, 5, 7)],
+                exemptions=set(),
+                deadline="2026-04-10",
+                assigned_at="2026-04-01T09:00:00+00:00",
+            )
+
+        assert storage.list_punishments(conn) == []
+
+    def test_failed_audit_stage_rolls_back_the_status_write(self, conn, monkeypatch):
+        punishment = self._assign_one(conn)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("audit boom")
+
+        monkeypatch.setattr(storage, "stage_discipline_audit", boom)
+
+        with pytest.raises(RuntimeError):
+            transition(
+                conn,
+                punishment.id,
+                "submitted",
+                timestamp="2026-04-09T09:00:00+00:00",
+            )
+
+        row = storage.get_punishment(conn, punishment.id)
+        assert row.status == "assigned"
+        assert row.submitted_at is None
 
 
 class TestListPunishmentsView:

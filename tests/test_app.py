@@ -146,6 +146,37 @@ def open_month_picker(page):
     page.wait_for_selector("#month-picker-popover:not(.hidden)")
 
 
+class TestConnectionTransaction:
+    def test_connect_rolls_back_staged_writes_on_exception(self):
+        with pytest.raises(RuntimeError):
+            with app_module.connect() as conn:
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('rollback_probe', 'x')"
+                )
+                raise RuntimeError("boom")
+
+        with app_module.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM meta WHERE key = 'rollback_probe'"
+            ).fetchone()[0]
+        assert count == 0
+
+    def test_connect_commits_staged_writes_on_clean_exit(self):
+        try:
+            with app_module.connect() as conn:
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('commit_probe', 'x')"
+                )
+            with app_module.connect() as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM meta WHERE key = 'commit_probe'"
+                ).fetchone()[0]
+            assert count == 1
+        finally:
+            with app_module.connect() as conn:
+                conn.execute("DELETE FROM meta WHERE key = 'commit_probe'")
+
+
 class TestHomeRender:
     def test_report_archive_tab_precedes_history_tab(self):
         html = home_html()
@@ -2123,7 +2154,7 @@ class TestTransitionRoute:
     def test_void_with_reason(self):
         response = post_csrf(client, 
             f"/punishment/{self._alice_id()}/transition",
-            data={"to": "voided", "void_reason": "exempt"},
+            data={"to": "voided", "note": "exempt"},
         )
 
         assert response.status_code == 302
@@ -2149,7 +2180,7 @@ class TestTransitionRoute:
 
         response = post_csrf(client, 
             f"/punishment/{punishment_id}/transition",
-            data={"to": "voided", "void_reason": "later exempted"},
+            data={"to": "voided", "note": "later exempted"},
         )
 
         assert response.status_code == 302
@@ -2252,7 +2283,7 @@ class TestDestructiveActionsNameTarget:
         assert submitted is not None
         assert "/transition" in submitted
 
-    def test_void_reason_stays_in_form_after_confirm(self, fresh_client, browser_page):
+    def test_transition_note_stays_in_form_after_confirm(self, fresh_client, browser_page):
         with app_module.connect() as conn:
             seed_punishments(conn)
         html = fresh_client.get("/punishments").get_data(as_text=True)
@@ -2260,7 +2291,7 @@ class TestDestructiveActionsNameTarget:
         page = browser_page
         page.set_content(html)
         stub_form_submit(page)
-        page.locator("form.void-form input[name=void_reason]").fill("left school")
+        page.locator("form.void-form input[name=note]").fill("left school")
         page.locator("form.void-form button[type=submit]").click()
         page.locator("#confirmModal .btn-danger").click()
 
@@ -2440,11 +2471,11 @@ class TestAccessibilityPolish:
                 conn, bob.id, "submitted", timestamp="2026-04-11T09:00:00+00:00"
             )
 
-    def test_void_reason_input_has_programmatic_label(self, fresh_client):
+    def test_transition_note_input_has_programmatic_label(self, fresh_client):
         self._seed_punishments(fresh_client)
         html = fresh_client.get("/punishments").get_data(as_text=True)
         assert re.search(
-            r'<input type="text" name="void_reason"[^>]*aria-label=', html
+            r'<input type="text" name="note"[^>]*aria-label=', html
         )
 
     def test_data_table_headers_carry_scope(self, fresh_client):
@@ -4286,8 +4317,8 @@ class TestPunishmentsRowActionContract:
         assert f'data-boarder="{punishment.display_name}"' in void_form
         assert f'data-month="{punishment.month}"' in void_form
         assert (
-            '<input type="text" name="void_reason" placeholder="Reason (optional)" '
-            'aria-label="Void reason (optional)">'
+            '<input type="text" name="note" placeholder="Note (optional)" '
+            'aria-label="Transition note (optional)">'
         ) in void_form
         assert '<button type="submit" class="btn btn-neutral btn-sm">Void</button>' in void_form
 
@@ -4409,14 +4440,14 @@ class TestPunishmentsRowActionTidiness:
         assert style["justifyContent"] == "center"
         assert style["gap"] > 0
 
-    def test_void_reason_input_is_compact_like_neighbouring_buttons(self, fresh_client, browser_page):
+    def test_transition_note_input_is_compact_like_neighbouring_buttons(self, fresh_client, browser_page):
         html = self._punishments_html_with_punishment(fresh_client)
 
         page = browser_page
         page.set_content(html)
         metrics = page.evaluate(
             """() => {
-                const input = document.querySelector('form.void-form input[name="void_reason"]');
+                const input = document.querySelector('form.void-form input[name="note"]');
                 const button = input.closest('form').querySelector('button[type="submit"]');
                 const inputStyle = getComputedStyle(input);
                 const buttonStyle = getComputedStyle(button);
