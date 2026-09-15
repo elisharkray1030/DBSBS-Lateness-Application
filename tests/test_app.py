@@ -271,6 +271,75 @@ class TestConsistentPageHeading:
             is None
         )
 
+    def test_layout_single_sources_the_title_suffix_in_a_meta(self, fresh_client):
+        for route in ("/", "/ipoints", "/statistics"):
+            html = fresh_client.get(route).get_data(as_text=True)
+            assert html.count('name="site-title-suffix"') == 1, route
+            assert 'content=" — DBS Boarding School"' in html, route
+
+    def test_home_tab_switches_keep_the_layout_title_suffix(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+
+        for tab, label in (
+            ("history", "Search Boarder History"),
+            ("boarders", "Boarders"),
+            ("reports", "View Reports in Database"),
+        ):
+            page.locator(f'.tab-link[data-tab="{tab}"]').click()
+            assert page.title() == f"{label} — DBS Boarding School", tab
+
+    def test_tab_switch_title_suffix_comes_from_the_meta(self, fresh_client, browser_page):
+        # JS cannot read Jinja, so the layout bridges the suffix to app.js via
+        # a meta tag; rewriting it must change what a tab switch writes to the
+        # document title (#241 C1).
+        html, replaced = re.subn(
+            r'(<meta name="site-title-suffix" content=")[^"]*(")',
+            r'\1 — Single Source Test\2',
+            fresh_client.get("/").get_data(as_text=True),
+        )
+        assert replaced == 1
+
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="history"]').click()
+
+        assert page.title() == "Search Boarder History — Single Source Test"
+
+    def test_tab_switch_without_the_title_suffix_meta_still_sets_the_title(
+        self, fresh_client, browser_page
+    ):
+        html = re.sub(
+            r'\s*<meta name="site-title-suffix" content="[^"]*">',
+            "",
+            fresh_client.get("/").get_data(as_text=True),
+        )
+        assert "site-title-suffix" not in html
+
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="history"]').click()
+
+        assert page.title() == "Search Boarder History"
+
+    def test_tab_switch_with_an_empty_title_suffix_meta_still_sets_the_title(
+        self, fresh_client, browser_page
+    ):
+        html = re.sub(
+            r'(<meta name="site-title-suffix" content=")[^"]*(")',
+            r"\1\2",
+            fresh_client.get("/").get_data(as_text=True),
+        )
+        assert 'content=""' in html
+
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="history"]').click()
+
+        assert page.title() == "Search Boarder History"
+
     def test_auto_opening_a_month_on_load_does_not_steal_focus(
         self, fresh_client, browser_page
     ):
