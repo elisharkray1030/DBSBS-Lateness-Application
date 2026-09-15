@@ -343,7 +343,7 @@
                         <div class="month-name">{{ month.month }}</div>
                         <div class="month-summary">{{ month.boarder_count }} boarders &middot; {{ month.total_minutes }} min late</div>
                         <div class="month-actions">
-                            <button type="button" class="btn btn-primary btn-sm view-month-btn" onclick='viewMonth({{ month.month|tojson }})'>View</button>
+                            <button type="button" class="btn btn-primary btn-sm view-month-btn" data-month="{{ month.month }}">View</button>
                             <form action="/download_month/{{ month.month|urlencode }}" method="get">
                                 <button type="submit" class="btn btn-primary btn-sm">
                                     <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
@@ -366,7 +366,7 @@
                 </div>
                 <div class="month-detail-toolbar">
                     <h3 id="month-detail-title"></h3>
-                    <button id="month-detail-print" type="button" class="btn btn-primary" onclick="printCurrentMonthReport()">
+                    <button id="month-detail-print" type="button" class="btn btn-primary">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-print"/></svg>
                         Print
                     </button>
@@ -375,7 +375,7 @@
                         Download
                     </button>
                     <button id="month-detail-assign-btn" type="button" class="btn btn-primary">Assign Punishments</button>
-                    <button id="month-detail-close" type="button" class="btn btn-neutral" onclick="closeMonthDetail()">Close</button>
+                    <button id="month-detail-close" type="button" class="btn btn-neutral">Close</button>
                     <button id="month-detail-delete" type="button" class="btn btn-danger">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash"/></svg>
                         Delete
@@ -401,11 +401,11 @@
                     <table id="month-detail-table" class="month-report-table">
                         <thead>
                             <tr>
-                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('bed')">Bed<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
-                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('name')">Boarder Name<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
-                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('frequency')">Frequency<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
-                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('minutes')">Minutes Late<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
-                                <th scope="col"><button type="button" class="sort-btn" onclick="sortMonthDetail('points')">Total Points<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" data-sort-field="bed">Bed<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" data-sort-field="name">Boarder Name<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" data-sort-field="frequency">Frequency<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" data-sort-field="minutes">Minutes Late<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
+                                <th scope="col"><button type="button" class="sort-btn" data-sort-field="points">Total Points<span class="sort-indicator" aria-hidden="true"><span class="sort-up">&#9650;</span><span class="sort-down">&#9660;</span></span></button></th>
                             </tr>
                         </thead>
                         <tbody id="month-detail-body">

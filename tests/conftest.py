@@ -60,27 +60,40 @@ def fresh_client(tmp_path):
     pushed.pop()
 
 
-_APP_JS = Path(__file__).resolve().parent.parent / "static" / "app.js"
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+_APP_CSS_TAG = '<link rel="stylesheet" href="/static/app.css">'
 _APP_JS_TAG = '<script src="/static/app.js"></script>'
+_LAYOUT_JS_TAG = '<script src="/static/layout.js"></script>'
+
+# (external tag, static file, wrapper element) to inline for set_content tests.
+_INLINE_ASSETS = (
+    (_APP_CSS_TAG, _STATIC_DIR / "app.css", "style"),
+    (_LAYOUT_JS_TAG, _STATIC_DIR / "layout.js", "script"),
+    (_APP_JS_TAG, _STATIC_DIR / "app.js", "script"),
+)
 
 
-def _inline_app_js(html):
-    """Inline static/app.js into set_content HTML (#166, umbrella #131).
+def _inline_static_assets(html):
+    """Inline local static assets into set_content HTML (#166, umbrella #131).
 
     Browser tests feed Flask-rendered HTML to Chromium via
     ``page.set_content``, whose document URL (about:blank) cannot resolve a
-    relative ``<script src>`` — the browser never even issues the request, so
-    ``page.route`` cannot help. Inlining the byte-identical file restores the
-    exact pre-#166 execution environment with zero per-test edits. Retire this
-    only when the suite stops feeding rendered HTML to ``set_content`` — the
-    #163 test-helper fold keeps ``set_content``, so that ticket does not retire
-    this shim.
+    relative ``<script src>`` or ``<link href>`` — the browser never even
+    issues the request, so ``page.route`` cannot help. Inlining the
+    byte-identical files restores the exact pre-extraction execution
+    environment with zero per-test edits. Retire this only when the suite
+    stops feeding rendered HTML to ``set_content`` — the #163 test-helper fold
+    keeps ``set_content``, so that ticket does not retire this shim.
     """
-    if _APP_JS_TAG not in html:
-        return html
-    js = _APP_JS.read_bytes().decode("utf-8")
-    assert "</script" not in js.lower(), "app.js is no longer safe to inline"
-    return html.replace(_APP_JS_TAG, "<script>" + js + "</script>")
+    for tag, path, wrapper in _INLINE_ASSETS:
+        if tag not in html:
+            continue
+        content = path.read_bytes().decode("utf-8")
+        assert f"</{wrapper}" not in content.lower(), (
+            f"{path.name} is no longer safe to inline"
+        )
+        html = html.replace(tag, f"<{wrapper}>" + content + f"</{wrapper}>")
+    return html
 
 
 @pytest.fixture
@@ -97,12 +110,13 @@ def browser():
 
 @pytest.fixture
 def browser_page(browser):
-    """Yields a headless Chromium page with app.js inlined into set_content."""
+    """Yields a headless Chromium page with local static assets inlined into
+    set_content (the stylesheet and app.js)."""
     page = browser.new_page()
     set_content = page.set_content
 
     def set_content_with_static(html, **kwargs):
-        return set_content(_inline_app_js(html), **kwargs)
+        return set_content(_inline_static_assets(html), **kwargs)
 
     page.set_content = set_content_with_static
     try:

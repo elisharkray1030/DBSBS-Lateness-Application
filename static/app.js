@@ -103,12 +103,21 @@
         return JSON.parse(document.getElementById('tab-labels').textContent)[tabName] || '';
     }
 
+    // Read a <meta name="..."> content, or '' when the tag is absent.
+    function metaContent(name) {
+        const tag = document.querySelector(`meta[name="${name}"]`);
+        return tag ? tag.content : '';
+    }
+
     // In-page tabs are navigation, not a tab widget: the mixed button/link
     // bar cannot be a valid ARIA tablist. aria-current carries the state, and
     // a user-initiated switch moves focus to the page H1 so the new view is
     // announced once (a live region on the H1 would repeat the tab name).
-    // The suffix mirrors the layout's default <title>.
-    const SITE_TITLE_SUFFIX = ' — DBS Boarding School';
+
+    // The layout single-sources the suffix in <meta name="site-title-suffix">;
+    // an empty value keeps a tab switch from breaking the title if a page
+    // ever omits it.
+    const SITE_TITLE_SUFFIX = metaContent('site-title-suffix');
 
     function activateTab(tabName, { moveFocus = true } = {}) {
         tabButtons.forEach(btn => {
@@ -175,8 +184,7 @@
     // Session CSRF token for fetch mutations (HTML forms carry it as a
     // hidden field). Read once per call so tests can rotate the meta tag.
     function fetchCsrfToken() {
-        const tag = document.querySelector('meta[name="csrf-token"]');
-        return tag ? tag.content : '';
+        return metaContent('csrf-token');
     }
 
     // Voiding a punishment is destructive and irreversible: route it through
@@ -342,6 +350,27 @@
         card.addEventListener('click', function(event) {
             if (event.target.closest('button, a, form')) return;
             viewMonth(this.dataset.month);
+        });
+    });
+
+    // Report-detail controls. These elements exist only on the home page, so
+    // each registration is guarded (see #211).
+    const printReportButton = document.getElementById('month-detail-print');
+    if (printReportButton) {
+        printReportButton.addEventListener('click', printCurrentMonthReport);
+    }
+    const closeReportButton = document.getElementById('month-detail-close');
+    if (closeReportButton) {
+        closeReportButton.addEventListener('click', closeMonthDetail);
+    }
+    document.querySelectorAll('.view-month-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            viewMonth(this.dataset.month);
+        });
+    });
+    document.querySelectorAll('#month-detail-table thead .sort-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            sortMonthDetail(this.dataset.sortField);
         });
     });
 

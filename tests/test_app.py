@@ -271,6 +271,75 @@ class TestConsistentPageHeading:
             is None
         )
 
+    def test_layout_single_sources_the_title_suffix_in_a_meta(self, fresh_client):
+        for route in ("/", "/ipoints", "/statistics"):
+            html = fresh_client.get(route).get_data(as_text=True)
+            assert html.count('name="site-title-suffix"') == 1, route
+            assert 'content=" — DBS Boarding School"' in html, route
+
+    def test_home_tab_switches_keep_the_layout_title_suffix(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+
+        for tab, label in (
+            ("history", "Search Boarder History"),
+            ("boarders", "Boarders"),
+            ("reports", "View Reports in Database"),
+        ):
+            page.locator(f'.tab-link[data-tab="{tab}"]').click()
+            assert page.title() == f"{label} — DBS Boarding School", tab
+
+    def test_tab_switch_title_suffix_comes_from_the_meta(self, fresh_client, browser_page):
+        # JS cannot read Jinja, so the layout bridges the suffix to app.js via
+        # a meta tag; rewriting it must change what a tab switch writes to the
+        # document title (#241 C1).
+        html, replaced = re.subn(
+            r'(<meta name="site-title-suffix" content=")[^"]*(")',
+            r'\1 — Single Source Test\2',
+            fresh_client.get("/").get_data(as_text=True),
+        )
+        assert replaced == 1
+
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="history"]').click()
+
+        assert page.title() == "Search Boarder History — Single Source Test"
+
+    def test_tab_switch_without_the_title_suffix_meta_still_sets_the_title(
+        self, fresh_client, browser_page
+    ):
+        html = re.sub(
+            r'\s*<meta name="site-title-suffix" content="[^"]*">',
+            "",
+            fresh_client.get("/").get_data(as_text=True),
+        )
+        assert "site-title-suffix" not in html
+
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="history"]').click()
+
+        assert page.title() == "Search Boarder History"
+
+    def test_tab_switch_with_an_empty_title_suffix_meta_still_sets_the_title(
+        self, fresh_client, browser_page
+    ):
+        html = re.sub(
+            r'(<meta name="site-title-suffix" content=")[^"]*(")',
+            r"\1\2",
+            fresh_client.get("/").get_data(as_text=True),
+        )
+        assert 'content=""' in html
+
+        page = browser_page
+        page.set_content(html)
+        page.locator('.tab-link[data-tab="history"]').click()
+
+        assert page.title() == "Search Boarder History"
+
     def test_auto_opening_a_month_on_load_does_not_steal_focus(
         self, fresh_client, browser_page
     ):
@@ -1281,20 +1350,87 @@ class TestServerOwnedReportRows:
     def test_page_restores_sortable_report_headers_and_indicators(self):
         html = home_html()
         for field in ("bed", "name", "frequency", "minutes", "points"):
-            assert f"sortMonthDetail('{field}')" in html
+            assert f'data-sort-field="{field}"' in html
         assert "sort-indicator" in html
-        assert "sort-asc" in html
-        assert "sort-desc" in html
+
+    def test_home_has_no_inline_onclick_handlers(self):
+        assert "onclick=" not in home_html()
+
+    def test_view_button_opens_the_report_via_its_listener(
+        self, fresh_client, browser_page
+    ):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+        page.evaluate(
+            """() => {
+                window.fetch = () => Promise.resolve({
+                    json: () => Promise.resolve({ boarders: [] })
+                });
+            }"""
+        )
+
+        page.locator(".view-month-btn").first.click()
+        page.wait_for_function(
+            "() => !document.getElementById('month-detail').classList.contains('hidden')"
+        )
+        assert page.locator("#month-detail-title").inner_text() == "Report for 2026-07"
+
+    def test_close_button_hides_the_report_via_its_listener(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            [month_row("ALICE", "101", 2, 5, 7)],
+        )
+
+        page.locator("#month-detail-close").click()
+        assert page.locator("#month-detail").evaluate(
+            "el => el.classList.contains('hidden')"
+        )
+
+    def test_print_button_calls_print_via_its_listener(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            [month_row("ALICE", "101", 2, 5, 7)],
+        )
+        page.evaluate(
+            "() => { window.__printed = 0; window.print = () => { window.__printed += 1; }; }"
+        )
+
+        page.locator("#month-detail-print").click()
+        assert page.evaluate("() => window.__printed") == 1
 
     def test_sort_headers_are_keyboard_operable_buttons(self):
+        # Each header exposes a native <button>, so it is focusable and
+        # Enter/Space operable; the announcement (aria-sort) is proven
+        # behaviourally in test_browser_sort_headers_reach_and_announce_direction.
         html = home_html()
         assert html.count('<button type="button" class="sort-btn"') == 5
-        assert "aria-sort" in static_app_js()
 
-    def test_server_and_client_tables_render_bare_numbers_units_in_headers(self):
-        html = home_html()
-        assert "<td>${row.total_minutes}</td>" in static_app_js()
-        assert " mins</td>" not in html
+    def test_server_and_client_tables_render_bare_numbers_units_in_headers(
+        self, fresh_client, browser_page
+    ):
+        assert " mins</td>" not in home_html()
+
+        rows = [month_row("ALICE", "101", 2, 8, 12)]
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client, page, [record("ALICE", "101", 2, 8, 12)], rows
+        )
+
+        minutes_cell = page.locator("#month-detail-body tr td:nth-child(4)").first
+        assert minutes_cell.inner_text() == "8"
 
     def test_history_search_results_share_month_report_table_styling(self, fresh_client):
         with app_module.connect() as conn:
@@ -1385,21 +1521,30 @@ class TestServerOwnedReportRows:
         late_row = page.locator("#month-detail-body tr", has_text="Bob")
         assert "month-report-late" in (late_row.get_attribute("class") or "")
 
-    def test_report_sorting_keeps_server_fields_and_resets_for_each_month(self):
-        app_js = static_app_js()
-        assert "row.display_name" in app_js
-        assert "row.total_points" in app_js
-        assert "monthDetailSort = { field: 'bed', direction: 'asc' };" in app_js
+    def test_client_renders_server_rows_and_display_names(
+        self, fresh_client, browser_page
+    ):
+        rows = [month_row("ALICE", "101", 2, 5, 42, display_name="Ali Boarder")]
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 42, display_name="Ali Boarder")],
+            rows,
+        )
 
-    def test_client_renders_server_rows_and_display_names(self):
-        app_js = static_app_js()
-        assert "monthDetailRows = data.boarders;" in app_js
-        assert "row.display_name" in app_js
+        name_cell = page.locator("#month-detail-body tr td:nth-child(2)").first
+        assert name_cell.inner_text() == "Ali Boarder"
+        points_cell = page.locator("#month-detail-body tr td:nth-child(5)").first
+        assert points_cell.inner_text() == "42"
 
     def test_client_bed_cell_carries_no_bold_cue(self):
         # Only the Name cell carries the late bold cue (#169, #161): the
         # month-report-late stylesheet rule bolds td:nth-child(2), so the
-        # Bed cell template must not add its own <strong>.
+        # Bed cell template must not add its own <strong>. Kept as a source
+        # pin because assert_late_bed_not_bold reads the font weight of the
+        # Bed <td> itself and so cannot see a nested <strong> child; the
+        # template is the sole guard for that negative.
         app_js = static_app_js()
         assert "<strong>${escapeHtml(row.bed)}</strong>" not in app_js
 
@@ -1450,6 +1595,9 @@ class TestServerOwnedReportRows:
             "Carol",
             "Bob",
         ]
+        assert page.locator("#month-detail-table thead th").nth(2).get_attribute(
+            "class"
+        ) == "sort-desc"
 
         page.locator("#month-detail-table thead th").nth(3).click()
         assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
@@ -2202,6 +2350,20 @@ class TestConfirmModalDialogSemantics:
             """() => document.activeElement.closest('form.void-form') !== null"""
         )
         assert restored
+
+    def test_cancel_button_closes_without_running_the_action(
+        self, fresh_client, browser_page
+    ):
+        html = self._punishments_html(fresh_client)
+
+        page = browser_page
+        page.set_content(html)
+        self._open_modal(page)
+
+        page.locator("#confirmModal .btn-neutral").click()
+
+        assert page.locator("#confirmModal.show").count() == 0
+        assert page.evaluate("() => window.__submitCalled") is None
 
 
 class TestUnsavedEditGuard:
@@ -3303,6 +3465,55 @@ class TestChromeConsistency:
         title_index = panel.index("<h2>Find a Boarder</h2>")
         results_index = panel.index("<h3>Search Results</h3>")
         assert title_index < results_index
+
+    def test_layout_links_the_extracted_stylesheet(self):
+        html = home_html()
+        assert '<link rel="stylesheet" href="/static/app.css">' in html
+        assert "<style>" not in html
+
+    def test_extracted_stylesheet_is_served_with_the_layout_tokens(self, fresh_client):
+        response = fresh_client.get("/static/app.css")
+        assert response.status_code == 200
+        css = response.get_data(as_text=True)
+        assert "--navy:" in css
+        assert ".site-header" in css
+
+    def test_layout_links_the_shared_script_before_page_scripts(self, fresh_client):
+        html = fresh_client.get("/").get_data(as_text=True)
+        layout_tag = '<script src="/static/layout.js"></script>'
+        app_tag = '<script src="/static/app.js"></script>'
+        assert layout_tag in html
+        # app.js calls the shared helpers, so layout.js must execute first.
+        assert html.index(layout_tag) < html.index(app_tag)
+
+    def test_layout_inline_shared_script_is_gone(self):
+        html = home_html()
+        for helper in ("escapeHtml", "dbsChartColors", "showConfirmModal"):
+            assert f"function {helper}" not in html, helper
+
+    def test_shared_helpers_load_from_the_layout_script(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+        for name in (
+            "escapeHtml",
+            "escapeAttr",
+            "dbsChartColors",
+            "showConfirmModal",
+            "runConfirmModal",
+            "closeConfirmModal",
+        ):
+            assert page.evaluate(f"() => typeof {name}") == "function", name
+
+    def test_extracted_stylesheet_is_linked_before_page_specific_styles(
+        self, fresh_client
+    ):
+        # The I-Points page's head_extra begins with a <noscript> style block,
+        # so its position in the rendered HTML proves the layout link comes
+        # first and page overrides can still win.
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert html.index('href="/static/app.css"') < html.index("<noscript>")
 
     def test_every_tab_shares_identical_computed_typography(self, fresh_client, browser_page):
         html = fresh_client.get("/").get_data(as_text=True)
