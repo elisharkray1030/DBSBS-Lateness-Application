@@ -1283,8 +1283,6 @@ class TestServerOwnedReportRows:
         for field in ("bed", "name", "frequency", "minutes", "points"):
             assert f"sortMonthDetail('{field}')" in html
         assert "sort-indicator" in html
-        assert "sort-asc" in html
-        assert "sort-desc" in html
 
     def test_sort_headers_are_keyboard_operable_buttons(self):
         html = home_html()
@@ -1450,6 +1448,9 @@ class TestServerOwnedReportRows:
             "Carol",
             "Bob",
         ]
+        assert page.locator("#month-detail-table thead th").nth(2).get_attribute(
+            "class"
+        ) == "sort-desc"
 
         page.locator("#month-detail-table thead th").nth(3).click()
         assert page.locator("#month-detail-body tr td:nth-child(2)").all_text_contents() == [
@@ -3303,6 +3304,27 @@ class TestChromeConsistency:
         title_index = panel.index("<h2>Find a Boarder</h2>")
         results_index = panel.index("<h3>Search Results</h3>")
         assert title_index < results_index
+
+    def test_layout_links_the_extracted_stylesheet(self):
+        html = home_html()
+        assert '<link rel="stylesheet" href="/static/app.css">' in html
+        assert "<style>" not in html
+
+    def test_extracted_stylesheet_is_served_with_the_layout_tokens(self, fresh_client):
+        response = fresh_client.get("/static/app.css")
+        assert response.status_code == 200
+        css = response.get_data(as_text=True)
+        assert "--navy:" in css
+        assert ".site-header" in css
+
+    def test_extracted_stylesheet_is_linked_before_page_specific_styles(
+        self, fresh_client
+    ):
+        # The I-Points page's head_extra begins with a <noscript> style block,
+        # so its position in the rendered HTML proves the layout link comes
+        # first and page overrides can still win.
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+        assert html.index('href="/static/app.css"') < html.index("<noscript>")
 
     def test_every_tab_shares_identical_computed_typography(self, fresh_client, browser_page):
         html = fresh_client.get("/").get_data(as_text=True)
