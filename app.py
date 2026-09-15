@@ -52,6 +52,7 @@ from punishments import (
     TransitionRejected,
     assign_batch,
     attach_display_flags,
+    describe_audit as describe_punishment_audit,
     humanized_status,
     list_punishments_view,
     transition,
@@ -1578,6 +1579,22 @@ def _boarder_profile_url(normalized: str) -> str:
     return f"/boarder/{quote(normalized)}"
 
 
+def _discipline_history(conn, normalized_name):
+    """Merges both lifecycles' audit rows into one newest-first history.
+
+    One shared read; each lifecycle turns its own rows into a labelled note and
+    returns ``None`` for the rest, so neither lifecycle imports the other.
+    Ties break on the audit row id, newest first.
+    """
+    entries = []
+    for audit in storage.list_discipline_audit(conn, normalized_name):
+        note = describe_punishment_audit(audit) or ipoints.describe_audit(audit)
+        if note is not None:
+            entries.append((audit.changed_at, audit.id, note))
+    entries.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+    return [note for _, _, note in entries]
+
+
 @bp.route('/boarder/<path:key>')
 def boarder_profile(key):
     """Renders one boarder's profile, addressed by URL-encoded Match Key.
@@ -1593,6 +1610,7 @@ def boarder_profile(key):
     series = []
     punishments = []
     ipoint_summary = None
+    discipline_history = []
     today = ipoints.today_iso()
     with connect(read_only=True) as conn:
         if normalized:
@@ -1602,6 +1620,7 @@ def boarder_profile(key):
                 storage.list_boarder_punishments(conn, normalized)
             )
             ipoint_summary = ipoints.boarder_summary(conn, normalized, today)
+            discipline_history = _discipline_history(conn, normalized)
     live_punishments = [p for p in punishments if p.status != PUNISHMENT_VOIDED]
     voided_punishments = [p for p in punishments if p.status == PUNISHMENT_VOIDED]
     escalation_rows = _escalation_rows(series, live_punishments)
@@ -1631,6 +1650,7 @@ def boarder_profile(key):
         live_punishments=live_punishments,
         voided_punishments=voided_punishments,
         escalation_rows=escalation_rows,
+        discipline_history=discipline_history,
         ipoint_summary=ipoint_summary,
         show_ipoints=show_ipoints,
         can_log_ipoints=can_log_ipoints,

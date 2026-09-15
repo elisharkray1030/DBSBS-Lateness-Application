@@ -289,7 +289,11 @@ class TestRemovedBoarderEntryGuard:
 
         assert isinstance(outcome, EntryRejected)
         assert storage.list_ipoint_entries(conn, "ZED") == []
-        assert storage.list_discipline_audit(conn, "ZED") == []
+        assert [
+            audit
+            for audit in storage.list_discipline_audit(conn, "ZED")
+            if audit.entity_type != "punishment"
+        ] == []
 
     def test_ipoints_only_boarder_can_accrue(self, conn):
         outcome = log_entry(
@@ -547,9 +551,10 @@ class TestLegacyAdjustmentAudit:
         html = response.get_data(as_text=True)
 
         assert response.status_code == 200
-        # The profile deliberately omits audit history, so it must not claim
-        # there is no history at all; the audit note lives on /ipoints.
-        assert "Audit History" not in html
+        # The profile's combined Discipline Audit History renders the legacy
+        # adjustment, so the audit note is visible on the profile too.
+        assert "Discipline Audit History" in html
+        assert "Created adjustment of 4: Goodwill" in html
         assert "No I-Point Entries or Confiscations for this boarder." in html
 
 
@@ -720,7 +725,11 @@ class TestLogEntryRoute:
         assert "No I-Point Entries" in html
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ZED") == []
-            assert storage.list_discipline_audit(conn, "ZED") == []
+            assert [
+                audit
+                for audit in storage.list_discipline_audit(conn, "ZED")
+                if audit.entity_type != "punishment"
+            ] == []
 
     def test_removed_boarder_known_from_punishments_is_refused_over_http(
         self, fresh_client
@@ -751,7 +760,11 @@ class TestLogEntryRoute:
         assert "removed" in html.lower()
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ZED") == []
-            assert storage.list_discipline_audit(conn, "ZED") == []
+            assert [
+                audit
+                for audit in storage.list_discipline_audit(conn, "ZED")
+                if audit.entity_type != "punishment"
+            ] == []
 
     def test_ipoints_only_boarder_entry_succeeds(self, fresh_client):
         response = post_csrf(
