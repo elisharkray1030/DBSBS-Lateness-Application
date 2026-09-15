@@ -430,7 +430,7 @@ class TestIPointMatrix:
 
         assert first == second == {
             "ipoint_entries": 10,
-            "discipline_audit": 19,
+            "discipline_audit": 33,
             "confiscations": 4,
         }
 

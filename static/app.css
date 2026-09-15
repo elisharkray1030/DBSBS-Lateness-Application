@@ -924,7 +924,7 @@
             gap: 8px;
         }
 
-        .row-actions input[name="void_reason"] {
+        .row-actions input[name="note"] {
             width: 150px;
             padding: 6px 12px;
         }

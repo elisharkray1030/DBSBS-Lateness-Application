@@ -360,13 +360,16 @@ def _punishment_id(conn: sqlite3.Connection, key: str, month: str) -> int | None
 
 def _apply_punishments(conn, master_list) -> None:
     for plan in _PUNISHMENT_PLAN:
-        storage.assign_punishments(
+        assignment = punishments.assign_batch(
             conn,
             month=plan.month,
             boarders=_boarder_records(conn, master_list, plan.display_name, plan.month),
+            exemptions=set(),
             deadline=plan.deadline,
             assigned_at=plan.assigned_at,
         )
+        if isinstance(assignment, punishments.AssignmentRejected):
+            raise ValueError(assignment.reason)
     for move in _TRANSITIONS:
         key = normalize_name(move.display_name)
         punishment_id = _punishment_id(conn, key, move.month)
