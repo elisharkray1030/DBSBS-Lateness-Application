@@ -1071,7 +1071,7 @@ class TestProfileIPointQuickLog:
         assert "removed" in html.lower()
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ZED") == []
-            assert storage.list_ipoint_audit(conn, "ZED") == []
+            assert storage.list_discipline_audit(conn, "ZED") == []
 
     def test_quick_log_controls_are_labelled_and_keyboard_operable(
         self, fresh_client, browser_page
