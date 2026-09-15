@@ -15,9 +15,9 @@ from records import (
     AllTimeEntry,
     BoarderIdentity,
     Confiscation,
-    IPointAudit,
-    IPointAuditDraft,
-    IPointAuditNote,
+    DisciplineAudit,
+    DisciplineAuditDraft,
+    DisciplineAuditNote,
     IPointEntry,
     IPointSummary,
     bed_sort_key,
@@ -360,9 +360,9 @@ def _audit_draft(
     before_state: dict[str, object] | None,
     after_state: dict[str, object] | None,
     changed_at: str,
-) -> IPointAuditDraft:
+) -> DisciplineAuditDraft:
     """Builds one Audit draft, encoding both snapshots as JSON."""
-    return IPointAuditDraft(
+    return DisciplineAuditDraft(
         entity_type=entity_type,
         entity_id=entity_id,
         normalized_name=normalized_name,
@@ -536,7 +536,7 @@ def _recorded_trigger_months(conn) -> dict[str, "frozenset[str]"]:
     later read (story 27's "remove freely"; the audit preserves the prior state).
     """
     recorded: dict[str, set[str]] = {}
-    for audit in storage.list_ipoint_audit(conn):
+    for audit in storage.list_discipline_audit(conn):
         if audit.entity_type != "confiscation" or audit.action != "created":
             continue
         if not audit.after_state:
@@ -603,7 +603,7 @@ def materialise_pending_redemptions(
                     STATUS_PENDING,
                     stamp,
                 )
-                storage.stage_ipoint_audit(
+                storage.stage_discipline_audit(
                     conn,
                     _audit_draft(
                         "confiscation",
@@ -674,7 +674,7 @@ def confirm_redemption(
         storage.stage_confirm_ipoint_confiscation(
             conn, confiscation_id, display_name, bed, stamp, release_due
         )
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
             _audit_draft(
                 "confiscation",
@@ -735,7 +735,7 @@ def void_confiscation(
         storage.stage_void_ipoint_confiscation(
             conn, confiscation_id, stamp, clean_reason
         )
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
             _audit_draft(
                 "confiscation",
@@ -784,7 +784,7 @@ def release_confiscation(
 
     with conn:
         storage.stage_release_ipoint_confiscation(conn, confiscation_id, stamp)
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
             _audit_draft(
                 "confiscation",
@@ -866,7 +866,7 @@ def edit_confiscation(
         storage.stage_update_ipoint_confiscation(
             conn, confiscation_id, tier_value, tier_value, release_due
         )
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
             _audit_draft(
                 "confiscation",
@@ -907,7 +907,7 @@ def remove_confiscation(
 
     with conn:
         storage.stage_delete_ipoint_confiscation(conn, confiscation_id)
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
             _audit_draft(
                 "confiscation",
@@ -978,7 +978,7 @@ def log_entry(
         entry_id = storage.stage_ipoint_entry(
             conn, name, points_value, resolved_date, clean_reason, stamp
         )
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
             _audit_draft(
                 "entry",
@@ -1040,7 +1040,7 @@ def edit_entry(
         storage.stage_update_ipoint_entry(
             conn, entry_id, points_value, resolved_date, clean_reason
         )
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
             _audit_draft(
                 "entry",
@@ -1084,7 +1084,7 @@ def remove_entry(
 
     with conn:
         storage.stage_delete_ipoint_entry(conn, entry_id)
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
             _audit_draft(
                 "entry",
@@ -1164,11 +1164,11 @@ def _describe_change(action: str, before, after, entity_type: str) -> str:
     return action
 
 
-def _audit_note(audit: IPointAudit) -> IPointAuditNote:
+def _audit_note(audit: DisciplineAudit) -> DisciplineAuditNote:
     """Renders one stored Audit row into a display line."""
     before = json.loads(audit.before_state) if audit.before_state else None
     after = json.loads(audit.after_state) if audit.after_state else None
-    return IPointAuditNote(
+    return DisciplineAuditNote(
         action=audit.action.capitalize(),
         changed_at=audit.changed_at,
         description=_describe_change(audit.action, before, after, audit.entity_type),
@@ -1253,7 +1253,7 @@ def _summary_for(
     ledger: _BoarderLedger,
     who: BoarderIdentity | None,
     held: set[str],
-    audits: list[IPointAudit],
+    audits: list[DisciplineAudit],
     today: str,
 ) -> IPointSummary:
     """Builds one boarder's I-Point Summary from an already-read ledger.
@@ -1297,8 +1297,8 @@ def boarder_balances(
     identity = storage.freshest_identity_map(conn)
     held = phone_held_keys(conn)
 
-    grouped_audits: dict[str, list[IPointAudit]] = {}
-    for audit in storage.list_ipoint_audit(conn):
+    grouped_audits: dict[str, list[DisciplineAudit]] = {}
+    for audit in storage.list_discipline_audit(conn):
         grouped_audits.setdefault(audit.normalized_name, []).append(audit)
 
     summaries = [
@@ -1333,7 +1333,7 @@ def boarder_summary(
         today = today_iso()
     entries = storage.list_ipoint_entries(conn, normalized_name)
     confiscations = storage.list_ipoint_confiscations(conn, normalized_name)
-    audits = storage.list_ipoint_audit(conn, normalized_name)
+    audits = storage.list_discipline_audit(conn, normalized_name)
     if not (entries or confiscations or audits):
         return None
     ledger = _BoarderLedger(entries=entries, confiscations=confiscations)

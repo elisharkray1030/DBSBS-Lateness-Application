@@ -33,7 +33,7 @@ from ipoints import (
     log_entry,
     release_due_for,
 )
-from records import IPointAuditDraft, IPointEntry
+from records import DisciplineAuditDraft, IPointEntry
 
 
 def _entry_id(conn, name="ALICE"):
@@ -202,7 +202,7 @@ class TestLogEntry:
     def test_audit_row_written_with_entry(self, conn):
         seed_entry(conn, name="ALICE", points=5, reason="Repeated disruption")
 
-        audits = storage.list_ipoint_audit(conn, "ALICE")
+        audits = storage.list_discipline_audit(conn, "ALICE")
 
         assert len(audits) == 1
         audit = audits[0]
@@ -222,7 +222,7 @@ class TestLogEntry:
 
         reasons = [
             json.loads(audit.after_state)["reason"]
-            for audit in storage.list_ipoint_audit(conn)
+            for audit in storage.list_discipline_audit(conn)
         ]
 
         assert reasons == ["second", "first"]
@@ -232,7 +232,7 @@ class TestLogEntry:
             conn, normalized_name="ALICE", points=0, occurred_on="2026-08-01", reason="x"
         )
 
-        assert storage.list_ipoint_audit(conn) == []
+        assert storage.list_discipline_audit(conn) == []
 
 
 class TestRemovedBoarderEntryGuard:
@@ -272,7 +272,7 @@ class TestRemovedBoarderEntryGuard:
         assert isinstance(outcome, EntryRejected)
         assert "removed" in outcome.reason.lower()
         assert storage.list_ipoint_entries(conn, "ZED") == []
-        assert storage.list_ipoint_audit(conn, "ZED") == []
+        assert storage.list_discipline_audit(conn, "ZED") == []
 
     def test_removed_boarder_known_from_punishments_is_refused(self, conn):
         seed_punishments(
@@ -289,7 +289,7 @@ class TestRemovedBoarderEntryGuard:
 
         assert isinstance(outcome, EntryRejected)
         assert storage.list_ipoint_entries(conn, "ZED") == []
-        assert storage.list_ipoint_audit(conn, "ZED") == []
+        assert storage.list_discipline_audit(conn, "ZED") == []
 
     def test_ipoints_only_boarder_can_accrue(self, conn):
         outcome = log_entry(
@@ -455,7 +455,7 @@ class TestMatchKeyMigration:
         )
         conn.execute(
             """
-            INSERT INTO ipoint_audit
+            INSERT INTO discipline_audit
                 (entity_type, entity_id, normalized_name, action, changed_at)
             VALUES ('entry', 1, 'CHEN, WEI', 'created', '2026-08-01T09:00:00+00:00')
             """
@@ -463,7 +463,7 @@ class TestMatchKeyMigration:
         storage.create_schema(conn)
 
         assert storage.list_ipoint_entries(conn)[0].normalized_name == "CHEN WEI"
-        assert storage.list_ipoint_audit(conn)[0].normalized_name == "CHEN WEI"
+        assert storage.list_discipline_audit(conn)[0].normalized_name == "CHEN WEI"
 
 
 class TestIPointsPage:
@@ -517,9 +517,9 @@ class TestLegacyAdjustmentAudit:
     """
 
     def _seed_legacy_adjustment(self, conn):
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
-            IPointAuditDraft(
+            DisciplineAuditDraft(
                 entity_type="adjustment",
                 entity_id=1,
                 normalized_name="ALICE",
@@ -720,7 +720,7 @@ class TestLogEntryRoute:
         assert "No I-Point Entries" in html
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ZED") == []
-            assert storage.list_ipoint_audit(conn, "ZED") == []
+            assert storage.list_discipline_audit(conn, "ZED") == []
 
     def test_removed_boarder_known_from_punishments_is_refused_over_http(
         self, fresh_client
@@ -751,7 +751,7 @@ class TestLogEntryRoute:
         assert "removed" in html.lower()
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ZED") == []
-            assert storage.list_ipoint_audit(conn, "ZED") == []
+            assert storage.list_discipline_audit(conn, "ZED") == []
 
     def test_ipoints_only_boarder_entry_succeeds(self, fresh_client):
         response = post_csrf(
@@ -818,7 +818,7 @@ class TestEditEntry:
 
         ipoints.edit_entry(conn, entry_id, points=3, occurred_on="2026-08-02", reason="corrected")
 
-        audits = storage.list_ipoint_audit(conn, "ALICE")
+        audits = storage.list_discipline_audit(conn, "ALICE")
         assert [audit.action for audit in audits] == ["edited", "created"]
         edit = audits[0]
         assert edit.entity_id == entry_id
@@ -841,7 +841,7 @@ class TestEditEntry:
 
         assert isinstance(outcome, EntryRejected)
         assert storage.list_ipoint_entries(conn)[0].points == 5
-        assert [audit.action for audit in storage.list_ipoint_audit(conn)] == ["created"]
+        assert [audit.action for audit in storage.list_discipline_audit(conn)] == ["created"]
 
     def test_edit_rejects_a_blank_reason(self, conn):
         seed_entry(conn, name="ALICE", points=5)
@@ -865,7 +865,7 @@ class TestEditEntry:
         outcome = ipoints.edit_entry(conn, 999, 5, "2026-08-01", "x")
 
         assert isinstance(outcome, EntryRejected)
-        assert storage.list_ipoint_audit(conn) == []
+        assert storage.list_discipline_audit(conn) == []
 
     def test_edit_that_would_go_negative_is_refused(self, conn):
         seed_entry(conn, name="ALICE", points=5)
@@ -881,7 +881,7 @@ class TestEditEntry:
         assert isinstance(outcome, EntryRejected)
         assert "below zero" in outcome.reason.lower()
         assert target.id in [entry.id for entry in storage.list_ipoint_entries(conn, "ALICE")]
-        assert [audit.action for audit in storage.list_ipoint_audit(conn, "ALICE")] == ["created"]
+        assert [audit.action for audit in storage.list_discipline_audit(conn, "ALICE")] == ["created"]
 
 
 class TestRemoveEntry:
@@ -900,7 +900,7 @@ class TestRemoveEntry:
 
         ipoints.remove_entry(conn, entry_id)
 
-        audits = storage.list_ipoint_audit(conn, "ALICE")
+        audits = storage.list_discipline_audit(conn, "ALICE")
         assert audits[0].action == "removed"
         assert audits[0].entity_id == entry_id
         assert audits[0].after_state is None
@@ -918,7 +918,7 @@ class TestRemoveEntry:
         outcome = ipoints.remove_entry(conn, 999)
 
         assert isinstance(outcome, EntryRejected)
-        assert storage.list_ipoint_audit(conn) == []
+        assert storage.list_discipline_audit(conn) == []
 
     def test_remove_that_would_go_negative_is_refused(self, conn):
         seed_entry(conn, name="ALICE", points=5)
@@ -1509,7 +1509,7 @@ class TestConfirmRedemption:
 
         audits = [
             audit
-            for audit in storage.list_ipoint_audit(conn, "ALICE")
+            for audit in storage.list_discipline_audit(conn, "ALICE")
             if audit.entity_type == "confiscation"
         ]
         assert [audit.action for audit in audits] == ["confirmed", "created"]
@@ -1794,7 +1794,7 @@ class TestReleaseConfiscation:
 
         audits = [
             audit
-            for audit in storage.list_ipoint_audit(conn, "ALICE")
+            for audit in storage.list_discipline_audit(conn, "ALICE")
             if audit.entity_type == "confiscation"
         ]
         assert [audit.action for audit in audits] == [
@@ -2053,7 +2053,7 @@ class TestEditConfiscation:
 
         audits = [
             audit
-            for audit in storage.list_ipoint_audit(conn, "ALICE")
+            for audit in storage.list_discipline_audit(conn, "ALICE")
             if audit.entity_type == "confiscation"
         ]
         assert [audit.action for audit in audits] == [
@@ -2115,7 +2115,7 @@ class TestRemoveConfiscation:
 
         audits = [
             audit
-            for audit in storage.list_ipoint_audit(conn, "ALICE")
+            for audit in storage.list_discipline_audit(conn, "ALICE")
             if audit.entity_type == "confiscation"
         ]
         assert audits[0].action == "removed"

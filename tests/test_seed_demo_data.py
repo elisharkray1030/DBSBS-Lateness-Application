@@ -430,7 +430,7 @@ class TestIPointMatrix:
 
         assert first == second == {
             "ipoint_entries": 10,
-            "ipoint_audit": 19,
+            "discipline_audit": 19,
             "confiscations": 4,
         }
 
@@ -466,7 +466,7 @@ class TestIPointMatrix:
             table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in (
                 "ipoint_entries",
-                "ipoint_audit", "confiscations",
+                "discipline_audit", "confiscations",
             )
         }
 
@@ -476,7 +476,7 @@ class TestIPointMatrix:
             table: conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
             for table in (
                 "ipoint_entries",
-                "ipoint_audit", "confiscations",
+                "discipline_audit", "confiscations",
             )
         }
 

@@ -7,7 +7,7 @@ resolution, min/max seen months, and the empty database.
 
 from helpers import record
 
-from records import IPointAuditDraft
+from records import DisciplineAuditDraft
 
 import storage
 
@@ -170,9 +170,9 @@ class TestAllTimeListIPointUnion:
         assert entry.total_points == 0
 
     def test_legacy_adjustment_audit_key_stays_discoverable(self, conn):
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
-            IPointAuditDraft(
+            DisciplineAuditDraft(
                 entity_type="adjustment",
                 entity_id=1,
                 normalized_name="JADE",
@@ -195,9 +195,9 @@ class TestAllTimeListIPointUnion:
         assert entry.is_ipoints_only is True
 
     def test_audit_only_key_stays_discoverable(self, conn):
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
-            IPointAuditDraft(
+            DisciplineAuditDraft(
                 entity_type="entry",
                 entity_id=99,
                 normalized_name="KAI",
@@ -266,9 +266,9 @@ class TestAllTimeListIPointUnion:
             conn, "ROSE", 1, "2026-08-01", "x",
             "2026-08-01T09:00:00+00:00",
         )
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
-            IPointAuditDraft(
+            DisciplineAuditDraft(
                 entity_type="entry", entity_id=1, normalized_name="ROSE",
                 action="created", before_state=None, after_state=None,
                 changed_at="2026-08-01T09:00:00+00:00",

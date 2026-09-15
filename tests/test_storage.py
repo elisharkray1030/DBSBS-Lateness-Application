@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 from helpers import month_labels, record
-from records import Boarder, IPointAuditDraft, boarder_sort_key
+from records import Boarder, DisciplineAuditDraft, boarder_sort_key
 
 import storage
 
@@ -67,7 +67,7 @@ class TestDropAdjustmentTableMigration:
                 "VALUES ('ALICE', 5, '2026-08-01', 'x', '2026-08-01T09:00:00+00:00')"
             )
             connection.execute(
-                "INSERT INTO ipoint_audit "
+                "INSERT INTO discipline_audit "
                 "(entity_type, entity_id, normalized_name, action, changed_at) "
                 "VALUES ('entry', 1, 'ALICE', 'created', '2026-08-01T09:00:00+00:00')"
             )
@@ -88,12 +88,144 @@ class TestDropAdjustmentTableMigration:
                 entry.normalized_name
                 for entry in storage.list_ipoint_entries(connection)
             ] == ["ALICE"]
-            assert [row.normalized_name for row in storage.list_ipoint_audit(connection)] == [
+            assert [row.normalized_name for row in storage.list_discipline_audit(connection)] == [
                 "ALICE"
             ]
             assert [
                 row.normalized_name for row in storage.list_ipoint_confiscations(connection)
             ] == ["ALICE"]
+        finally:
+            connection.close()
+
+
+class TestDisciplineAuditMigration:
+    def _table_names(self, connection):
+        return {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+
+    def _create_legacy_schema(self, connection):
+        connection.execute(
+            """
+            CREATE TABLE ipoint_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT NOT NULL,
+                entity_id INTEGER NOT NULL,
+                normalized_name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                before_state TEXT,
+                after_state TEXT,
+                changed_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE punishments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                normalized_name TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                bed TEXT NOT NULL,
+                month TEXT NOT NULL,
+                points_owed INTEGER NOT NULL,
+                deadline TEXT NOT NULL,
+                status TEXT NOT NULL,
+                assigned_at TEXT NOT NULL,
+                overdue_at TEXT,
+                phone_held_at TEXT,
+                submitted_at TEXT,
+                voided_at TEXT,
+                void_reason TEXT
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO ipoint_audit "
+            "(id, entity_type, entity_id, normalized_name, action, changed_at) "
+            "VALUES (7, 'entry', 1, 'CHEN, WEI', 'created', "
+            "'2026-08-01T09:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO punishments "
+            "(normalized_name, display_name, bed, month, points_owed, deadline, "
+            "status, assigned_at) "
+            "VALUES ('CHEN, WEI', 'Chen Wei', '601A', '2026-08', 3, "
+            "'2026-08-31', 'assigned', '2026-08-02T09:00:00+00:00')"
+        )
+        connection.commit()
+
+    def test_fresh_schema_creates_the_shared_table_with_a_note_column(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            storage.create_schema(connection)
+            storage.create_schema(connection)
+            assert "ipoint_audit" not in self._table_names(connection)
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(discipline_audit)")
+            }
+            assert "note" in columns
+        finally:
+            connection.close()
+
+    def test_staged_note_round_trips(self, conn):
+        storage.stage_discipline_audit(
+            conn,
+            DisciplineAuditDraft(
+                entity_type="entry",
+                entity_id=1,
+                normalized_name="ALICE",
+                action="created",
+                before_state=None,
+                after_state="{}",
+                changed_at="2026-08-01T09:00:00+00:00",
+                note="seen at dinner",
+            ),
+        )
+        conn.commit()
+
+        assert storage.list_discipline_audit(conn)[0].note == "seen at dinner"
+
+    def test_migration_renames_the_table_and_preserves_ids_and_keys(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            self._create_legacy_schema(connection)
+            storage.create_schema(connection)
+            storage.create_schema(connection)
+
+            assert "ipoint_audit" not in self._table_names(connection)
+            entry_audits = [
+                audit
+                for audit in storage.list_discipline_audit(connection)
+                if audit.entity_type == "entry"
+            ]
+            assert [audit.id for audit in entry_audits] == [7]
+            assert entry_audits[0].normalized_name == "CHEN WEI"
+        finally:
+            connection.close()
+
+    def test_migration_backfills_one_assigned_event_per_punishment(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            self._create_legacy_schema(connection)
+            storage.create_schema(connection)
+            storage.create_schema(connection)
+
+            punishment = storage.list_punishments(connection)[0]
+            audits = [
+                audit
+                for audit in storage.list_discipline_audit(connection)
+                if audit.entity_type == "punishment"
+            ]
+            assert len(audits) == 1
+            assert audits[0].entity_id == punishment.id
+            assert audits[0].action == "assigned"
+            assert audits[0].before_state is None
+            assert audits[0].changed_at == "2026-08-02T09:00:00+00:00"
+            assert audits[0].normalized_name == "CHEN WEI"
         finally:
             connection.close()
 
@@ -847,9 +979,9 @@ class TestClearDerivedData:
         storage.stage_ipoint_confiscation(
             conn, "ALICE", "2026-08", 5, 5, "pending", "2026-08-03T09:00:00+00:00"
         )
-        storage.stage_ipoint_audit(
+        storage.stage_discipline_audit(
             conn,
-            IPointAuditDraft(
+            DisciplineAuditDraft(
                 entity_type="entry",
                 entity_id=1,
                 normalized_name="ALICE",
@@ -870,7 +1002,7 @@ class TestClearDerivedData:
         assert storage.list_punishments(conn) == []
         assert storage.list_ipoint_entries(conn) == []
         assert storage.list_ipoint_confiscations(conn) == []
-        assert storage.list_ipoint_audit(conn) == []
+        assert storage.list_discipline_audit(conn) == []
 
     def test_keeps_the_master_list_and_meta(self, conn):
         self._seed_derived(conn)
