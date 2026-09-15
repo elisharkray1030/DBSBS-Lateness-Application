@@ -1350,8 +1350,66 @@ class TestServerOwnedReportRows:
     def test_page_restores_sortable_report_headers_and_indicators(self):
         html = home_html()
         for field in ("bed", "name", "frequency", "minutes", "points"):
-            assert f"sortMonthDetail('{field}')" in html
+            assert f'data-sort-field="{field}"' in html
         assert "sort-indicator" in html
+
+    def test_home_has_no_inline_onclick_handlers(self):
+        assert "onclick=" not in home_html()
+
+    def test_view_button_opens_the_report_via_its_listener(
+        self, fresh_client, browser_page
+    ):
+        with app_module.connect() as conn:
+            storage.save_month(conn, [record("ALICE", "101", 2, 5, 7)], "2026-07")
+
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+        page.evaluate(
+            """() => {
+                window.fetch = () => Promise.resolve({
+                    json: () => Promise.resolve({ boarders: [] })
+                });
+            }"""
+        )
+
+        page.locator(".view-month-btn").first.click()
+        page.wait_for_function(
+            "() => !document.getElementById('month-detail').classList.contains('hidden')"
+        )
+        assert page.locator("#month-detail-title").inner_text() == "Report for 2026-07"
+
+    def test_close_button_hides_the_report_via_its_listener(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            [month_row("ALICE", "101", 2, 5, 7)],
+        )
+
+        page.locator("#month-detail-close").click()
+        assert page.locator("#month-detail").evaluate(
+            "el => el.classList.contains('hidden')"
+        )
+
+    def test_print_button_calls_print_via_its_listener(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        open_seeded_month_detail(
+            fresh_client,
+            page,
+            [record("ALICE", "101", 2, 5, 7)],
+            [month_row("ALICE", "101", 2, 5, 7)],
+        )
+        page.evaluate(
+            "() => { window.__printed = 0; window.print = () => { window.__printed += 1; }; }"
+        )
+
+        page.locator("#month-detail-print").click()
+        assert page.evaluate("() => window.__printed") == 1
 
     def test_sort_headers_are_keyboard_operable_buttons(self):
         html = home_html()
@@ -2272,6 +2330,20 @@ class TestConfirmModalDialogSemantics:
             """() => document.activeElement.closest('form.void-form') !== null"""
         )
         assert restored
+
+    def test_cancel_button_closes_without_running_the_action(
+        self, fresh_client, browser_page
+    ):
+        html = self._punishments_html(fresh_client)
+
+        page = browser_page
+        page.set_content(html)
+        self._open_modal(page)
+
+        page.locator("#confirmModal .btn-neutral").click()
+
+        assert page.locator("#confirmModal.show").count() == 0
+        assert page.evaluate("() => window.__submitCalled") is None
 
 
 class TestUnsavedEditGuard:

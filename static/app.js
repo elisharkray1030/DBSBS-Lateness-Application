@@ -353,6 +353,27 @@
         });
     });
 
+    // Report-detail controls. These elements exist only on the home page, so
+    // each registration is guarded (see #211).
+    const printReportButton = document.getElementById('month-detail-print');
+    if (printReportButton) {
+        printReportButton.addEventListener('click', printCurrentMonthReport);
+    }
+    const closeReportButton = document.getElementById('month-detail-close');
+    if (closeReportButton) {
+        closeReportButton.addEventListener('click', closeMonthDetail);
+    }
+    document.querySelectorAll('.view-month-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            viewMonth(this.dataset.month);
+        });
+    });
+    document.querySelectorAll('#month-detail-table thead .sort-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            sortMonthDetail(this.dataset.sortField);
+        });
+    });
+
     function closeMonthDetail() {
         activeMonthReport = null;
         setReportOpen(false);

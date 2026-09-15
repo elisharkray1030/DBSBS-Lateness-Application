@@ -53,6 +53,10 @@
         if (action) action();
     }
 
+    // The modal buttons belong to the layout, so their handlers live here.
+    document.querySelector('#confirmModal .btn-danger').addEventListener('click', runConfirmModal);
+    document.querySelector('#confirmModal .btn-neutral').addEventListener('click', closeConfirmModal);
+
     // Dialog behavior: Esc cancels; Tab cycles within the modal only.
     document.getElementById('confirmModal').addEventListener('keydown', function(event) {
         if (event.key === 'Escape') {
