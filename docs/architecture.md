@@ -6,7 +6,7 @@ record (`records.py`) crosses both. Two parallel lifecycle modules sit on the
 storage seam — `punishments.py` and `ipoints.py` — each owning its domain's
 validation, derived figures, and transitions without importing the other. The
 app layer (`app.py`) is a thin adapter that opens a connection per request and
-renders outcomes; templates and `static/app.js` are the browser surface.
+renders outcomes; templates and the `static/` assets are the browser surface.
 
 See [CONTEXT.md](../CONTEXT.md) for domain vocabulary and [docs/adr/](adr/) for
 the decisions behind these boundaries.
@@ -264,10 +264,13 @@ Important behavior:
   and leaves the existing list untouched, while duplicate normalized names
   still resolve last-row-wins.
 
-## UI — `templates/` and `static/app.js`
+## UI — `templates/` and `static/`
 
 - `templates/layout.html` renders the tab bar, pagination controls, flash
   messages, and application chrome. All page routes render through this layout.
+  It links `static/app.css` and loads `static/layout.js` before the page's
+  scripts, and single-sources the document-title suffix in a
+  `<meta name="site-title-suffix">` that the page scripts read.
 - `templates/index.html` renders the Find a Boarder search, Reports panel,
   Punishments panel, and Boarders management panel. The month detail table
   renders canonical display names and typed values supplied by the server,
@@ -294,8 +297,14 @@ Important behavior:
   beside Punishments.
 - `templates/macros.html` holds shared Jinja macros (for example, the
   Current/Former status badge).
-- `static/app.js` holds browser-side behavior: table sorting, charts, and
-  punishment actions.
+- `static/app.css` holds the layout styles (the design tokens and application
+  chrome).
+- `static/layout.js` holds the shared browser helpers — HTML escaping, chart
+  colours, and the accessible confirm modal — loaded before the page scripts.
+- `static/app.js` holds page behavior: table sorting, charts, and punishment
+  actions. Filter `<select>` controls keep an inline `onchange` submit
+  deliberately, so filtering survives JavaScript-disabled and app.js-failure
+  (ADR 0009).
 
 ## Invariants
 
