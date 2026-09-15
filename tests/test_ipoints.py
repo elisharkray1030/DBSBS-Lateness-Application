@@ -1148,27 +1148,37 @@ def _submit_entry_edit_form(page, index=0):
     )
 
 
-_NO_JS_BASE_URL = "http://dbs.local/"
+_CAPTURE_BASE_URL = "http://dbs.local/"
 
 
-def _no_js_navigations(page, html):
-    """Loads html with JS disabled and records the URLs it navigates to.
+def _capture_navigations(page, html, *, block_app_js=False, app_js_body=None):
+    """Loads html and records the URLs the page navigates to.
 
-    A base href lets a native (no-JS) form submission resolve and be
-    intercepted, so the test observes the real submitted request.
+    A base href lets a native form submission resolve and be intercepted, so
+    the test observes the real submitted request. ``block_app_js`` aborts the
+    app.js request (a 404/blocked script); ``app_js_body`` serves app.js with
+    that body instead (e.g. a script that throws).
     """
     requested = []
 
     def record(route):
-        requested.append(route.request.url)
+        url = route.request.url
+        if url.endswith("/static/app.js"):
+            if block_app_js:
+                route.abort()
+                return
+            if app_js_body is not None:
+                route.fulfill(body=app_js_body, content_type="application/javascript")
+                return
+        requested.append(url)
         route.fulfill(
             body="<html><body>ok</body></html>",
             content_type="text/html",
         )
 
-    page.context.route(_NO_JS_BASE_URL + "**", record)
+    page.context.route(_CAPTURE_BASE_URL + "**", record)
     page.set_content(
-        html.replace("<head>", f'<head><base href="{_NO_JS_BASE_URL}">', 1)
+        html.replace("<head>", f'<head><base href="{_CAPTURE_BASE_URL}">', 1)
     )
     return requested
 
@@ -2398,6 +2408,7 @@ class TestIPointsInteractions:
     only once it differs from the stored Entry, and minimises Remove. #240
     refines that: Save ships hidden (no flash, noscript unhide), the guard is
     per-row so another dirty row still warns, and the filter has a no-JS submit.
+    #244 adds a load failsafe so a failed app.js cannot strand Save.
     """
 
     def _log_entry(self, fresh_client, reason="Repeated disruption"):
@@ -2539,7 +2550,7 @@ class TestIPointsInteractions:
         html = self._entry_html(fresh_client)
         with app_module.connect() as conn:
             entry_id = _entry_id(conn)
-        requested = _no_js_navigations(no_js_page, html)
+        requested = _capture_navigations(no_js_page, html)
 
         save = no_js_page.locator(".ipoint-entry-save")
         assert save.count() == 1
@@ -2552,10 +2563,55 @@ class TestIPointsInteractions:
             f"/ipoints/entries/{entry_id}/edit" in url for url in requested
         ), requested
 
+    def test_entry_save_fallback_reveals_when_app_js_fails(
+        self, fresh_client, js_page
+    ):
+        # The app.js request is aborted (a 404/blocked script), so app.js never
+        # runs, the ready marker the failsafe reads is absent, and Save must
+        # stay submittable (#244).
+        html = self._entry_html(fresh_client)
+        with app_module.connect() as conn:
+            entry_id = _entry_id(conn)
+        requested = _capture_navigations(js_page, html, block_app_js=True)
+
+        save = js_page.locator(".ipoint-entry-save")
+        assert save.count() == 1
+        assert save.is_visible()
+
+        js_page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
+        save.click()
+
+        assert any(
+            f"/ipoints/entries/{entry_id}/edit" in url for url in requested
+        ), requested
+
+    def test_entry_save_fallback_reveals_when_app_js_throws(
+        self, fresh_client, js_page
+    ):
+        # app.js is served and executed but throws before wiring Save, so the
+        # marker stays absent even though the network path succeeded (#244).
+        html = self._entry_html(fresh_client)
+        with app_module.connect() as conn:
+            entry_id = _entry_id(conn)
+        requested = _capture_navigations(
+            js_page, html, app_js_body="throw new Error('app.js failed');"
+        )
+
+        save = js_page.locator(".ipoint-entry-save")
+        assert save.count() == 1
+        assert save.is_visible()
+
+        js_page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
+        save.click()
+
+        assert any(
+            f"/ipoints/entries/{entry_id}/edit" in url for url in requested
+        ), requested
+
     def test_confiscation_filter_is_submittable_without_js(
         self, fresh_client, no_js_page
     ):
-        requested = _no_js_navigations(
+        requested = _capture_navigations(
             no_js_page, fresh_client.get("/ipoints").get_data(as_text=True)
         )
 

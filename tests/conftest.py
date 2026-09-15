@@ -112,6 +112,20 @@ def browser_page(browser):
 
 
 @pytest.fixture
+def js_page(browser):
+    """A JavaScript-enabled page that does not inline app.js.
+
+    Use when a test must control whether app.js runs (for example, blocking
+    the request to simulate a failed script).
+    """
+    page = browser.new_page()
+    try:
+        yield page
+    finally:
+        page.close()
+
+
+@pytest.fixture
 def no_js_page(browser):
     """A page with JavaScript disabled, for <noscript> coverage."""
     context = browser.new_context(java_script_enabled=False)

@@ -10,6 +10,19 @@
             }
         </style>
     </noscript>
+    <script>
+        // If app.js never initialises (404, blocked, or thrown), the
+        // server-rendered .hidden would strand Save. app.js marks the document
+        // once it has wired per-row visibility; without that mark, reveal Save
+        // (#244).
+        window.addEventListener('load', function () {
+            if (!document.documentElement.hasAttribute('data-entry-save-ready')) {
+                document.querySelectorAll('.ipoint-entry-save.hidden').forEach(function (button) {
+                    button.classList.remove('hidden');
+                });
+            }
+        });
+    </script>
 {% endblock %}
 
 {% block content %}

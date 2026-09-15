@@ -260,6 +260,11 @@
         updateSaveVisibility();
     });
 
+    // Per-row Save wiring is live. ipoints.html's load failsafe reads this
+    // marker and reveals Save only if app.js never reached this point (404,
+    // blocked, or thrown), so a failed script cannot strand the control (#244).
+    document.documentElement.setAttribute('data-entry-save-ready', '');
+
     // Month detail view
     let monthRequestToken = 0;
 
