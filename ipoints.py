@@ -891,7 +891,7 @@ def remove_confiscation(
 
     Removing a confirmed (``active`` or ``released``) row returns its points to
     the Balance — additive, so no floor check is needed. The prior state
-    survives in the I-Point Audit History.
+    survives in the Discipline Audit History.
     """
     confiscation = storage.get_ipoint_confiscation(conn, confiscation_id)
     if confiscation is None:
