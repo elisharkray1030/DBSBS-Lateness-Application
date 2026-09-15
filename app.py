@@ -1586,13 +1586,17 @@ def _discipline_history(conn, normalized_name):
     returns ``None`` for the rest, so neither lifecycle imports the other.
     Ties break on the audit row id, newest first.
     """
-    entries = []
-    for audit in storage.list_discipline_audit(conn, normalized_name):
+    audits = sorted(
+        storage.list_discipline_audit(conn, normalized_name),
+        key=lambda audit: (audit.changed_at, audit.id),
+        reverse=True,
+    )
+    notes = []
+    for audit in audits:
         note = describe_punishment_audit(audit) or ipoints.describe_audit(audit)
         if note is not None:
-            entries.append((audit.changed_at, audit.id, note))
-    entries.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
-    return [note for _, _, note in entries]
+            notes.append(note)
+    return notes
 
 
 @bp.route('/boarder/<path:key>')

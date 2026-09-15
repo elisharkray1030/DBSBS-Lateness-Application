@@ -151,6 +151,19 @@ def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10"
     return storage.list_punishments(conn)
 
 
+def ipoint_audits(conn, normalized_name):
+    """Returns a Match Key's Discipline Audit rows owned by I-Points.
+
+    Excludes Punishment rows, so a test can assert an I-Point write saved no
+    audit without tripping over the assignment events the seeder writes.
+    """
+    return [
+        audit
+        for audit in storage.list_discipline_audit(conn, normalized_name)
+        if audit.entity_type != "punishment"
+    ]
+
+
 def seed_ipoint_entry(
     name="ALICE",
     points=5,
