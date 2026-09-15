@@ -7,8 +7,10 @@ from records import (
     DisciplineAudit,
     DisciplineAuditDraft,
     DisciplineAuditNote,
+    PUNISHMENT_ASSIGNED,
     PUNISHMENT_IN_FLIGHT_STATUSES,
     PUNISHMENT_NON_VOIDED_STATUSES,
+    PUNISHMENT_OVERDUE,
     PUNISHMENT_STATUS_LABELS,
     Punishment,
     punishment_audit_snapshot,
@@ -58,26 +60,18 @@ def format_timestamp(stamp: str) -> str:
     return moment.strftime("%Y-%m-%d %H:%M")
 
 
-_TRANSITION_DESCRIPTIONS = {
-    "overdue": "Marked overdue",
-    "phone_held": "Phone held",
-    "submitted": "Submitted",
-    "voided": "Voided",
-}
-
-
 def _describe_punishment_change(audit: DisciplineAudit) -> str:
     """Words one Punishment audit row in plain language."""
-    if audit.action == "assigned":
+    if audit.action == PUNISHMENT_ASSIGNED:
         after = json.loads(audit.after_state) if audit.after_state else {}
         text = (
             f"Assigned {after.get('points_owed')} points, "
             f"due {after.get('deadline')}"
         )
+    elif audit.action == PUNISHMENT_OVERDUE:
+        text = "Marked overdue"
     else:
-        text = _TRANSITION_DESCRIPTIONS.get(
-            audit.action, audit.action.replace("_", " ").capitalize()
-        )
+        text = humanized_status(audit.action)
     if audit.note:
         text = f"{text}: {audit.note}"
     return text
