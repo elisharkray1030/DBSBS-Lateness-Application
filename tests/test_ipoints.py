@@ -1136,6 +1136,43 @@ def _beforeunload_cancelled(page):
     )
 
 
+def _submit_entry_edit_form(page, index=0):
+    """Submits an Entry edit form without navigating, exercising the guard."""
+    page.evaluate(
+        """(index) => {
+            document.querySelectorAll('.ipoint-entry-edit-form')[index].dispatchEvent(
+                new Event('submit', { cancelable: true, bubbles: true })
+            );
+        }""",
+        index,
+    )
+
+
+_NO_JS_BASE_URL = "http://dbs.local/"
+
+
+def _no_js_navigations(page, html):
+    """Loads html with JS disabled and records the URLs it navigates to.
+
+    A base href lets a native (no-JS) form submission resolve and be
+    intercepted, so the test observes the real submitted request.
+    """
+    requested = []
+
+    def record(route):
+        requested.append(route.request.url)
+        route.fulfill(
+            body="<html><body>ok</body></html>",
+            content_type="text/html",
+        )
+
+    page.context.route(_NO_JS_BASE_URL + "**", record)
+    page.set_content(
+        html.replace("<head>", f'<head><base href="{_NO_JS_BASE_URL}">', 1)
+    )
+    return requested
+
+
 class TestIPointsEditRemoveBrowser:
     def test_inline_edit_and_remove_are_keyboard_operable(self, fresh_client, browser_page):
         post_csrf(
@@ -2355,8 +2392,13 @@ class TestConfiscationLifecycleBrowser:
 
 
 class TestIPointsInteractions:
-    """Slice 4 (#207): auto-apply the Confiscation filter, reveal a row's Save
-    only once it differs from the stored Entry, and minimise Remove."""
+    """I-Points entry-flow UI.
+
+    Slice 4 (#207) auto-applies the Confiscation filter, reveals a row's Save
+    only once it differs from the stored Entry, and minimises Remove. #240
+    refines that: Save ships hidden (no flash, noscript unhide), the guard is
+    per-row so another dirty row still warns, and the filter has a no-JS submit.
+    """
 
     def _log_entry(self, fresh_client, reason="Repeated disruption"):
         post_csrf(
@@ -2373,6 +2415,17 @@ class TestIPointsInteractions:
     def _entry_html(self, fresh_client):
         self._log_entry(fresh_client)
         return fresh_client.get("/ipoints").get_data(as_text=True)
+
+    def _two_entries_html(self, fresh_client):
+        self._log_entry(fresh_client, reason="First disruption")
+        self._log_entry(fresh_client, reason="Second disruption")
+        return fresh_client.get("/ipoints").get_data(as_text=True)
+
+    def _dirty_both_entry_rows(self, page):
+        reasons = page.locator('.ipoint-entry-field[name="reason"]')
+        assert reasons.count() == 2
+        reasons.nth(0).fill("row A edit")
+        reasons.nth(1).fill("row B edit")
 
     def _active_confiscation_html(self, fresh_client):
         with app_module.connect() as conn:
@@ -2392,7 +2445,7 @@ class TestIPointsInteractions:
 
     # --- Auto-apply Confiscation filter ---
 
-    def test_status_select_submits_on_change_and_the_filter_button_is_gone(
+    def test_status_select_submits_on_change_without_a_visible_filter_button(
         self, fresh_client
     ):
         html = fresh_client.get("/ipoints").get_data(as_text=True)
@@ -2400,7 +2453,24 @@ class TestIPointsInteractions:
         select = re.search(r'<select[^>]*id="confiscation-status"[^>]*>', html)
         assert select is not None
         assert 'onchange="this.form.submit()"' in select.group(0)
-        assert ">Filter<" not in html
+        # #207 removed the visible Filter button. The only fallback control now
+        # lives inside <noscript>, so JS clients never see it.
+        assert ">Filter<" not in re.sub(
+            r"<noscript>.*?</noscript>", "", html, flags=re.S
+        )
+
+    def test_no_js_confiscation_filter_offers_a_submit_button(self, fresh_client):
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        form = re.search(
+            r'<form[^>]*class="ipoint-filter-form".*?</form>', html, re.S
+        )
+        assert form is not None
+        noscript = re.search(r"<noscript>(.*?)</noscript>", form.group(0), re.S)
+        assert noscript is not None
+        assert re.search(
+            r'<button[^>]*type="submit"[^>]*>Filter</button>', noscript.group(1)
+        )
 
     def test_selecting_a_status_submits_the_filter_form(self, fresh_client, browser_page):
         page = browser_page
@@ -2413,7 +2483,7 @@ class TestIPointsInteractions:
 
     # --- Save-on-change ---
 
-    def test_entry_save_is_visible_in_rendered_html(self, fresh_client):
+    def test_entry_save_ships_hidden_in_rendered_html(self, fresh_client):
         html = self._entry_html(fresh_client)
         with app_module.connect() as conn:
             entry_id = _entry_id(conn)
@@ -2422,7 +2492,8 @@ class TestIPointsInteractions:
             rf'<button[^>]*form="ipoint-edit-{entry_id}"[^>]*>Save</button>', html
         )
         assert save is not None
-        assert "hidden" not in save.group(0)
+        assert "ipoint-entry-save" in save.group(0)
+        assert "hidden" in save.group(0)
 
     def test_entry_save_hides_until_a_field_changes(self, fresh_client, browser_page):
         page = browser_page
@@ -2463,6 +2534,39 @@ class TestIPointsInteractions:
         )
 
         assert save.is_visible()
+
+    def test_entry_save_is_submittable_without_js(self, fresh_client, no_js_page):
+        html = self._entry_html(fresh_client)
+        with app_module.connect() as conn:
+            entry_id = _entry_id(conn)
+        requested = _no_js_navigations(no_js_page, html)
+
+        save = no_js_page.locator(".ipoint-entry-save")
+        assert save.count() == 1
+        assert save.is_visible()
+
+        no_js_page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
+        save.click()
+
+        assert any(
+            f"/ipoints/entries/{entry_id}/edit" in url for url in requested
+        ), requested
+
+    def test_confiscation_filter_is_submittable_without_js(
+        self, fresh_client, no_js_page
+    ):
+        requested = _no_js_navigations(
+            no_js_page, fresh_client.get("/ipoints").get_data(as_text=True)
+        )
+
+        no_js_page.select_option("#confiscation-status", "released")
+        no_js_page.locator(
+            "#confiscations .ipoint-filter-form button[type=submit]"
+        ).click()
+
+        assert any("confiscation_status=released" in url for url in requested), (
+            requested
+        )
 
     # --- Minimal Remove ---
 
@@ -2546,13 +2650,7 @@ class TestIPointsInteractions:
         page.set_content(self._entry_html(fresh_client))
 
         page.locator('.ipoint-entry-field[name="reason"]').fill("corrected")
-        page.evaluate(
-            """() => {
-                document.querySelector('.ipoint-entry-edit-form').dispatchEvent(
-                    new Event('submit', { cancelable: true, bubbles: true })
-                );
-            }"""
-        )
+        _submit_entry_edit_form(page)
 
         assert _beforeunload_cancelled(page) is False
 
@@ -2589,3 +2687,52 @@ class TestIPointsInteractions:
 
         assert page.evaluate("() => window.__submitCalled").endswith("/remove")
         assert _beforeunload_cancelled(page) is False
+
+    def test_saving_one_row_still_guards_another_dirty_row(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(self._two_entries_html(fresh_client))
+        self._dirty_both_entry_rows(page)
+
+        # Submitting row B is deliberate for row B only: row A's unsaved edit
+        # must still arm the guard.
+        _submit_entry_edit_form(page, index=1)
+        assert _beforeunload_cancelled(page) is True
+
+    def test_a_cancelled_save_still_guards_its_own_row(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(self._two_entries_html(fresh_client))
+        self._dirty_both_entry_rows(page)
+
+        # Row B's save is interrupted by the warning and the user stays, so the
+        # save never happened. Once row A is clean, row B must warn again.
+        _submit_entry_edit_form(page, index=1)
+        assert _beforeunload_cancelled(page) is True
+        page.evaluate(
+            """() => {
+                const field = document.querySelectorAll(
+                    '.ipoint-entry-field[name="reason"]'
+                )[0];
+                field.value = field.defaultValue;
+                field.dispatchEvent(new Event('input'));
+            }"""
+        )
+        assert _beforeunload_cancelled(page) is True
+
+    def test_confirming_a_remove_still_guards_another_dirty_row(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(self._two_entries_html(fresh_client))
+        _stub_form_submit(page)
+        self._dirty_both_entry_rows(page)
+
+        # Confirming the Remove for row A silences the guard for row A alone.
+        page.locator('button[form^="ipoint-remove-"]').nth(0).click()
+        page.locator("#confirmModal .btn-danger").click()
+
+        assert page.evaluate("() => window.__submitCalled").endswith("/remove")
+        assert _beforeunload_cancelled(page) is True

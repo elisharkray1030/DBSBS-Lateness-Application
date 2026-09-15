@@ -1,5 +1,17 @@
 {% extends "layout.html" %}
 
+{% block head_extra %}
+    <noscript>
+        <style>
+            /* Entry Save ships .hidden so it cannot flash before app.js runs.
+               Without JS, reveal it so the control stays usable. */
+            .ipoint-entry-save.hidden {
+                display: inline-flex;
+            }
+        </style>
+    </noscript>
+{% endblock %}
+
 {% block content %}
     <section id="ipoints" class="panel active ipoints-panel">
         <h2>Irregularity Points</h2>
@@ -54,6 +66,11 @@
                         </select>
                     </div>
                 </div>
+                <noscript>
+                    <div class="form-action">
+                        <button type="submit" class="btn btn-primary">Filter</button>
+                    </div>
+                </noscript>
             </form>
             {% if confiscations %}
             <div class="table-scroll">
@@ -233,7 +250,7 @@
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                     </form>
                                     <button type="submit" form="ipoint-edit-{{ entry.id }}"
-                                            class="btn btn-primary btn-sm ipoint-entry-save">Save</button>
+                                            class="btn btn-primary btn-sm ipoint-entry-save hidden">Save</button>
                                     <button type="submit" form="ipoint-remove-{{ entry.id }}"
                                             class="btn btn-danger btn-sm btn-icon"
                                             aria-label="Remove entry from {{ entry.occurred_on }}"

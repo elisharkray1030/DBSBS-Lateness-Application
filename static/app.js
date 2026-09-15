@@ -193,10 +193,16 @@
         });
     });
 
-    // A Save or a confirmed Remove is a deliberate navigation, not an
-    // abandoned edit: those submissions silence the unload guard below. The
-    // flag resets when the page is restored from the back/forward cache.
-    let entrySubmitting = false;
+    // A Save or a confirmed Remove is a deliberate navigation for that one
+    // Entry row, not an abandoned edit: exclude just that row from the unload
+    // guard below, so another dirty row still arms it. The set resets when the
+    // page is restored from the back/forward cache.
+    const submittingEntryRows = new Set();
+
+    function markEntryRowSubmitting(form) {
+        const row = form.closest('tr[data-entry-id]');
+        if (row) submittingEntryRows.add(row);
+    }
 
     // Removing an I-Point Entry is destructive but audited: route it through
     // the shared confirm dialog, whose wording each form carries.
@@ -208,7 +214,7 @@
                 message: form.dataset.removeMessage,
                 confirmLabel: 'Remove',
                 onConfirm: () => {
-                    entrySubmitting = true;
+                    markEntryRowSubmitting(form);
                     form.submit();
                 }
             });
@@ -230,8 +236,9 @@
     });
 
     // An Entry row is dirty when any of its controls differs from the stored
-    // value rendered at load. Save only matters once the row is dirty, so the
-    // button ships visible (usable without JS) and clean rows get hidden.
+    // value rendered at load. Save only matters once the row is dirty: the
+    // button ships hidden to avoid a flash, and is revealed here on dirty.
+    // A <noscript> rule unhides it when JS never runs.
     function entryRowIsDirty(row) {
         return [...row.querySelectorAll('.ipoint-entry-field')].some(
             field => field.value !== field.defaultValue
@@ -622,22 +629,30 @@
     }
 
     // Entry rows only exist on /ipoints; this returns false everywhere else.
+    // A row whose own Save or Remove is in flight is excluded so it does not
+    // warn about itself, while any other dirty row still does.
     function hasDirtyEntryRow() {
-        return [...document.querySelectorAll('tr[data-entry-id]')].some(entryRowIsDirty);
+        return [...document.querySelectorAll('tr[data-entry-id]')].some(
+            row => !submittingEntryRows.has(row) && entryRowIsDirty(row)
+        );
     }
 
     // Saving an Entry edit is the same deliberate navigation as a confirmed
-    // Remove, so it sets the flag the unload guard reads.
+    // Remove, so its own row is excluded from the unload guard.
     document.querySelectorAll('form.ipoint-entry-edit-form').forEach(form => {
-        form.addEventListener('submit', () => { entrySubmitting = true; });
+        form.addEventListener('submit', () => markEntryRowSubmitting(form));
     });
-    window.addEventListener('pageshow', () => { entrySubmitting = false; });
+    window.addEventListener('pageshow', () => { submittingEntryRows.clear(); });
 
     // Unsaved-edit guard for full page navigation (brand link, Back, refresh).
     // Tab clicks keep their own in-page confirm guard above.
     window.addEventListener('beforeunload', function(event) {
-        if (entrySubmitting) return;
-        if (hasDirtyBoarderRow() || hasDirtyEntryRow()) {
+        const dirty = hasDirtyBoarderRow() || hasDirtyEntryRow();
+        // The in-flight submission suppresses this check for its own row only.
+        // Clear it now: if the user stays, that row was never saved, so the
+        // next navigation must warn about it again.
+        submittingEntryRows.clear();
+        if (dirty) {
             event.preventDefault();
             event.returnValue = '';
             return '';
