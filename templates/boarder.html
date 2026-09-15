@@ -141,7 +141,7 @@
                             <td>{{ confiscation.status|capitalize }}</td>
                             <td>
                                 {{ confiscation.points_redeemed }} I-Points (tier {{ confiscation.tier }})
-                                {% if confiscation.status == 'pending' %}<br>Triggered {{ confiscation.trigger_month }}{% endif %}
+                                {% if confiscation.status == CONFISCATION_PENDING %}<br>Triggered {{ confiscation.trigger_month }}{% endif %}
                                 {% if confiscation.confirmed_at %}<br>Taken {{ confiscation.confirmed_at }}{% endif %}
                             </td>
                             <td>

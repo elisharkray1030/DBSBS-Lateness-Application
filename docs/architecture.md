@@ -199,7 +199,7 @@ Important behavior:
   `confirmed`/`released`/`voided`/`edited`/`removed` audit row (entity type
   `confiscation`) in the same connection block.
 - `attach_confiscation_flags(confiscations, phone_held_keys, today)` is the pure
-  seam for the derived display flags: `is_due` marks an active Confiscation on
+  seam for the derived display flags: `due_for_release` marks an active Confiscation on
   or after its `release_due`, and `stacked` marks one whose Boarder also has a
   `phone_held` lateness Punishment. `phone_held_keys(conn)` supplies the
   phone-held Match Keys without importing `punishments.py`; the flags are

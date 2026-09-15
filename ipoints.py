@@ -1219,6 +1219,17 @@ _CONFISCATION_STATUS_RANK = {
 }
 
 
+# The Confiscation list's filter keys and their staff-facing labels. ``all``
+# covers the three settled statuses, since ``pending`` is a Redemption shown in
+# its own panel.
+CONFISCATION_FILTER_OPTIONS = (
+    (CONFISCATION_ACTIVE, CONFISCATION_STATUS_LABELS[CONFISCATION_ACTIVE]),
+    (CONFISCATION_RELEASED, CONFISCATION_STATUS_LABELS[CONFISCATION_RELEASED]),
+    (CONFISCATION_VOIDED, CONFISCATION_STATUS_LABELS[CONFISCATION_VOIDED]),
+    ("all", "All"),
+)
+
+
 @dataclass(frozen=True)
 class ConfiscationFilters:
     """The Confiscation list's status filter: default key, groups, options."""
@@ -1232,8 +1243,7 @@ def confiscation_filters() -> ConfiscationFilters:
     """Returns the Confiscation list's filter definition.
 
     The owning lifecycle assembles it so the adapter never reassembles status
-    vocabulary. ``all`` covers the three settled statuses, since ``pending`` is
-    a Redemption shown in its own panel.
+    vocabulary.
     """
     return ConfiscationFilters(
         default=CONFISCATION_ACTIVE,
@@ -1247,12 +1257,7 @@ def confiscation_filters() -> ConfiscationFilters:
                 CONFISCATION_VOIDED,
             ),
         },
-        options=(
-            (CONFISCATION_ACTIVE, CONFISCATION_STATUS_LABELS[CONFISCATION_ACTIVE]),
-            (CONFISCATION_RELEASED, CONFISCATION_STATUS_LABELS[CONFISCATION_RELEASED]),
-            (CONFISCATION_VOIDED, CONFISCATION_STATUS_LABELS[CONFISCATION_VOIDED]),
-            ("all", "All"),
-        ),
+        options=CONFISCATION_FILTER_OPTIONS,
     )
 
 

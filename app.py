@@ -57,8 +57,11 @@ from punishments import (
     transition,
 )
 from records import (
+    CONFISCATION_ACTIVE,
+    CONFISCATION_PENDING,
     PUNISHMENT_NON_VOIDED_STATUSES,
     PUNISHMENT_STATUS_OPTIONS,
+    PUNISHMENT_VOIDED,
     build_profile_summary,
     normalize_name,
 )
@@ -611,6 +614,8 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = False
     app.jinja_env.globals["humanized_status"] = humanized_status
+    app.jinja_env.globals["CONFISCATION_ACTIVE"] = CONFISCATION_ACTIVE
+    app.jinja_env.globals["CONFISCATION_PENDING"] = CONFISCATION_PENDING
     app.register_blueprint(bp)
 
     @app.before_request
@@ -1597,8 +1602,8 @@ def boarder_profile(key):
                 storage.list_boarder_punishments(conn, normalized)
             )
             ipoint_summary = ipoints.boarder_summary(conn, normalized, today)
-    live_punishments = [p for p in punishments if p.status != 'voided']
-    voided_punishments = [p for p in punishments if p.status == 'voided']
+    live_punishments = [p for p in punishments if p.status != PUNISHMENT_VOIDED]
+    voided_punishments = [p for p in punishments if p.status == PUNISHMENT_VOIDED]
     escalation_rows = _escalation_rows(series, live_punishments)
 
     profile_url = _boarder_profile_url(normalized) if normalized else ""

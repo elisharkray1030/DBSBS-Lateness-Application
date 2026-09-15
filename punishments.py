@@ -7,7 +7,6 @@ from records import (
     PUNISHMENT_IN_FLIGHT_STATUSES,
     PUNISHMENT_NON_VOIDED_STATUSES,
     PUNISHMENT_STATUS_LABELS,
-    PUNISHMENT_STATUSES,
     Punishment,
     punishment_audit_snapshot,
 )
