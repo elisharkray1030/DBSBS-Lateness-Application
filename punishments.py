@@ -1,9 +1,12 @@
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from records import (
     BoarderRecord,
+    DisciplineAudit,
     DisciplineAuditDraft,
+    DisciplineAuditNote,
     PUNISHMENT_IN_FLIGHT_STATUSES,
     PUNISHMENT_NON_VOIDED_STATUSES,
     PUNISHMENT_STATUS_LABELS,
@@ -53,6 +56,46 @@ def format_timestamp(stamp: str) -> str:
     except ValueError:
         return stamp
     return moment.strftime("%Y-%m-%d %H:%M")
+
+
+_TRANSITION_DESCRIPTIONS = {
+    "overdue": "Marked overdue",
+    "phone_held": "Phone held",
+    "submitted": "Submitted",
+    "voided": "Voided",
+}
+
+
+def _describe_punishment_change(audit: DisciplineAudit) -> str:
+    """Words one Punishment audit row in plain language."""
+    if audit.action == "assigned":
+        after = json.loads(audit.after_state) if audit.after_state else {}
+        text = (
+            f"Assigned {after.get('points_owed')} points, "
+            f"due {after.get('deadline')}"
+        )
+    else:
+        text = _TRANSITION_DESCRIPTIONS.get(
+            audit.action, audit.action.replace("_", " ").capitalize()
+        )
+    if audit.note:
+        text = f"{text}: {audit.note}"
+    return text
+
+
+def describe_audit(audit: DisciplineAudit) -> DisciplineAuditNote | None:
+    """Renders one stored Audit row into a history line.
+
+    Returns ``None`` for a row owned by another lifecycle, so the Boarder
+    Profile can merge both lifecycles' notes without either importing the other.
+    """
+    if audit.entity_type != "punishment":
+        return None
+    return DisciplineAuditNote(
+        action=audit.action.capitalize(),
+        changed_at=audit.changed_at,
+        description=_describe_punishment_change(audit),
+    )
 
 
 @dataclass

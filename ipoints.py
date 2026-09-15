@@ -1159,8 +1159,14 @@ def _describe_change(action: str, before, after, entity_type: str) -> str:
     return action
 
 
-def _audit_note(audit: DisciplineAudit) -> DisciplineAuditNote:
-    """Renders one stored Audit row into a display line."""
+def describe_audit(audit: DisciplineAudit) -> DisciplineAuditNote | None:
+    """Renders one stored Audit row into a display line.
+
+    Returns ``None`` for a row owned by another lifecycle, so the Boarder
+    Profile can merge both lifecycles' notes without either importing the other.
+    """
+    if audit.entity_type not in ("entry", "confiscation", "adjustment"):
+        return None
     before = json.loads(audit.before_state) if audit.before_state else None
     after = json.loads(audit.after_state) if audit.after_state else None
     return DisciplineAuditNote(
@@ -1310,7 +1316,11 @@ def _summary_for(
         bed=who.bed if who else "",
         balance=_net_balance(ledger.entries, ledger.confiscations),
         entries=sorted(ledger.entries, key=lambda row: (row.occurred_on, row.id)),
-        audits=[_audit_note(audit) for audit in audits],
+        audits=[
+            note
+            for audit in audits
+            if (note := describe_audit(audit)) is not None
+        ],
         pending=pending,
         confiscations=attach_confiscation_flags(ledger.confiscations, held, today),
     )

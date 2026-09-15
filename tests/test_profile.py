@@ -890,12 +890,13 @@ class TestProfileIPointsSection:
         assert 'id="stat-ipoint-balance">7<' in html
         assert 'action="/boarder/ZED/ipoints"' not in html
 
-    def test_profile_omits_the_ipoint_audit_history(self, fresh_client):
-        seed_ipoint_entry(name="ALICE", points=5)
+    def test_profile_shows_the_combined_discipline_audit_history(self, fresh_client):
+        seed_ipoint_entry(name="ALICE", points=5, reason="Repeated disruption")
 
         html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
 
-        assert "Audit History" not in html
+        assert "Discipline Audit History" in html
+        assert "Repeated disruption" in html
 
     def test_profile_history_omits_the_single_valued_type_column(self, fresh_client):
         seed_ipoint_entry(name="ALICE", points=5, reason="Repeated disruption")
@@ -1115,3 +1116,42 @@ class TestProfileIPointQuickLog:
         lefts = [r["left"] for r in rects]
         assert max(bottoms) - min(bottoms) <= 3, rects
         assert lefts == sorted(lefts) and len(set(lefts)) == len(lefts), lefts
+
+
+class TestCombinedDisciplineAuditHistory:
+    def test_merges_punishment_and_ipoint_changes_newest_first(self, fresh_client):
+        with app_module.connect() as conn:
+            rows = seed_punishments(conn, deadline="2026-04-10")
+            alice = next(r for r in rows if r.normalized_name == "ALICE")
+            punishments.transition(
+                conn,
+                alice.id,
+                "submitted",
+                timestamp="2026-04-09T09:00:00+00:00",
+            )
+        seed_ipoint_entry(name="ALICE", points=5, reason="Repeated disruption")
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+        section = html[html.index('aria-label="Discipline Audit History"') :]
+        section = section[: section.index("</table>")]
+
+        assert "Created 5 on 2026-08-01: Repeated disruption" in section
+        assert "Submitted" in section
+        assert "Assigned 7 points, due 2026-04-10" in section
+        assert section.index("Repeated disruption") < section.index("Submitted")
+        assert section.index("Submitted") < section.index("Assigned 7 points")
+
+    def test_shows_a_punishment_note_on_its_transition_line(self, fresh_client):
+        with app_module.connect() as conn:
+            alice = seed_punishments(conn)[0]
+            punishments.transition(
+                conn,
+                alice.id,
+                "submitted",
+                timestamp="2026-04-09T09:00:00+00:00",
+                note="handed in at break",
+            )
+
+        html = profile_html(fresh_client, "ALICE").get_data(as_text=True)
+
+        assert "Submitted: handed in at break" in html
