@@ -373,7 +373,7 @@ class TestIPointMatrix:
         )
 
         assert jasper.release_due == "2026-09-03"
-        assert jasper.is_due is True
+        assert jasper.due_for_release is True
 
     def test_removed_boarder_keeps_frozen_ipoint_history(self, seeded):
         conn, _ = seeded

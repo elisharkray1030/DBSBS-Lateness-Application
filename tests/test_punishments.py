@@ -5,8 +5,8 @@ from datetime import datetime
 from helpers import record
 
 import storage
+from records import PUNISHMENT_STATUSES
 from punishments import (
-    STATUSES,
     AssignmentRejected,
     AssignmentSaved,
     TransitionRejected,
@@ -481,9 +481,9 @@ class TestListPunishmentsView:
         on_day = datetime.fromisoformat("2026-04-10T12:00:00+00:00")
         after = datetime.fromisoformat("2026-04-11T12:00:00+00:00")
 
-        assert all(r.is_due is False for r in list_punishments_view(conn, now=before))
-        assert all(r.is_due for r in list_punishments_view(conn, now=on_day))
-        assert all(r.is_due for r in list_punishments_view(conn, now=after))
+        assert all(r.deadline_passed is False for r in list_punishments_view(conn, now=before))
+        assert all(r.deadline_passed for r in list_punishments_view(conn, now=on_day))
+        assert all(r.deadline_passed for r in list_punishments_view(conn, now=after))
 
     def test_submitted_never_due_even_after_deadline(self, conn):
         self._assign(conn)
@@ -493,7 +493,7 @@ class TestListPunishmentsView:
         after = datetime.fromisoformat("2026-04-30T12:00:00+00:00")
         rows = list_punishments_view(conn, show_all=True, now=after)
         submitted = next(r for r in rows if r.status == "submitted")
-        assert submitted.is_due is False
+        assert submitted.deadline_passed is False
 
     def test_submission_after_deadline_flagged_late(self, conn):
         self._assign(conn)
@@ -570,7 +570,7 @@ class TestListPunishmentsView:
 
 class TestHumanizedStatuses:
     def test_every_status_has_a_humanized_label(self):
-        for status in STATUSES:
+        for status in PUNISHMENT_STATUSES:
             assert humanized_status(status) not in (None, "", status)
 
     def test_phone_held_label_matches_domain_language(self):

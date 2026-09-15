@@ -17,7 +17,7 @@
             <td>{{ p.month }}</td>
             <td>{{ p.points_owed }}</td>
             <td>{{ p.deadline }}{% if p.was_late %} <span class="late-badge">late</span>{% endif %}</td>
-            <td>{{ humanized_status(p.status) }}{% if p.is_due %} <span class="due-badge">due</span>{% endif %}</td>
+            <td>{{ humanized_status(p.status) }}{% if p.deadline_passed %} <span class="due-badge">due</span>{% endif %}</td>
             <td>{{ p.last_action or '&mdash;' }}</td>
         </tr>
         {% endfor %}
@@ -151,7 +151,7 @@
                             </td>
                             <td>
                                 {% if confiscation.stacked %}<span class="ipoint-flag ipoint-flag-stacked">Stacked</span>{% endif %}
-                                {% if confiscation.is_due %}<span class="ipoint-flag ipoint-flag-due">Due for release</span>{% endif %}
+                                {% if confiscation.due_for_release %}<span class="ipoint-flag ipoint-flag-due">Due for release</span>{% endif %}
                             </td>
                         </tr>
                         {% endfor %}
@@ -265,7 +265,7 @@
                                 <td>{% if row.frequency is none %}&mdash; <span class="missing-history">No history</span>{% else %}{{ row.frequency }}{% endif %}</td>
                                 <td>{% if row.total_minutes is none %}&mdash; <span class="missing-history">No history</span>{% else %}{{ row.total_minutes }}{% endif %}</td>
                                 <td>{% if row.total_points is none %}&mdash; <span class="missing-history">No history</span>{% else %}{{ row.total_points }}{% endif %}</td>
-                                <td>{% if row.punishment %}{{ humanized_status(row.punishment.status) }}{% if row.punishment.is_due %} <span class="due-badge">due</span>{% endif %}{% else %}No punishment assigned{% endif %}</td>
+                                <td>{% if row.punishment %}{{ humanized_status(row.punishment.status) }}{% if row.punishment.deadline_passed %} <span class="due-badge">due</span>{% endif %}{% else %}No punishment assigned{% endif %}</td>
                                 <td>{% if row.punishment %}{{ row.punishment.deadline }}{% if row.punishment.was_late %} <span class="late-badge">late</span>{% endif %}{% else %}&mdash;{% endif %}</td>
                             </tr>
                             {% endfor %}

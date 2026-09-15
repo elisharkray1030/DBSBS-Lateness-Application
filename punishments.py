@@ -4,25 +4,15 @@ from datetime import date, datetime, timezone
 from records import (
     BoarderRecord,
     DisciplineAuditDraft,
+    PUNISHMENT_IN_FLIGHT_STATUSES,
+    PUNISHMENT_NON_VOIDED_STATUSES,
+    PUNISHMENT_STATUS_LABELS,
+    PUNISHMENT_STATUSES,
     Punishment,
     punishment_audit_snapshot,
 )
 
 import storage
-
-STATUSES = ("assigned", "overdue", "phone_held", "submitted", "voided")
-IN_FLIGHT_STATUSES = ("assigned", "overdue", "phone_held")
-NON_VOIDED_STATUSES = ("assigned", "overdue", "phone_held", "submitted")
-
-# One shared humanized-label map driving status wording everywhere staff
-# see it: filter options, group headings, and table cells.
-STATUS_LABELS = {
-    "assigned": "Assigned",
-    "overdue": "Overdue",
-    "phone_held": "Phone held",
-    "submitted": "Submitted",
-    "voided": "Voided",
-}
 
 _TRANSITION_STAMPS = (
     "assigned_at",
@@ -35,7 +25,7 @@ _TRANSITION_STAMPS = (
 
 def humanized_status(status: str) -> str:
     """Returns the staff-facing label for a punishment status code."""
-    return STATUS_LABELS.get(status, status)
+    return PUNISHMENT_STATUS_LABELS.get(status, status)
 
 
 def last_action_at(punishment: Punishment) -> str | None:
@@ -150,9 +140,9 @@ def offered_actions(punishment: Punishment) -> list[OfferedAction]:
     actions = [
         OfferedAction(target=target, label=label)
         for target, label in _OFFERED_TRANSITIONS.get(punishment.status, ())
-        if target not in _DUE_GATED_TARGETS or punishment.is_due
+        if target not in _DUE_GATED_TARGETS or punishment.deadline_passed
     ]
-    if punishment.status in NON_VOIDED_STATUSES:
+    if punishment.status in PUNISHMENT_NON_VOIDED_STATUSES:
         actions.append(_VOID_ACTION)
     return actions
 
@@ -293,7 +283,9 @@ def assign_batch(
 
     already_assigned = {
         row.normalized_name
-        for row in storage.list_punishments(conn, statuses=NON_VOIDED_STATUSES, month=month)
+        for row in storage.list_punishments(
+            conn, statuses=PUNISHMENT_NON_VOIDED_STATUSES, month=month
+        )
     }
 
     eligible = [
@@ -339,7 +331,7 @@ def assign_batch(
     )
 
 
-def _is_due(punishment, now: datetime) -> bool:
+def _deadline_passed(punishment, now: datetime) -> bool:
     if punishment.status != "assigned":
         return False
     deadline = date.fromisoformat(punishment.deadline)
@@ -367,16 +359,21 @@ def _timestamp_date(timestamp: str) -> date:
 
 
 def _status_rank(status: str) -> int:
-    return IN_FLIGHT_STATUSES.index(status) if status in IN_FLIGHT_STATUSES else 99
+    return (
+        PUNISHMENT_IN_FLIGHT_STATUSES.index(status)
+        if status in PUNISHMENT_IN_FLIGHT_STATUSES
+        else 99
+    )
 
 
 def attach_display_flags(punishments: list[Punishment], now: datetime | None = None) -> list[Punishment]:
-    """Attaches computed ``is_due``/``was_late`` flags, last action, and the
-    offered action list to each punishment, for any surface listing them."""
+    """Attaches computed ``deadline_passed``/``was_late`` flags, last action,
+    and the offered action list to each punishment, for any surface listing
+    them."""
     if now is None:
         now = datetime.now(tz=timezone.utc)
     for punishment in punishments:
-        punishment.is_due = _is_due(punishment, now)
+        punishment.deadline_passed = _deadline_passed(punishment, now)
         punishment.was_late = _was_late(punishment)
         last_action = last_action_at(punishment)
         punishment.last_action = (
@@ -404,7 +401,7 @@ def list_punishments_view(
     elif show_all:
         statuses = None
     else:
-        statuses = IN_FLIGHT_STATUSES
+        statuses = PUNISHMENT_IN_FLIGHT_STATUSES
     punishments = storage.list_punishments(conn, statuses=statuses, month=month)
     attach_display_flags(punishments, now=now)
     return sorted(

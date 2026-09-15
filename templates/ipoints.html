@@ -112,7 +112,7 @@
                             </td>
                             <td>
                                 {% if confiscation.stacked %}<span class="ipoint-flag ipoint-flag-stacked">Stacked</span>{% endif %}
-                                {% if confiscation.is_due %}<span class="ipoint-flag ipoint-flag-due">Due for release</span>{% endif %}
+                                {% if confiscation.due_for_release %}<span class="ipoint-flag ipoint-flag-due">Due for release</span>{% endif %}
                             </td>
                             <td class="ipoint-row-actions">
                                 {% if confiscation.status == 'active' %}

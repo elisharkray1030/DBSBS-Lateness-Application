@@ -47,6 +47,62 @@ def sort_boarder_records(records: "Iterable[BoarderRecord]") -> "list[BoarderRec
     return sorted(records, key=lambda r: (bed_sort_key(r.bed), r.name))
 
 
+# The shared discipline status vocabulary. Every status string and its
+# staff-facing label lives here, so neither lifecycle imports the other and a
+# rename in one cannot silently desynchronise them (e.g. the `phone_held` token
+# read by the Stacked flag).
+PUNISHMENT_ASSIGNED = "assigned"
+PUNISHMENT_OVERDUE = "overdue"
+PUNISHMENT_PHONE_HELD = "phone_held"
+PUNISHMENT_SUBMITTED = "submitted"
+PUNISHMENT_VOIDED = "voided"
+PUNISHMENT_STATUSES = (
+    PUNISHMENT_ASSIGNED,
+    PUNISHMENT_OVERDUE,
+    PUNISHMENT_PHONE_HELD,
+    PUNISHMENT_SUBMITTED,
+    PUNISHMENT_VOIDED,
+)
+PUNISHMENT_IN_FLIGHT_STATUSES = (
+    PUNISHMENT_ASSIGNED,
+    PUNISHMENT_OVERDUE,
+    PUNISHMENT_PHONE_HELD,
+)
+PUNISHMENT_NON_VOIDED_STATUSES = (
+    PUNISHMENT_ASSIGNED,
+    PUNISHMENT_OVERDUE,
+    PUNISHMENT_PHONE_HELD,
+    PUNISHMENT_SUBMITTED,
+)
+PUNISHMENT_STATUS_LABELS = {
+    PUNISHMENT_ASSIGNED: "Assigned",
+    PUNISHMENT_OVERDUE: "Overdue",
+    PUNISHMENT_PHONE_HELD: "Phone held",
+    PUNISHMENT_SUBMITTED: "Submitted",
+    PUNISHMENT_VOIDED: "Voided",
+}
+PUNISHMENT_STATUS_OPTIONS = tuple(
+    (status, PUNISHMENT_STATUS_LABELS[status]) for status in PUNISHMENT_STATUSES
+)
+
+CONFISCATION_PENDING = "pending"
+CONFISCATION_ACTIVE = "active"
+CONFISCATION_RELEASED = "released"
+CONFISCATION_VOIDED = "voided"
+CONFISCATION_STATUSES = (
+    CONFISCATION_PENDING,
+    CONFISCATION_ACTIVE,
+    CONFISCATION_RELEASED,
+    CONFISCATION_VOIDED,
+)
+CONFISCATION_STATUS_LABELS = {
+    CONFISCATION_PENDING: "Pending",
+    CONFISCATION_ACTIVE: "Active",
+    CONFISCATION_RELEASED: "Released",
+    CONFISCATION_VOIDED: "Voided",
+}
+
+
 @dataclass
 class Boarder:
     """One row of the master list: id, normalized name, display name, and bed."""
@@ -242,7 +298,7 @@ class Punishment:
     submitted_at: str | None = None
     voided_at: str | None = None
     void_reason: str | None = None
-    is_due: bool = False
+    deadline_passed: bool = False
     was_late: bool = False
     last_action: str | None = None
     actions: list["OfferedAction"] = field(default_factory=list)
@@ -331,7 +387,7 @@ class Confiscation:
     ``display_name`` and ``bed`` (blank while pending) and sets
     ``confirmed_at``/``release_due``; a pending row may instead be voided.
 
-    ``is_due`` and ``stacked`` are derived display flags, computed per read
+    ``due_for_release`` and ``stacked`` are derived display flags, computed per read
     with an injected today and never stored.
     """
 
@@ -349,7 +405,7 @@ class Confiscation:
     released_at: str | None = None
     voided_at: str | None = None
     void_reason: str | None = None
-    is_due: bool = False
+    due_for_release: bool = False
     stacked: bool = False
 
 
