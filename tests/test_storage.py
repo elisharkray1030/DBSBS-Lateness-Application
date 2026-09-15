@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import pytest
@@ -204,6 +205,30 @@ class TestDisciplineAuditMigration:
             ]
             assert [audit.id for audit in entry_audits] == [7]
             assert entry_audits[0].normalized_name == "CHEN WEI"
+        finally:
+            connection.close()
+
+    def test_backfill_snapshots_the_assignment_state_not_the_current_state(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            self._create_legacy_schema(connection)
+            connection.execute(
+                "UPDATE punishments SET status = 'submitted', submitted_at = ?",
+                ("2026-08-05T09:00:00+00:00",),
+            )
+            connection.commit()
+            storage.create_schema(connection)
+
+            audit = next(
+                row
+                for row in storage.list_discipline_audit(connection)
+                if row.entity_type == "punishment"
+            )
+            after = json.loads(audit.after_state)
+            assert after["status"] == "assigned"
+            assert after["submitted_at"] is None
+            assert after["points_owed"] == 3
+            assert after["deadline"] == "2026-08-31"
         finally:
             connection.close()
 
