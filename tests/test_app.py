@@ -3386,6 +3386,34 @@ class TestChromeConsistency:
         assert "--navy:" in css
         assert ".site-header" in css
 
+    def test_layout_links_the_shared_script_before_page_scripts(self, fresh_client):
+        html = fresh_client.get("/").get_data(as_text=True)
+        layout_tag = '<script src="/static/layout.js"></script>'
+        app_tag = '<script src="/static/app.js"></script>'
+        assert layout_tag in html
+        # app.js calls the shared helpers, so layout.js must execute first.
+        assert html.index(layout_tag) < html.index(app_tag)
+
+    def test_layout_inline_shared_script_is_gone(self):
+        html = home_html()
+        for helper in ("escapeHtml", "dbsChartColors", "showConfirmModal"):
+            assert f"function {helper}" not in html, helper
+
+    def test_shared_helpers_load_from_the_layout_script(
+        self, fresh_client, browser_page
+    ):
+        page = browser_page
+        page.set_content(fresh_client.get("/").get_data(as_text=True))
+        for name in (
+            "escapeHtml",
+            "escapeAttr",
+            "dbsChartColors",
+            "showConfirmModal",
+            "runConfirmModal",
+            "closeConfirmModal",
+        ):
+            assert page.evaluate(f"() => typeof {name}") == "function", name
+
     def test_extracted_stylesheet_is_linked_before_page_specific_styles(
         self, fresh_client
     ):

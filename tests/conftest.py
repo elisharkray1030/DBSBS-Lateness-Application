@@ -61,10 +61,16 @@ def fresh_client(tmp_path):
 
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
-_APP_JS = _STATIC_DIR / "app.js"
-_APP_JS_TAG = '<script src="/static/app.js"></script>'
-_APP_CSS = _STATIC_DIR / "app.css"
 _APP_CSS_TAG = '<link rel="stylesheet" href="/static/app.css">'
+_APP_JS_TAG = '<script src="/static/app.js"></script>'
+_LAYOUT_JS_TAG = '<script src="/static/layout.js"></script>'
+
+# (external tag, static file, wrapper element) to inline for set_content tests.
+_INLINE_ASSETS = (
+    (_APP_CSS_TAG, _STATIC_DIR / "app.css", "style"),
+    (_LAYOUT_JS_TAG, _STATIC_DIR / "layout.js", "script"),
+    (_APP_JS_TAG, _STATIC_DIR / "app.js", "script"),
+)
 
 
 def _inline_static_assets(html):
@@ -79,14 +85,14 @@ def _inline_static_assets(html):
     stops feeding rendered HTML to ``set_content`` — the #163 test-helper fold
     keeps ``set_content``, so that ticket does not retire this shim.
     """
-    if _APP_CSS_TAG in html:
-        css = _APP_CSS.read_bytes().decode("utf-8")
-        assert "</style" not in css.lower(), "app.css is no longer safe to inline"
-        html = html.replace(_APP_CSS_TAG, "<style>" + css + "</style>")
-    if _APP_JS_TAG in html:
-        js = _APP_JS.read_bytes().decode("utf-8")
-        assert "</script" not in js.lower(), "app.js is no longer safe to inline"
-        html = html.replace(_APP_JS_TAG, "<script>" + js + "</script>")
+    for tag, path, wrapper in _INLINE_ASSETS:
+        if tag not in html:
+            continue
+        content = path.read_bytes().decode("utf-8")
+        assert f"</{wrapper}" not in content.lower(), (
+            f"{path.name} is no longer safe to inline"
+        )
+        html = html.replace(tag, f"<{wrapper}>" + content + f"</{wrapper}>")
     return html
 
 
