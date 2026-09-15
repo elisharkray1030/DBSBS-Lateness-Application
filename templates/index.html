@@ -84,8 +84,8 @@
                 <label for="punishments-status"><strong>Status</strong></label>
                 <select id="punishments-status" name="status" onchange="this.form.submit()">
                     <option value="">{% if punishments_show_all %}All statuses{% else %}In-flight only{% endif %}</option>
-                    {% for s in ['assigned', 'overdue', 'phone_held', 'submitted', 'voided'] %}
-                        <option value="{{ s }}" {% if punishments_status == s %}selected{% endif %}>{{ humanized_status(s) }}</option>
+                    {% for value, label in punishment_status_options %}
+                        <option value="{{ value }}" {% if punishments_status == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                 </select>
             </form>
@@ -126,7 +126,7 @@
                         <tbody>
                             {% for p in group.list %}
                             <tr data-punishment-id="{{ p.id }}">
-                                <td>{{ p.display_name }}{% if p.is_due %} <span class="due-badge">due</span>{% endif %}</td>
+                                <td>{{ p.display_name }}{% if p.deadline_passed %} <span class="due-badge">due</span>{% endif %}</td>
                                 <td>{{ p.bed }}</td>
                                 <td>{{ p.month }}</td>
                                 <td>{{ p.points_owed }}</td>

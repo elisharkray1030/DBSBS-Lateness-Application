@@ -429,7 +429,7 @@ class TestBoarderSummary:
 
         assert summary is not None
         assert len(summary.confiscations) == 1
-        assert summary.confiscations[0].is_due is True
+        assert summary.confiscations[0].due_for_release is True
         assert summary.confiscations[0].stacked is True
 
     def test_audit_only_key_still_yields_a_summary(self, conn):
@@ -1746,7 +1746,7 @@ def _hold_phone(conn, name="ALICE"):
 def _phone_is_held(conn, name="ALICE"):
     """The two-gate return condition: held while either gate remains open."""
     active = any(
-        row.status == ipoints.STATUS_ACTIVE
+        row.status == ipoints.CONFISCATION_ACTIVE
         for row in storage.list_ipoint_confiscations(conn, name)
     )
     lateness = any(
@@ -1833,8 +1833,8 @@ class TestConfiscationDueFlag:
             conn, statuses=("active",), today="2026-09-21"
         )
 
-        assert on_due[0].is_due is True
-        assert before[0].is_due is False
+        assert on_due[0].due_for_release is True
+        assert before[0].due_for_release is False
 
     def test_due_after_the_release_date(self, conn):
         _seed_active(conn, confirmed_on="2026-09-15")
@@ -1843,7 +1843,7 @@ class TestConfiscationDueFlag:
             conn, statuses=("active",), today="2026-09-30"
         )
 
-        assert rows[0].is_due is True
+        assert rows[0].due_for_release is True
 
     def test_released_rows_are_never_due(self, conn):
         active = _seed_active(conn, confirmed_on="2026-09-15")
@@ -1853,7 +1853,7 @@ class TestConfiscationDueFlag:
             conn, statuses=("released",), today="2026-10-30"
         )
 
-        assert rows[0].is_due is False
+        assert rows[0].due_for_release is False
 
     def test_pending_rows_are_never_due(self, conn):
         seed_entry(conn, points=14)
@@ -1863,7 +1863,7 @@ class TestConfiscationDueFlag:
             conn, statuses=("pending",), today="2026-10-30"
         )
 
-        assert rows[0].is_due is False
+        assert rows[0].due_for_release is False
 
 
 class TestStackedFlag:
@@ -1935,7 +1935,7 @@ class TestStackedFlag:
             conn, statuses=("active",), today="2026-09-30"
         )
 
-        assert rows[0].is_due is True
+        assert rows[0].due_for_release is True
         assert rows[0].stacked is True
         assert _phone_is_held(conn) is True
 
@@ -2792,3 +2792,26 @@ class TestIPointsInteractions:
 
         assert page.evaluate("() => window.__submitCalled").endswith("/remove")
         assert _beforeunload_cancelled(page) is True
+
+
+class TestConfiscationFilters:
+    def test_exposes_default_status_groups_and_options(self):
+        filters = ipoints.confiscation_filters()
+
+        assert filters.default == ipoints.CONFISCATION_ACTIVE
+        assert filters.statuses[ipoints.CONFISCATION_ACTIVE] == (
+            ipoints.CONFISCATION_ACTIVE,
+        )
+        assert filters.statuses["all"] == (
+            ipoints.CONFISCATION_ACTIVE,
+            ipoints.CONFISCATION_RELEASED,
+            ipoints.CONFISCATION_VOIDED,
+        )
+        assert ipoints.CONFISCATION_PENDING not in filters.statuses
+        assert [key for key, _ in filters.options] == [
+            ipoints.CONFISCATION_ACTIVE,
+            ipoints.CONFISCATION_RELEASED,
+            ipoints.CONFISCATION_VOIDED,
+            "all",
+        ]
+        assert all(label for _, label in filters.options)

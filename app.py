@@ -49,7 +49,6 @@ from parser import (
 )
 from punishments import (
     AssignmentRejected,
-    NON_VOIDED_STATUSES,
     TransitionRejected,
     assign_batch,
     attach_display_flags,
@@ -57,7 +56,15 @@ from punishments import (
     list_punishments_view,
     transition,
 )
-from records import build_profile_summary, normalize_name
+from records import (
+    CONFISCATION_ACTIVE,
+    CONFISCATION_PENDING,
+    PUNISHMENT_NON_VOIDED_STATUSES,
+    PUNISHMENT_STATUS_OPTIONS,
+    PUNISHMENT_VOIDED,
+    build_profile_summary,
+    normalize_name,
+)
 
 # Module logger: stdlib, so pure helpers below stay callable without an
 # application context (request-scoped code uses current_app.logger).
@@ -494,6 +501,7 @@ def _page_context(selected_tab: str = '', message: str | None = None,
         'punishments_show_all': False,
         'punishments_month': None,
         'punishments_status': None,
+        'punishment_status_options': PUNISHMENT_STATUS_OPTIONS,
         'boarders_view': 'current',
         'all_time_boarders': None,
         'all_time_query': '',
@@ -606,6 +614,8 @@ def create_app(config: "dict[str, Any] | None" = None) -> Flask:
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = False
     app.jinja_env.globals["humanized_status"] = humanized_status
+    app.jinja_env.globals["CONFISCATION_ACTIVE"] = CONFISCATION_ACTIVE
+    app.jinja_env.globals["CONFISCATION_PENDING"] = CONFISCATION_PENDING
     app.register_blueprint(bp)
 
     @app.before_request
@@ -1136,7 +1146,9 @@ def punishments():
     status = request.args.get('status') or None
     with connect(read_only=True) as conn:
         punishments = list_punishments_view(conn, show_all=show_all, month=month, status=status)
-        punishments_total = len(storage.list_punishments(conn, statuses=NON_VOIDED_STATUSES))
+        punishments_total = len(
+            storage.list_punishments(conn, statuses=PUNISHMENT_NON_VOIDED_STATUSES)
+        )
         all_months = storage.list_months(conn)
         boarders = storage.list_boarders(conn)
         punishment_months = _punishment_months(conn, all_months)
@@ -1170,27 +1182,6 @@ def punishments_legacy_redirect():
     return redirect(f"/punishments{('?' + query) if query else ''}")
 
 
-# The Confiscation list's status filter: ``all`` covers the three settled
-# statuses, since ``pending`` is a Redemption shown in its own panel.
-_CONFISCATION_FILTERS: dict[str, tuple[str, ...]] = {
-    "active": (ipoints.STATUS_ACTIVE,),
-    "released": (ipoints.STATUS_RELEASED,),
-    "voided": (ipoints.STATUS_VOIDED,),
-    "all": (
-        ipoints.STATUS_ACTIVE,
-        ipoints.STATUS_RELEASED,
-        ipoints.STATUS_VOIDED,
-    ),
-}
-_DEFAULT_CONFISCATION_FILTER = "active"
-_CONFISCATION_FILTER_OPTIONS = (
-    ("active", "Active"),
-    ("released", "Released"),
-    ("voided", "Voided"),
-    ("all", "All"),
-)
-
-
 @bp.route('/ipoints')
 def ipoints_view():
     """Renders the dedicated I-Points page: log form plus per-boarder ledger.
@@ -1220,16 +1211,15 @@ def ipoints_view():
             "I-Point pending Redemption evaluation hit sustained contention",
         )
 
-    selected_filter = request.args.get(
-        "confiscation_status", _DEFAULT_CONFISCATION_FILTER
-    )
-    if selected_filter not in _CONFISCATION_FILTERS:
-        selected_filter = _DEFAULT_CONFISCATION_FILTER
+    filters = ipoints.confiscation_filters()
+    selected_filter = request.args.get("confiscation_status", filters.default)
+    if selected_filter not in filters.statuses:
+        selected_filter = filters.default
 
     with connect(read_only=True) as conn:
         summaries = ipoints.boarder_balances(conn, today)
         confiscations = ipoints.confiscation_list(
-            conn, statuses=_CONFISCATION_FILTERS[selected_filter], today=today
+            conn, statuses=filters.statuses[selected_filter], today=today
         )
         boarder_options = sorted(
             {boarder.display_name for boarder in storage.list_boarders(conn)}
@@ -1245,7 +1235,7 @@ def ipoints_view():
         ipoint_summaries=summaries,
         confiscations=confiscations,
         confiscation_filter=selected_filter,
-        confiscation_filter_options=_CONFISCATION_FILTER_OPTIONS,
+        confiscation_filter_options=filters.options,
         boarder_options=boarder_options,
         today=today,
         tier_period_labels=ipoints.TIER_PERIOD_LABELS,
@@ -1612,8 +1602,8 @@ def boarder_profile(key):
                 storage.list_boarder_punishments(conn, normalized)
             )
             ipoint_summary = ipoints.boarder_summary(conn, normalized, today)
-    live_punishments = [p for p in punishments if p.status != 'voided']
-    voided_punishments = [p for p in punishments if p.status == 'voided']
+    live_punishments = [p for p in punishments if p.status != PUNISHMENT_VOIDED]
+    voided_punishments = [p for p in punishments if p.status == PUNISHMENT_VOIDED]
     escalation_rows = _escalation_rows(series, live_punishments)
 
     profile_url = _boarder_profile_url(normalized) if normalized else ""
