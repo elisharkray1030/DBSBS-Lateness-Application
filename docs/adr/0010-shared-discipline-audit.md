@@ -35,9 +35,13 @@ renamed, and it remains the provenance sidecar those decisions rely on.
   where `ALTER TABLE ... RENAME` preserves both.
 - **Move all status vocabulary to `records.py` vs only the shared tokens.**
   Chose all — the mirror that caused the coupling was `phone_held`, but the same
-  leakage exists wherever `app.py` or a template hardcodes a status list;
-  centralising the strings makes vocabulary drift impossible rather than merely
-  caught at the one boundary we happened to notice.
+  leakage exists wherever `app.py` or a template hardcodes a status list.
+  Centralising the strings makes a rename a one-line edit, and a
+  vocabulary-coverage test (the transition tables, the offered actions, and
+  storage's status columns all compared against the shared vocabulary) turns
+  drift between them into a failing test rather than a silent runtime oddity.
+  SQL and DDL keep their literals by design; the existing partial-index test
+  guards the one that matters.
 - **Audit every write vs leave Punishments un-audited.** Chose audit — staff
   trust needs the same provenance story on both lifecycles, and the issue's
   "consistent provenance" win is otherwise half-delivered.
