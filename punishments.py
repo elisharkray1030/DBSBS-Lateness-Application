@@ -106,8 +106,9 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 class OfferedAction:
     """One transition button the Punishments view offers on a row.
 
-    ``reason_input`` marks the void variant: its form gains the optional
-    reason field and the data attributes feeding the confirm dialog.
+    ``reason_input`` marks the void variant: its form carries the ``void-form``
+    class and the data attributes feeding the confirm dialog. The optional note
+    field is rendered on every transition form, void included.
     """
 
     target: str
@@ -236,13 +237,13 @@ def transition(
                     ),
                 )
 
-        stored_reason = void_reason
-        audit_note = note
         if target == "voided":
-            if stored_reason is None:
-                stored_reason = note
-            if audit_note is None:
-                audit_note = void_reason
+            reason = note if note is not None else void_reason
+            stored_reason = reason
+            audit_note = reason
+        else:
+            stored_reason = None
+            audit_note = note
 
         updated = storage.transition_punishment(
             conn,

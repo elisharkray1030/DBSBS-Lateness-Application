@@ -146,6 +146,37 @@ def open_month_picker(page):
     page.wait_for_selector("#month-picker-popover:not(.hidden)")
 
 
+class TestConnectionTransaction:
+    def test_connect_rolls_back_staged_writes_on_exception(self):
+        with pytest.raises(RuntimeError):
+            with app_module.connect() as conn:
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('rollback_probe', 'x')"
+                )
+                raise RuntimeError("boom")
+
+        with app_module.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM meta WHERE key = 'rollback_probe'"
+            ).fetchone()[0]
+        assert count == 0
+
+    def test_connect_commits_staged_writes_on_clean_exit(self):
+        try:
+            with app_module.connect() as conn:
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('commit_probe', 'x')"
+                )
+            with app_module.connect() as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM meta WHERE key = 'commit_probe'"
+                ).fetchone()[0]
+            assert count == 1
+        finally:
+            with app_module.connect() as conn:
+                conn.execute("DELETE FROM meta WHERE key = 'commit_probe'")
+
+
 class TestHomeRender:
     def test_report_archive_tab_precedes_history_tab(self):
         html = home_html()

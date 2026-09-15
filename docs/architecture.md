@@ -43,9 +43,11 @@ Important behavior:
 `storage.py` owns all persistence. Every function takes the connection, so the
 same module works against a file-backed connection in production and an
 in-memory (`:memory:`) connection in tests. No storage function reads a
-`DB_PATH` module global. The connection owns its transaction: it commits on a
-clean exit and rolls back on an exception, so the lifecycle functions below can
-stage writes without committing while direct callers still persist.
+`DB_PATH` module global. The connection owns its transaction: the app adapter's
+`connect()` commits on a clean exit and rolls back on an exception, so storage
+functions can stage part of a larger change without committing while direct
+callers that stage a single write still persist. The lifecycle additionally
+wraps its staging in `with conn:`, so a raw connection behaves the same.
 
 Important behavior:
 
