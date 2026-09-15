@@ -1496,25 +1496,25 @@ def stage_delete_ipoint_confiscation(
     conn.execute("DELETE FROM confiscations WHERE id = ?", (confiscation_id,))
 
 
-class _IPointListing(NamedTuple):
+class _TableListing(NamedTuple):
     columns: str
     table: str
     order_by: str
     status_column: str | None = None
 
 
-_IPOINT_ENTRY_LISTING = _IPointListing(
+_IPOINT_ENTRY_LISTING = _TableListing(
     "id, normalized_name, points, occurred_on, reason, recorded_at",
     "ipoint_entries",
     "occurred_on ASC, id ASC",
 )
-_DISCIPLINE_AUDIT_LISTING = _IPointListing(
+_DISCIPLINE_AUDIT_LISTING = _TableListing(
     "id, entity_type, entity_id, normalized_name, action, "
     "before_state, after_state, changed_at, note",
     "discipline_audit",
     "id DESC",
 )
-_IPOINT_CONFISCATION_LISTING = _IPointListing(
+_IPOINT_CONFISCATION_LISTING = _TableListing(
     "id, normalized_name, display_name, bed, trigger_month, points_redeemed, "
     "tier, status, created_at, confirmed_at, release_due, released_at, "
     "voided_at, void_reason",
@@ -1524,13 +1524,13 @@ _IPOINT_CONFISCATION_LISTING = _IPointListing(
 )
 
 
-def _select_ipoint_rows(
+def _select_table_rows(
     conn: sqlite3.Connection,
-    listing: _IPointListing,
+    listing: _TableListing,
     normalized_name: str | None = None,
     statuses: tuple[str, ...] | None = None,
 ) -> list[tuple]:
-    """Fetches rows through the one WHERE shape every I-Point listing repeats.
+    """Fetches rows through the one WHERE shape every listed table repeats.
 
     Columns, table, sort order, and whether the table has a status column
     travel together in the listing, so this seam owns the optional Match Key
@@ -1582,7 +1582,7 @@ def list_ipoint_entries(
     conn: sqlite3.Connection, normalized_name: str | None = None
 ) -> list[IPointEntry]:
     """Lists I-Point Entries chronologically, optionally for one Match Key."""
-    rows = _select_ipoint_rows(conn, _IPOINT_ENTRY_LISTING, normalized_name)
+    rows = _select_table_rows(conn, _IPOINT_ENTRY_LISTING, normalized_name)
     return [_ipoint_entry_from_row(row) for row in rows]
 
 
@@ -1604,7 +1604,7 @@ def list_discipline_audit(
     conn: sqlite3.Connection, normalized_name: str | None = None
 ) -> list[DisciplineAudit]:
     """Lists Discipline Audit rows, optionally for one Match Key, newest first."""
-    rows = _select_ipoint_rows(conn, _DISCIPLINE_AUDIT_LISTING, normalized_name)
+    rows = _select_table_rows(conn, _DISCIPLINE_AUDIT_LISTING, normalized_name)
     return [_discipline_audit_from_row(row) for row in rows]
 
 
@@ -1668,7 +1668,7 @@ def list_ipoint_confiscations(
 
     Oldest first; ``statuses=None`` lists every status.
     """
-    rows = _select_ipoint_rows(
+    rows = _select_table_rows(
         conn, _IPOINT_CONFISCATION_LISTING, normalized_name, statuses
     )
     return [_ipoint_confiscation_from_row(row) for row in rows]

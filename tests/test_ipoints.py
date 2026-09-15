@@ -13,7 +13,7 @@ from datetime import date
 
 import pytest
 
-from helpers import post_csrf, record, seed_punishments
+from helpers import ipoint_audits, post_csrf, record, seed_punishments
 
 import app as app_module
 import ipoints
@@ -289,11 +289,7 @@ class TestRemovedBoarderEntryGuard:
 
         assert isinstance(outcome, EntryRejected)
         assert storage.list_ipoint_entries(conn, "ZED") == []
-        assert [
-            audit
-            for audit in storage.list_discipline_audit(conn, "ZED")
-            if audit.entity_type != "punishment"
-        ] == []
+        assert ipoint_audits(conn, "ZED") == []
 
     def test_ipoints_only_boarder_can_accrue(self, conn):
         outcome = log_entry(
@@ -725,11 +721,7 @@ class TestLogEntryRoute:
         assert "No I-Point Entries" in html
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ZED") == []
-            assert [
-                audit
-                for audit in storage.list_discipline_audit(conn, "ZED")
-                if audit.entity_type != "punishment"
-            ] == []
+            assert ipoint_audits(conn, "ZED") == []
 
     def test_removed_boarder_known_from_punishments_is_refused_over_http(
         self, fresh_client
@@ -760,11 +752,7 @@ class TestLogEntryRoute:
         assert "removed" in html.lower()
         with app_module.connect() as conn:
             assert storage.list_ipoint_entries(conn, "ZED") == []
-            assert [
-                audit
-                for audit in storage.list_discipline_audit(conn, "ZED")
-                if audit.entity_type != "punishment"
-            ] == []
+            assert ipoint_audits(conn, "ZED") == []
 
     def test_ipoints_only_boarder_entry_succeeds(self, fresh_client):
         response = post_csrf(
@@ -2482,6 +2470,17 @@ class TestIPointsInteractions:
         assert ">Filter<" not in re.sub(
             r"<noscript>.*?</noscript>", "", html, flags=re.S
         )
+
+    def test_confiscation_filter_renders_every_option(self, fresh_client):
+        html = fresh_client.get("/ipoints").get_data(as_text=True)
+
+        select = re.search(
+            r'<select[^>]*id="confiscation-status".*?</select>', html, re.S
+        )
+        assert select is not None
+        for value, label in ipoints.confiscation_filters().options:
+            assert f'value="{value}"' in select.group(0)
+            assert f">{label}<" in select.group(0)
 
     def test_no_js_confiscation_filter_offers_a_submit_button(self, fresh_client):
         html = fresh_client.get("/ipoints").get_data(as_text=True)
