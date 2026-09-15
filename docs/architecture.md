@@ -48,9 +48,10 @@ in-memory (`:memory:`) connection in tests. No storage function reads a
 Important behavior:
 
 - `create_schema(conn)` creates the app's tables if they do not exist,
-  including `boarder_history`, `ipoint_entries`, `ipoint_audit`, and
-  `confiscations`. It also drops the retired `ipoint_adjustments` table on a
-  database created before Adjustments were retired.
+  including `boarder_history`, `ipoint_entries`, `discipline_audit`, and
+  `confiscations`. It also renames a pre-shared `ipoint_audit` table to
+  `discipline_audit` and drops the retired `ipoint_adjustments` table on a
+  database created before those changes.
 - `save_month(conn, boarders, month_label)` upserts each boarder row by month.
 - `list_months(conn)` returns the month summaries used in the UI (month label,
   boarder count, total minutes late), ordered newest-first.
@@ -85,14 +86,14 @@ Important behavior:
   `stage_confirm_ipoint_confiscation`,
   `stage_release_ipoint_confiscation`, `stage_void_ipoint_confiscation`,
   `stage_update_ipoint_confiscation`, `stage_delete_ipoint_confiscation`, and
-  `stage_ipoint_audit(conn, audit)` stage one I-Point ledger row and one audit
-  row on the open transaction; the I-Points lifecycle owns the commit, so the
-  ledger row and its audit travel together or not at all.
+  `stage_discipline_audit(conn, audit)` stage one ledger row and one shared
+  Discipline Audit row on the open transaction; the lifecycle owns the commit,
+  so the record and its audit travel together or not at all.
 - `list_ipoint_entries(conn[, name])`,
   `list_ipoint_confiscations(conn[, name][, statuses])`, and
-  `list_ipoint_audit(conn[, name])` read the ledger and its history, optionally
-  for one Match Key and — for Confiscations — a status set. The shared
-  `_select_ipoint_rows` seam owns the optional filters.
+  `list_discipline_audit(conn[, name])` read the ledger and its history,
+  optionally for one Match Key and — for Confiscations — a status set. The
+  shared `_select_ipoint_rows` seam owns the optional filters.
 - `freshest_identity_map(conn)` maps every known Match Key to its freshest-first
   identity, derived from the All-Time List and shared by the House Dashboard and
   the I-Point Balance.
@@ -105,12 +106,13 @@ the ingestion module, the CSV writer, the storage module, and the JSON body. It
 also holds the `Boarder` Master List row and the `UnparsedTimeRow` record, and
 the `bed_sort_key` rule that orders Monthly Report rows.
 
-It also carries the I-Point records: `IPointEntry` (one logged occasion),
+It also carries the discipline records: `IPointEntry` (one logged occasion),
 `Confiscation` (one Phone Confiscation, pending through released or voided),
-`IPointAuditDraft` (the fields of one retained change, before its id, staged
-into storage), `IPointAudit` (a stored change with its prior state), and
-`IPointSummary` (one boarder's derived Balance plus their Entries, pending
-Redemption, and Audit History).
+`Punishment` (one lateness task), and the shared audit types
+`DisciplineAuditDraft` (the fields of one retained change, before its id, staged
+into storage), `DisciplineAudit` (a stored change with its prior state), and
+`DisciplineAuditNote` (one history line). `IPointSummary` is one boarder's
+derived Balance plus their Entries, pending Redemption, and Audit History.
 
 ## Punishments — `punishments.py`
 
@@ -196,12 +198,18 @@ Important behavior:
   attached in `boarder_balances(conn, today)` and `confiscation_list(conn,
   statuses, today)`. The app never releases on its own (ADR 0005), and the phone
   returns only once both gates clear.
-- The I-Point ledger is three tables, created idempotently by `create_schema`
+- The I-Point ledger is two tables, created idempotently by `create_schema`
   and re-keyed with the other tables by the Match-Key migration:
-  `ipoint_entries` holds one logged Entry, `confiscations` one Redemption that
-  becomes a Phone Confiscation from pending through released or voided, and
-  `ipoint_audit` one retained change with its prior state. A partial unique
-  index keeps one open (`pending` or `active`) Confiscation per Match Key.
+  `ipoint_entries` holds one logged Entry, and `confiscations` one Redemption
+  that becomes a Phone Confiscation from pending through released or voided. A
+  partial unique index keeps one open (`pending` or `active`) Confiscation per
+  Match Key.
+- `discipline_audit` is the shared provenance table for both lifecycles: every
+  I-Point change is retained, and Punishment assignment records are backfilled
+  here and written here going forward. Each retained change carries its prior
+  state and an optional staff note. It is re-keyed with the other tables, and
+  `create_schema` renames a pre-shared `ipoint_audit` in place, adds the note
+  column, and backfills one `assigned` event per pre-existing Punishment.
   `create_schema` also drops the retired `ipoint_adjustments` table.
 - The web routes live in `app.py` (`GET /ipoints`, `POST /ipoints/entries`,
   `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`,

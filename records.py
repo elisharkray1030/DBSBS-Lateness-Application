@@ -1,3 +1,4 @@
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -247,6 +248,28 @@ class Punishment:
     actions: list["OfferedAction"] = field(default_factory=list)
 
 
+def punishment_audit_snapshot(punishment: "Punishment") -> str:
+    """Serializes a Punishment's lifecycle state for a Discipline Audit snapshot.
+
+    The frozen identity and points are part of the record, so an audit row can
+    stand alone; the mutable columns capture what a transition changed.
+    """
+    return json.dumps(
+        {
+            "status": punishment.status,
+            "points_owed": punishment.points_owed,
+            "deadline": punishment.deadline,
+            "assigned_at": punishment.assigned_at,
+            "overdue_at": punishment.overdue_at,
+            "phone_held_at": punishment.phone_held_at,
+            "submitted_at": punishment.submitted_at,
+            "voided_at": punishment.voided_at,
+            "void_reason": punishment.void_reason,
+        },
+        sort_keys=True,
+    )
+
+
 @dataclass
 class IPointEntry:
     """One logged occasion on which a boarder was given I-Points."""
@@ -259,12 +282,14 @@ class IPointEntry:
     recorded_at: str
 
 
-@dataclass
-class IPointAuditDraft:
-    """An I-Point Audit row waiting to be staged, minus its database id.
+@dataclass(kw_only=True)
+class DisciplineAuditDraft:
+    """A Discipline Audit row waiting to be staged, minus its database id.
 
-    The seven fields travel as one carrier from the I-Points lifecycle into
-    storage, so the write-side shape of an Audit row has a single home.
+    The fields travel as one carrier from a lifecycle into storage, so the
+    write-side shape of an Audit row has a single home. ``note`` is the
+    optional staff note attached to the change; it is ``None`` when no note
+    was given.
     """
 
     entity_type: str
@@ -274,11 +299,12 @@ class IPointAuditDraft:
     before_state: str | None
     after_state: str | None
     changed_at: str
+    note: str | None = None
 
 
-@dataclass
-class IPointAudit(IPointAuditDraft):
-    """One retained change to a boarder's I-Points, with its prior state.
+@dataclass(kw_only=True)
+class DisciplineAudit(DisciplineAuditDraft):
+    """One retained change to a boarder's discipline records, with its prior state.
 
     A stored Audit row: the fields a draft carries, plus its database id.
     """
@@ -287,8 +313,8 @@ class IPointAudit(IPointAuditDraft):
 
 
 @dataclass
-class IPointAuditNote:
-    """One human-readable line of a boarder's I-Point Audit History."""
+class DisciplineAuditNote:
+    """One human-readable line of a boarder's Discipline Audit History."""
 
     action: str
     changed_at: str
@@ -342,6 +368,6 @@ class IPointSummary:
     bed: str
     balance: int
     entries: list[IPointEntry] = field(default_factory=list)
-    audits: list[IPointAuditNote] = field(default_factory=list)
+    audits: list[DisciplineAuditNote] = field(default_factory=list)
     pending: Confiscation | None = None
     confiscations: list[Confiscation] = field(default_factory=list)

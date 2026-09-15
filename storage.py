@@ -1,5 +1,6 @@
 import sqlite3
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import NamedTuple
 from uuid import uuid4
@@ -11,10 +12,10 @@ from records import (
     BoarderMonth,
     BoarderRecord,
     Confiscation,
+    DisciplineAudit,
+    DisciplineAuditDraft,
     DistributionBucket,
     HouseTrendPoint,
-    IPointAudit,
-    IPointAuditDraft,
     IPointEntry,
     MonthSummary,
     Punishment,
@@ -22,6 +23,7 @@ from records import (
     WatchlistEntry,
     boarder_sort_key,
     normalize_name,
+    punishment_audit_snapshot,
     sort_boarder_records,
 )
 
@@ -49,6 +51,7 @@ POINTS_DISTRIBUTION_BUCKETS = (
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
+    _migrate_ipoint_audit_to_discipline_audit(conn)
     conn.execute(
         f"""
         CREATE TABLE IF NOT EXISTS boarders ({_BOARDERS_COLUMNS}
@@ -113,7 +116,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS ipoint_audit (
+        CREATE TABLE IF NOT EXISTS discipline_audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_type TEXT NOT NULL,
             entity_id INTEGER NOT NULL,
@@ -121,7 +124,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
             action TEXT NOT NULL,
             before_state TEXT,
             after_state TEXT,
-            changed_at TEXT NOT NULL
+            changed_at TEXT NOT NULL,
+            note TEXT
         )
         """
     )
@@ -162,6 +166,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_boarders_bed_unique(conn)
     _migrate_normalized_name_keys(conn)
     _migrate_drop_ipoint_adjustments(conn)
+    _backfill_punishment_audits(conn)
     conn.commit()
 
 
@@ -182,7 +187,7 @@ def _migrate_normalized_name_keys(conn: sqlite3.Connection) -> None:
         "boarder_history",
         "punishments",
         "ipoint_entries",
-        "ipoint_audit",
+        "discipline_audit",
         "confiscations",
     ):
         rows = conn.execute(
@@ -213,6 +218,74 @@ def _migrate_drop_ipoint_adjustments(conn: sqlite3.Connection) -> None:
     table, and a second run is a no-op.
     """
     conn.execute("DROP TABLE IF EXISTS ipoint_adjustments")
+
+
+def _migrate_ipoint_audit_to_discipline_audit(conn: sqlite3.Connection) -> None:
+    """Folds the I-Point-only audit table into the shared Discipline Audit.
+
+    Renames ``ipoint_audit`` in place so every audit row keeps its id, then
+    adds the ``note`` column the shared table carries. Runs before the shared
+    table's ``CREATE TABLE IF NOT EXISTS``: on a fresh database neither table
+    exists and the create supplies the final shape; on an old database the
+    rename lands first, so the create is a no-op. Idempotent — a second run
+    finds the new table already present and only checks the column.
+    """
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if "ipoint_audit" in tables and "discipline_audit" not in tables:
+        conn.execute("ALTER TABLE ipoint_audit RENAME TO discipline_audit")
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(discipline_audit)")
+    }
+    if columns and "note" not in columns:
+        conn.execute("ALTER TABLE discipline_audit ADD COLUMN note TEXT")
+
+
+def _backfill_punishment_audits(conn: sqlite3.Connection) -> None:
+    """Gives every pre-existing Punishment one synthetic ``assigned`` event.
+
+    Provenance now covers Punishments, but rows assigned before this build
+    have no audit history. Backfills exactly one event per Punishment that has
+    none, dated to its assignment stamp and carrying the assignment snapshot.
+    Idempotent: a Punishment that already has a ``punishment`` audit row is
+    left alone.
+    """
+    punished_ids = {
+        row[0]
+        for row in conn.execute(
+            "SELECT entity_id FROM discipline_audit WHERE entity_type = 'punishment'"
+        )
+    }
+    for punishment in list_punishments(conn):
+        if punishment.id in punished_ids:
+            continue
+        # The event is `assigned`, so its snapshot is the state the row was
+        # born in — not whatever status it has since reached.
+        assigned = replace(
+            punishment,
+            status="assigned",
+            overdue_at=None,
+            phone_held_at=None,
+            submitted_at=None,
+            voided_at=None,
+            void_reason=None,
+        )
+        conn.execute(
+            """
+            INSERT INTO discipline_audit (
+                entity_type, entity_id, normalized_name, action,
+                before_state, after_state, changed_at, note
+            ) VALUES ('punishment', ?, ?, 'assigned', NULL, ?, ?, NULL)
+            """,
+            (
+                punishment.id,
+                punishment.normalized_name,
+                punishment_audit_snapshot(assigned),
+                punishment.assigned_at,
+            ),
+        )
 
 
 def _set_meta_row(conn: sqlite3.Connection, key: str, value: str) -> None:
@@ -820,7 +893,7 @@ def _ipoint_all_time_sources(
     keys: set[str] = set()
     cursor = conn.execute("SELECT DISTINCT normalized_name FROM ipoint_entries")
     keys.update(row[0] for row in cursor.fetchall())
-    cursor = conn.execute("SELECT DISTINCT normalized_name FROM ipoint_audit")
+    cursor = conn.execute("SELECT DISTINCT normalized_name FROM discipline_audit")
     keys.update(row[0] for row in cursor.fetchall())
     cursor = conn.execute("SELECT DISTINCT normalized_name FROM confiscations")
     keys.update(row[0] for row in cursor.fetchall())
@@ -998,7 +1071,7 @@ _DERIVED_DATA_TABLES = (
     "boarder_history",
     "confiscations",
     "ipoint_entries",
-    "ipoint_audit",
+    "discipline_audit",
 )
 
 
@@ -1236,20 +1309,20 @@ def stage_delete_ipoint_entry(conn: sqlite3.Connection, entry_id: int) -> None:
     conn.execute("DELETE FROM ipoint_entries WHERE id = ?", (entry_id,))
 
 
-def stage_ipoint_audit(
-    conn: sqlite3.Connection, audit: IPointAuditDraft
+def stage_discipline_audit(
+    conn: sqlite3.Connection, audit: DisciplineAuditDraft
 ) -> None:
-    """Stages one I-Point Audit row on the open transaction; it does not commit.
+    """Stages one Discipline Audit row on the open transaction; it does not commit.
 
-    Called beside every ledger mutation so the live ledger and its history
-    share one transaction and cannot diverge; the I-Points lifecycle commits.
+    Called beside every lifecycle mutation so the record and its history share
+    one transaction and cannot diverge; the lifecycle owns the commit.
     """
     conn.execute(
         """
-        INSERT INTO ipoint_audit (
+        INSERT INTO discipline_audit (
             entity_type, entity_id, normalized_name, action,
-            before_state, after_state, changed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            before_state, after_state, changed_at, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             audit.entity_type,
@@ -1259,6 +1332,7 @@ def stage_ipoint_audit(
             audit.before_state,
             audit.after_state,
             audit.changed_at,
+            audit.note,
         ),
     )
 
@@ -1400,10 +1474,10 @@ _IPOINT_ENTRY_LISTING = _IPointListing(
     "ipoint_entries",
     "occurred_on ASC, id ASC",
 )
-_IPOINT_AUDIT_LISTING = _IPointListing(
+_DISCIPLINE_AUDIT_LISTING = _IPointListing(
     "id, entity_type, entity_id, normalized_name, action, "
-    "before_state, after_state, changed_at",
-    "ipoint_audit",
+    "before_state, after_state, changed_at, note",
+    "discipline_audit",
     "id DESC",
 )
 _IPOINT_CONFISCATION_LISTING = _IPointListing(
@@ -1478,8 +1552,8 @@ def list_ipoint_entries(
     return [_ipoint_entry_from_row(row) for row in rows]
 
 
-def _ipoint_audit_from_row(row) -> IPointAudit:
-    return IPointAudit(
+def _discipline_audit_from_row(row) -> DisciplineAudit:
+    return DisciplineAudit(
         id=row[0],
         entity_type=row[1],
         entity_id=row[2],
@@ -1488,15 +1562,16 @@ def _ipoint_audit_from_row(row) -> IPointAudit:
         before_state=row[5],
         after_state=row[6],
         changed_at=row[7],
+        note=row[8],
     )
 
 
-def list_ipoint_audit(
+def list_discipline_audit(
     conn: sqlite3.Connection, normalized_name: str | None = None
-) -> list[IPointAudit]:
-    """Lists I-Point Audit rows, optionally for one Match Key, newest first."""
-    rows = _select_ipoint_rows(conn, _IPOINT_AUDIT_LISTING, normalized_name)
-    return [_ipoint_audit_from_row(row) for row in rows]
+) -> list[DisciplineAudit]:
+    """Lists Discipline Audit rows, optionally for one Match Key, newest first."""
+    rows = _select_ipoint_rows(conn, _DISCIPLINE_AUDIT_LISTING, normalized_name)
+    return [_discipline_audit_from_row(row) for row in rows]
 
 
 def _ipoint_confiscation_from_row(row) -> Confiscation:
