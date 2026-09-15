@@ -1,12 +1,20 @@
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from records import (
     BoarderRecord,
+    DisciplineAudit,
     DisciplineAuditDraft,
+    DisciplineAuditNote,
+    PUNISHMENT_ASSIGNED,
     PUNISHMENT_IN_FLIGHT_STATUSES,
     PUNISHMENT_NON_VOIDED_STATUSES,
+    PUNISHMENT_OVERDUE,
+    PUNISHMENT_PHONE_HELD,
     PUNISHMENT_STATUS_LABELS,
+    PUNISHMENT_SUBMITTED,
+    PUNISHMENT_VOIDED,
     Punishment,
     punishment_audit_snapshot,
 )
@@ -55,6 +63,38 @@ def format_timestamp(stamp: str) -> str:
     return moment.strftime("%Y-%m-%d %H:%M")
 
 
+def _describe_punishment_change(audit: DisciplineAudit) -> str:
+    """Words one Punishment audit row in plain language."""
+    if audit.action == PUNISHMENT_ASSIGNED:
+        after = json.loads(audit.after_state) if audit.after_state else {}
+        text = (
+            f"Assigned {after.get('points_owed')} points, "
+            f"due {after.get('deadline')}"
+        )
+    elif audit.action == PUNISHMENT_OVERDUE:
+        text = "Marked overdue"
+    else:
+        text = humanized_status(audit.action)
+    if audit.note:
+        text = f"{text}: {audit.note}"
+    return text
+
+
+def describe_audit(audit: DisciplineAudit) -> DisciplineAuditNote | None:
+    """Renders one stored Audit row into a history line.
+
+    Returns ``None`` for a row owned by another lifecycle, so the Boarder
+    Profile can merge both lifecycles' notes without either importing the other.
+    """
+    if audit.entity_type != "punishment":
+        return None
+    return DisciplineAuditNote(
+        action=audit.action.capitalize(),
+        changed_at=audit.changed_at,
+        description=_describe_punishment_change(audit),
+    )
+
+
 @dataclass
 class AssignmentSaved:
     """A batch of punishments was assigned."""
@@ -83,11 +123,19 @@ class AssignmentRejected:
 
 
 VALID_TRANSITIONS: dict[str, set[str]] = {
-    "assigned": {"overdue", "submitted", "voided"},
-    "overdue": {"submitted", "phone_held", "voided"},
-    "phone_held": {"submitted", "voided"},
-    "submitted": {"voided"},
-    "voided": set(),
+    PUNISHMENT_ASSIGNED: {
+        PUNISHMENT_OVERDUE,
+        PUNISHMENT_SUBMITTED,
+        PUNISHMENT_VOIDED,
+    },
+    PUNISHMENT_OVERDUE: {
+        PUNISHMENT_SUBMITTED,
+        PUNISHMENT_PHONE_HELD,
+        PUNISHMENT_VOIDED,
+    },
+    PUNISHMENT_PHONE_HELD: {PUNISHMENT_SUBMITTED, PUNISHMENT_VOIDED},
+    PUNISHMENT_SUBMITTED: {PUNISHMENT_VOIDED},
+    PUNISHMENT_VOIDED: set(),
 }
 
 
@@ -112,22 +160,22 @@ class OfferedAction:
 # server flags the row due. VALID_TRANSITIONS remains the POST-time
 # authority for what a submission may do (ADR 0001: manual-only machine).
 _OFFERED_TRANSITIONS = {
-    "assigned": (
-        ("overdue", "Mark overdue"),
-        ("submitted", "Submitted"),
+    PUNISHMENT_ASSIGNED: (
+        (PUNISHMENT_OVERDUE, "Mark overdue"),
+        (PUNISHMENT_SUBMITTED, "Submitted"),
     ),
-    "overdue": (
-        ("phone_held", "Phone held"),
-        ("submitted", "Submitted"),
+    PUNISHMENT_OVERDUE: (
+        (PUNISHMENT_PHONE_HELD, "Phone held"),
+        (PUNISHMENT_SUBMITTED, "Submitted"),
     ),
-    "phone_held": (("submitted", "Submitted (release phone)"),),
-    "submitted": (),
+    PUNISHMENT_PHONE_HELD: ((PUNISHMENT_SUBMITTED, "Submitted (release phone)"),),
+    PUNISHMENT_SUBMITTED: (),
 }
 
-_DUE_GATED_TARGETS = frozenset({"overdue"})
+_DUE_GATED_TARGETS = frozenset({PUNISHMENT_OVERDUE})
 
 _VOID_ACTION = OfferedAction(
-    target="voided",
+    target=PUNISHMENT_VOIDED,
     label="Void",
     style="neutral",
     reason_input=True,
@@ -212,7 +260,10 @@ def transition(
                 display_name=punishment.display_name,
             )
 
-        if target == "overdue" and punishment.status == "assigned":
+        if (
+            target == PUNISHMENT_OVERDUE
+            and punishment.status == PUNISHMENT_ASSIGNED
+        ):
             transition_date = _timestamp_date(timestamp)
             deadline = date.fromisoformat(punishment.deadline)
             if transition_date < deadline:
@@ -315,7 +366,7 @@ def assign_batch(
                     entity_type="punishment",
                     entity_id=punishment.id,
                     normalized_name=punishment.normalized_name,
-                    action="assigned",
+                    action=PUNISHMENT_ASSIGNED,
                     before_state=None,
                     after_state=punishment_audit_snapshot(punishment),
                     changed_at=assigned_at,
@@ -331,7 +382,7 @@ def assign_batch(
 
 
 def _deadline_passed(punishment, now: datetime) -> bool:
-    if punishment.status != "assigned":
+    if punishment.status != PUNISHMENT_ASSIGNED:
         return False
     deadline = date.fromisoformat(punishment.deadline)
     return now.date() >= deadline

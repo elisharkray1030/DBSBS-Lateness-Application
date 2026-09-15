@@ -126,8 +126,8 @@ derived Balance plus their Entries, pending Redemption, and Audit History.
 
 `punishments.py` owns punishment lifecycle management: assigning punishments to
 boarders after a monthly report, enforcing deadline/overdue rules, and
-transitioning punishments through statuses (pending, completed, overdue,
-voided).
+transitioning punishments through the shared statuses (assigned, overdue,
+phone_held, submitted, voided).
 
 Important behavior:
 

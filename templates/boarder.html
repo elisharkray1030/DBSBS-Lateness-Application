@@ -308,6 +308,30 @@
             {% endif %}
         </section>
     {% endif %}
+
+    {% if discipline_history %}
+    <section class="history-panel profile-discipline-history">
+        <h2>Discipline Audit History</h2>
+        <div class="table-scroll">
+            <table class="discipline-history" aria-label="Discipline Audit History">
+                <thead>
+                    <tr>
+                        <th scope="col">When</th>
+                        <th scope="col">What happened</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for note in discipline_history %}
+                    <tr>
+                        <td>{{ note.changed_at }}</td>
+                        <td>{{ note.description }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    {% endif %}
 {% endblock %}
 
 {% block scripts %}

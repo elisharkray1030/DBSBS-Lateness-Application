@@ -128,22 +128,26 @@ def control_rects(page, form_selector, control_selectors):
 
 def seed_punishments(conn, boarders=None, month="2026-03", deadline="2026-04-10",
                      assigned_at="2026-04-01T09:00:00+00:00", include_report=True):
-    """Assigns Punishments (optionally saving their Monthly Report first).
+    """Assigns Punishments through the lifecycle.
 
-    Pass include_report=False where the caller already saved the month and
-    must not touch boarder_history. Returns every stored punishment.
+    Optionally saves their Monthly Report first; pass include_report=False
+    where the caller already saved the month and must not touch
+    boarder_history. Returns every stored punishment.
     """
+    import punishments
+
     boarders = list(boarders) if boarders is not None else [record("ALICE", "101", 2, 5, 7)]
     if include_report:
         storage.save_month(conn, boarders, month)
-    storage.assign_punishments(
+    outcome = punishments.assign_batch(
         conn,
         month=month,
         boarders=boarders,
+        exemptions=set(),
         deadline=deadline,
         assigned_at=assigned_at,
     )
-    conn.commit()
+    assert isinstance(outcome, punishments.AssignmentSaved), outcome
     return storage.list_punishments(conn)
 
 

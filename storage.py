@@ -18,6 +18,11 @@ from records import (
     HouseTrendPoint,
     IPointEntry,
     MonthSummary,
+    PUNISHMENT_ASSIGNED,
+    PUNISHMENT_OVERDUE,
+    PUNISHMENT_PHONE_HELD,
+    PUNISHMENT_SUBMITTED,
+    PUNISHMENT_VOIDED,
     Punishment,
     TopBoarderEntry,
     WatchlistEntry,
@@ -265,7 +270,7 @@ def _backfill_punishment_audits(conn: sqlite3.Connection) -> None:
         # born in — not whatever status it has since reached.
         assigned = replace(
             punishment,
-            status="assigned",
+            status=PUNISHMENT_ASSIGNED,
             overdue_at=None,
             phone_held_at=None,
             submitted_at=None,
@@ -277,11 +282,12 @@ def _backfill_punishment_audits(conn: sqlite3.Connection) -> None:
             INSERT INTO discipline_audit (
                 entity_type, entity_id, normalized_name, action,
                 before_state, after_state, changed_at, note
-            ) VALUES ('punishment', ?, ?, 'assigned', NULL, ?, ?, NULL)
+            ) VALUES ('punishment', ?, ?, ?, NULL, ?, ?, NULL)
             """,
             (
                 punishment.id,
                 punishment.normalized_name,
+                PUNISHMENT_ASSIGNED,
                 punishment_audit_snapshot(assigned),
                 punishment.assigned_at,
             ),
@@ -1106,7 +1112,7 @@ def assign_punishments(
             INSERT INTO punishments (
                 normalized_name, display_name, bed, month, points_owed,
                 deadline, status, assigned_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'assigned', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 boarder.name,
@@ -1115,6 +1121,7 @@ def assign_punishments(
                 month,
                 boarder.total_points,
                 deadline,
+                PUNISHMENT_ASSIGNED,
                 assigned_at,
             ),
         )
@@ -1127,7 +1134,7 @@ def assign_punishments(
                 month=month,
                 points_owed=boarder.total_points,
                 deadline=deadline,
-                status="assigned",
+                status=PUNISHMENT_ASSIGNED,
                 assigned_at=assigned_at,
             )
         )
@@ -1222,6 +1229,18 @@ def get_punishment(conn: sqlite3.Connection, punishment_id: int) -> Punishment |
     return _punishment_from_row(row) if row is not None else None
 
 
+# The timestamp column each transition stamps, keyed by the shared status
+# vocabulary. ``assigned`` is insert-only, so it has no column here; the
+# vocabulary-coverage test asserts this map is exactly the shared statuses
+# minus ``assigned``.
+_PUNISHMENT_STATUS_COLUMNS = {
+    PUNISHMENT_OVERDUE: "overdue_at",
+    PUNISHMENT_PHONE_HELD: "phone_held_at",
+    PUNISHMENT_SUBMITTED: "submitted_at",
+    PUNISHMENT_VOIDED: "voided_at",
+}
+
+
 def transition_punishment(
     conn: sqlite3.Connection,
     punishment_id: int,
@@ -1236,20 +1255,14 @@ def transition_punishment(
     Rejects an unknown status with a ValueError before any write, so a
     malformed request can never leak a raw key-lookup crash.
     """
-    column_map = {
-        "overdue": "overdue_at",
-        "phone_held": "phone_held_at",
-        "submitted": "submitted_at",
-        "voided": "voided_at",
-    }
-    if status not in column_map:
+    if status not in _PUNISHMENT_STATUS_COLUMNS:
         raise ValueError(
             f"Unknown punishment status {status!r}; "
-            f"valid statuses: {', '.join(column_map)}"
+            f"valid statuses: {', '.join(_PUNISHMENT_STATUS_COLUMNS)}"
         )
-    column = column_map[status]
+    column = _PUNISHMENT_STATUS_COLUMNS[status]
 
-    if status == "voided":
+    if status == PUNISHMENT_VOIDED:
         conn.execute(
             f"""
             UPDATE punishments
