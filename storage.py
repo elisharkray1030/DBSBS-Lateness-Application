@@ -1,5 +1,6 @@
 import sqlite3
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import NamedTuple
 from uuid import uuid4
@@ -260,6 +261,17 @@ def _backfill_punishment_audits(conn: sqlite3.Connection) -> None:
     for punishment in list_punishments(conn):
         if punishment.id in punished_ids:
             continue
+        # The event is `assigned`, so its snapshot is the state the row was
+        # born in — not whatever status it has since reached.
+        assigned = replace(
+            punishment,
+            status="assigned",
+            overdue_at=None,
+            phone_held_at=None,
+            submitted_at=None,
+            voided_at=None,
+            void_reason=None,
+        )
         conn.execute(
             """
             INSERT INTO discipline_audit (
@@ -270,7 +282,7 @@ def _backfill_punishment_audits(conn: sqlite3.Connection) -> None:
             (
                 punishment.id,
                 punishment.normalized_name,
-                punishment_audit_snapshot(punishment),
+                punishment_audit_snapshot(assigned),
                 punishment.assigned_at,
             ),
         )

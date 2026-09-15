@@ -205,10 +205,11 @@ Important behavior:
   partial unique index keeps one open (`pending` or `active`) Confiscation per
   Match Key.
 - `discipline_audit` is the shared provenance table for both lifecycles: every
-  I-Point write and every Punishment assignment and transition leaves one
-  retained change with its prior state and an optional staff note. It is
-  re-keyed with the other tables, and `create_schema` renames a pre-shared
-  `ipoint_audit` and backfills an `assigned` event per pre-existing Punishment.
+  I-Point change is retained, and Punishment assignment records are backfilled
+  here and written here going forward. Each retained change carries its prior
+  state and an optional staff note. It is re-keyed with the other tables, and
+  `create_schema` renames a pre-shared `ipoint_audit` in place, adds the note
+  column, and backfills one `assigned` event per pre-existing Punishment.
   `create_schema` also drops the retired `ipoint_adjustments` table.
 - The web routes live in `app.py` (`GET /ipoints`, `POST /ipoints/entries`,
   `POST /ipoints/entries/<id>/edit`, `POST /ipoints/entries/<id>/remove`,
