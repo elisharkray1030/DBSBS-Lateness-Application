@@ -84,19 +84,38 @@ def _inline_app_js(html):
 
 
 @pytest.fixture
-def browser_page():
-    """Yields a headless Chromium page; skips when Playwright is unavailable."""
+def browser():
+    """Yields a headless Chromium browser; skips when Playwright is unavailable."""
     playwright_api = pytest.importorskip("playwright.sync_api")
     with playwright_api.sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        page = browser.new_page()
-        set_content = page.set_content
-
-        def set_content_with_static(html, **kwargs):
-            return set_content(_inline_app_js(html), **kwargs)
-
-        page.set_content = set_content_with_static
         try:
-            yield page
+            yield browser
         finally:
             browser.close()
+
+
+@pytest.fixture
+def browser_page(browser):
+    """Yields a headless Chromium page with app.js inlined into set_content."""
+    page = browser.new_page()
+    set_content = page.set_content
+
+    def set_content_with_static(html, **kwargs):
+        return set_content(_inline_app_js(html), **kwargs)
+
+    page.set_content = set_content_with_static
+    try:
+        yield page
+    finally:
+        page.close()
+
+
+@pytest.fixture
+def no_js_page(browser):
+    """A page with JavaScript disabled, for <noscript> coverage."""
+    context = browser.new_context(java_script_enabled=False)
+    try:
+        yield context.new_page()
+    finally:
+        context.close()
