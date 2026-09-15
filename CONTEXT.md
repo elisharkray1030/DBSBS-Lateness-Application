@@ -87,16 +87,16 @@ A persisting disciplinary score for repeated inappropriate behaviour, separate f
 _Avoid_: IP, infraction points, demerits
 
 **I-Point Entry**:
-One logged occasion on which a boarder was given I-Points, carrying the points, the date, and a stated reason. Entries are freely editable and removable; every change is kept in the I-Point Audit History.
+One logged occasion on which a boarder was given I-Points, carrying the points, the date, and a stated reason. Entries are freely editable and removable; every change is kept in the Discipline Audit History.
 _Avoid_: award, incident, infraction, charge
 
 **I-Point Balance**:
 A boarder's outstanding I-Points: every I-Point Entry minus every confirmed Redemption. It carries from month to month and is never negative — no Entry or Redemption change may take it below zero.
 _Avoid_: total, score
 
-**I-Point Audit History**:
-The retained record of every change to a boarder's I-Points — edited or removed Entries, and edited or voided Redemptions and Confiscations — so staff can see what changed, when, and to what.
-_Avoid_: log, changelog, activity feed
+**Discipline Audit History**:
+The retained record of every change to a boarder's discipline records — Punishment assignments and status transitions, and edited, removed, or voided I-Point Entries, Redemptions, and Confiscations — so staff can see what changed, when, and to what.
+_Avoid_: I-Point Audit History, log, changelog, activity feed
 
 **Redemption**:
 The conversion of an I-Point Balance into a Phone Confiscation at a month's close: the largest tier at or below the balance (5, 10, or 15) is deducted and becomes the confiscation, and the remainder carries forward. At most one Redemption per boarder per month; a Redemption begins as pending and only takes effect when staff confirm it, and staff may edit or void one.
