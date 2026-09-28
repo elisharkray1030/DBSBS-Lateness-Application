@@ -8,12 +8,28 @@ One designated, always-on PC runs the app; every other staff PC just opens a bro
 
 ## What you need
 
-- A Windows PC to act as the **host** — always powered on during working hours.
-- **Docker Desktop** installed on the host (the launcher can install it for you).
-- A **`namelist.csv`** Master List (at least `Name` and `Bed` columns). Put it in the project root before the first start, or import it later from the Boarders tab.
-- A **NAS share** (or another folder/drive) to hold backups. The runbooks assume `\\NAS\lateness-backups`.
+### Software on the host
+
+- A Windows 10/11 PC to act as the **host** — always powered on during working hours.
+- **Docker Desktop** installed on the host and **running** (the launcher can install it for you).
+- **Docker Compose v2** (`docker compose`) — bundled with current Docker Desktop.
 
 Normal use needs no Python on the host — everything runs in a container. Python is only needed for development.
+
+### Files to put in the project folder
+
+A `git clone` brings the application code only. Some things the app expects are **gitignored — they are not in the repo** — so add them yourself:
+
+| File / folder | Needed? | What it is |
+| --- | --- | --- |
+| `namelist.csv` | Yes for the default start | The seed Master List (at least `Name` and `Bed` columns). Put it in the project root. Without it the default start refuses to run; use `--no-seed` to skip it and import boarders in the app instead. |
+| `.env` | Created for you | Holds the per-host `SECRET_KEY`. The launcher generates it on first start. To make it yourself, copy `.env.example` to `.env` and set `SECRET_KEY`. |
+| `shared/backups/` | Only for backups | Backup output. Created automatically by `run.cmd backup`. |
+| `shared/restore/` | Only for restores | Stage a `lateness-*` backup folder here before `run.cmd restore`. |
+
+Optional:
+
+- A **NAS share** (or another folder/drive) to hold backups. The runbooks assume `\\NAS\lateness-backups`.
 
 ## Quick start: set up the host (one time)
 
