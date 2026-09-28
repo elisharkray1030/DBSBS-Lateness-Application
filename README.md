@@ -31,7 +31,9 @@ Optional:
 
 - A **NAS share** (or another folder/drive) to hold backups. The runbooks assume `\\NAS\lateness-backups`.
 
-## Quick start: set up the host (one time)
+> **Using the command line?** On Windows the launcher is `run.cmd` (Command Prompt) or `.\run.cmd` (PowerShell) — *not* `./run …`. On macOS/Linux/WSL use `./run.sh` with the same commands. See [Quick start](#quick-start-first-time-setup).
+
+## Quick start (first-time setup)
 
 ### 1. Put the files on the host
 
@@ -43,19 +45,24 @@ If Docker Desktop is missing, the launcher offers a per-user `winget` install. I
 
 ### 3. Start the app
 
-On Windows, double-click **`run.cmd`**, or run it from a terminal, and choose **Start**:
+On Windows, double-click **`run.cmd`**, or run it from a terminal and choose **Start**:
+
+| Shell | Command |
+| --- | --- |
+| Command Prompt | `run.cmd up` |
+| PowerShell | `.\run.cmd up` |
+| macOS / Linux / WSL | `./run.sh up` |
 
 ```powershell
-.\run.cmd            # menu
-.\run.cmd up         # start and open the browser (office LAN)
-.\run.cmd up --local # start bound to 127.0.0.1 only
+.\run.cmd                 # interactive menu
+.\run.cmd up              # start and open the browser (office LAN)
+.\run.cmd up --local      # start bound to 127.0.0.1 only
+.\run.cmd up --no-seed    # start without seeding the Master List
 ```
 
-On macOS/Linux/WSL, use **`./run.sh`** with the same commands.
+`run.cmd` and `run.sh` accept bash-style flags such as `--local` and `--no-seed`; `run.ps1` uses the PowerShell spellings `-Local` and `-NoSeed`.
 
-`run.cmd` and `run.sh` accept bash-style flags such as `--local` and `--no-seed`; `run.ps1` uses the PowerShell spellings `-Local` and `-NoSeed`. `--no-seed` skips seeding the Master List from `namelist.csv` on first start.
-
-The launcher checks Docker, generates a per-host `SECRET_KEY` in `.env`, builds and starts the stack, waits until it is healthy, and opens `http://127.0.0.1:8000`. By default it listens on all interfaces so other office PCs can reach it; use `--local` to keep it private.
+The launcher checks Docker, generates a per-host `SECRET_KEY` in `.env` if missing, builds and starts the stack, waits until it is healthy, and opens `http://127.0.0.1:8000`. By default it listens on all interfaces so other office PCs can reach it; use `--local` to keep it private.
 
 ### 4. Make it reachable on the office network
 
