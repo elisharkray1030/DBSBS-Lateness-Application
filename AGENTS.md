@@ -1,3 +1,7 @@
+## Contributing
+
+Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, checks, and conventions.
+
 ## Agent skills
 
 ### Issue tracker
