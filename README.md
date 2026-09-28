@@ -62,6 +62,8 @@ On Windows, double-click **`run.cmd`**, or run it from a terminal and choose **S
 
 `run.cmd` and `run.sh` accept bash-style flags such as `--local` and `--no-seed`; `run.ps1` uses the PowerShell spellings `-Local` and `-NoSeed`.
 
+> **`--local` is not `--no-seed`.** `--local` only changes the network binding to loopback; it does **not** skip the `namelist.csv` requirement. To start without a Master List, use `--no-seed`. Combine them if you need both: `run.cmd up --local --no-seed`.
+
 The launcher checks Docker, generates a per-host `SECRET_KEY` in `.env` if missing, builds and starts the stack, waits until it is healthy, and opens `http://127.0.0.1:8000`. By default it listens on all interfaces so other office PCs can reach it; use `--local` to keep it private.
 
 ### 4. Make it reachable on the office network
