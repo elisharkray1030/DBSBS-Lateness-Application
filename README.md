@@ -33,11 +33,13 @@ Optional:
 
 > **Using the command line?** On Windows the launcher is `run.cmd` (Command Prompt) or `.\run.cmd` (PowerShell) — *not* `./run …`. On macOS/Linux/WSL use `./run.sh` with the same commands. See [Quick start](#quick-start-first-time-setup).
 
+> **In a hurry?** Start Docker Desktop → put `namelist.csv` in the project folder → run `run.cmd up` (PowerShell: `.\run.cmd up`) → open <http://127.0.0.1:8000>. No `namelist.csv` yet? Run `run.cmd up --no-seed` and import the Master List from the Boarders tab.
+
 ## Quick start (first-time setup)
 
 ### 1. Put the files on the host
 
-Put the project at a stable path such as `C:\lateness-app`, and put `namelist.csv` in that folder.
+Clone or copy the project to a stable path such as `C:\lateness-app`, then put your `namelist.csv` in that same folder. If you don't have a Master List yet, skip it for now and start with `.\run.cmd up --no-seed` (step 3), then import it from the Boarders tab.
 
 ### 2. Install Docker Desktop
 
