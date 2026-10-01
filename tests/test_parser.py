@@ -71,6 +71,41 @@ class TestParseNamelistStream:
     def test_empty_stream_returns_empty_list(self):
         assert parse_namelist_stream(io.StringIO("Name,Bed\n")) == []
 
+    def test_composes_display_name_from_school_roster_columns(self):
+        stream = io.StringIO(
+            "Class,Surname,Given Names,Common Name,ChineseName,Student I.D.,Bed,"
+            "GradeForm,Boarding Until\n"
+            "7G,MO,Haoxuan,Louis,x,2026070590,701D,G7,#Name?\n"
+        )
+        assert parse_namelist_stream(stream) == [
+            Boarder(
+                normalized_name="LOUIS MO HAOXUAN",
+                display_name="Louis MO Haoxuan",
+                bed="701D",
+            )
+        ]
+
+    def test_name_column_wins_over_roster_columns(self):
+        stream = io.StringIO(
+            "Name,Surname,Given Names,Common Name,Bed\n"
+            "Alice Smith,SMITH,Alice,Ali,101\n"
+        )
+        assert parse_namelist_stream(stream) == [
+            Boarder(normalized_name="ALICE SMITH", display_name="Alice Smith", bed="101")
+        ]
+
+    def test_roster_columns_omit_missing_name_parts(self):
+        stream = io.StringIO("Surname,Given Names,Common Name,Bed\nMO,Haoxuan,,701D\n")
+        assert parse_namelist_stream(stream) == [
+            Boarder(normalized_name="MO HAOXUAN", display_name="MO Haoxuan", bed="701D")
+        ]
+
+    def test_roster_columns_skip_rows_with_missing_name_or_bed(self):
+        stream = io.StringIO(
+            "Surname,Given Names,Common Name,Bed\nMO,Haoxuan,Louis,\n,,,701E\n"
+        )
+        assert parse_namelist_stream(stream) == []
+
 
 class TestNormalizeName:
     def test_strips_and_uppercases(self):

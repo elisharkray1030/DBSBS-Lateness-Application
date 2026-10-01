@@ -23,6 +23,8 @@ Important behavior:
 
 - `load_namelist(namelist_filename)` reads the Master List into a
   normalized-name-to-Boarder mapping; returns `None` if the file is missing.
+  It accepts either a `Name` column or the roster's `Surname` / `Given Names`
+  / `Common Name` columns, composing the display name as `Common Surname Given`.
 - `ingest_log(log_stream, month_label, master_list, conn)` takes the log as a
   stream, the month label, the Master List (each entry carrying the canonical
   display name and bed), and a history-store connection, and returns one

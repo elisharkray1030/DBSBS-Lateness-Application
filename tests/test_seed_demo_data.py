@@ -36,7 +36,7 @@ NAMELIST_ROWS = [
     ("605C", "Andy WU Yik Ham"),
     ("605E", "James WONG Wang Hei"),
     ("607B", "Lucas CHAVEZ MOCAN, Lucas"),
-    ("701B", "Jasper CHAN Cheuk Yin"),
+    ("701B", "Derek YIP Shing Chi"),
 ]
 
 
@@ -143,13 +143,13 @@ class TestWatchlistMatrix:
     def test_recovering_offender_boundary_streak_feb_to_apr(self, seeded):
         conn, _ = seeded
 
-        jasper = next(
-            o for o in repeat_offenders(conn) if o.normalized_name == "JASPER CHAN CHEUK YIN"
+        derek = next(
+            o for o in repeat_offenders(conn) if o.normalized_name == "DEREK YIP SHING CHI"
         )
 
-        assert jasper.months == ["2026-02", "2026-03", "2026-04"]
+        assert derek.months == ["2026-02", "2026-03", "2026-04"]
         may_row = next(
-            row for row in storage.get_boarder_series(conn, "JASPER CHAN CHEUK YIN")
+            row for row in storage.get_boarder_series(conn, "DEREK YIP SHING CHI")
             if row.month == "2026-05"
         )
         assert may_row.total_points == 6
@@ -161,7 +161,7 @@ class TestWatchlistMatrix:
 
         assert {o.normalized_name for o in offenders} == {
             "JASON FONG PAK HIN",
-            "JASPER CHAN CHEUK YIN",
+            "DEREK YIP SHING CHI",
         }
 
 
@@ -320,7 +320,7 @@ class TestIPointMatrix:
         assert balances == {
             "ELVIS WONG YAT SHUN": 1,
             "JASON FONG PAK HIN": 10,
-            "JASPER CHAN CHEUK YIN": 2,
+            "DEREK YIP SHING CHI": 2,
             "MELVIN YEUNG CHENG YE MELVIN": 1,
             "NAVAS YUEN HIU NOK": 5,
             "THEO LAM CHI HANG": 3,
@@ -348,7 +348,7 @@ class TestIPointMatrix:
             "pending", "active", "released", "voided",
         }
         assert by_key["JASON FONG PAK HIN"].status == "pending"
-        assert by_key["JASPER CHAN CHEUK YIN"].status == "active"
+        assert by_key["DEREK YIP SHING CHI"].status == "active"
         assert by_key["ELVIS WONG YAT SHUN"].status == "released"
         assert by_key["NAVAS YUEN HIU NOK"].status == "voided"
 
@@ -364,16 +364,16 @@ class TestIPointMatrix:
     def test_active_confiscation_flags_due_for_release(self, seeded):
         conn, _ = seeded
 
-        jasper = next(
+        derek = next(
             row
             for row in ipoints.confiscation_list(
                 conn, today=seed_demo_data.IPOINT_TODAY
             )
-            if row.normalized_name == "JASPER CHAN CHEUK YIN"
+            if row.normalized_name == "DEREK YIP SHING CHI"
         )
 
-        assert jasper.release_due == "2026-09-03"
-        assert jasper.due_for_release is True
+        assert derek.release_due == "2026-09-03"
+        assert derek.due_for_release is True
 
     def test_removed_boarder_keeps_frozen_ipoint_history(self, seeded):
         conn, _ = seeded
@@ -411,7 +411,7 @@ class TestIPointMatrix:
         assert {row.created_at for row in by_key.values()} == {
             "2026-09-01T07:00:00+00:00"
         }
-        assert by_key["JASPER CHAN CHEUK YIN"].confirmed_at == "2026-09-02T09:00:00+00:00"
+        assert by_key["DEREK YIP SHING CHI"].confirmed_at == "2026-09-02T09:00:00+00:00"
         assert by_key["ELVIS WONG YAT SHUN"].confirmed_at == "2026-09-03T09:00:00+00:00"
         assert by_key["ELVIS WONG YAT SHUN"].released_at == "2026-09-05T09:00:00+00:00"
         assert by_key["NAVAS YUEN HIU NOK"].confirmed_at == "2026-09-04T09:00:00+00:00"
