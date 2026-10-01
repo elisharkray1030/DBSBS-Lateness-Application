@@ -132,17 +132,37 @@ def parse_time_seconds(value):
     return (hours * 3600) + (minutes * 60) + seconds
 
 
+def _namelist_display_name(row):
+    """Reads a Boarder display name from a namelist row.
+
+    Prefers an explicit 'Name' column so the app's own Master List export
+    round-trips unchanged. Falls back to the school roster columns
+    ('Common Name' + 'Surname' + 'Given Names') so the raw roster CSV seeds
+    without hand-editing, e.g. 'FONG, Pak Hin, Jason' becomes
+    'Jason FONG Pak Hin'.
+    """
+    name = (row.get('Name') or '').strip()
+    if name:
+        return name
+    common = (row.get('Common Name') or '').strip()
+    surname = (row.get('Surname') or '').strip()
+    given = (row.get('Given Names') or '').strip()
+    return ' '.join(part for part in (common, surname, given) if part)
+
+
 def parse_namelist_stream(namelist_stream):
     """Parses a namelist stream into Boarder rows.
 
-    Preserves the display case of names so the master list can be shown as
-    entered while still matching logs case-insensitively via the normalized name.
+    Accepts either a 'Name' column (the app's export shape) or the school
+    roster columns 'Surname' / 'Given Names' / 'Common Name'. Preserves the
+    display case of names so the master list can be shown as entered while
+    still matching logs case-insensitively via the normalized name.
     """
     rows = []
     reader = csv.DictReader(namelist_stream)
     for row in reader:
-        display_name = row.get('Name', '').strip()
-        bed = row.get('Bed', '').strip()
+        display_name = _namelist_display_name(row)
+        bed = (row.get('Bed') or '').strip()
 
         # Skip rows with missing name or bed information.
         if not display_name or not bed:

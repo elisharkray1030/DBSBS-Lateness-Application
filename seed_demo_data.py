@@ -8,7 +8,7 @@ hand-authored persona matrix then makes each implemented feature observable:
 
 - Jason FONG Pak Hin stays at or above the watchlist threshold every seeded
   month, so his streak runs January to May (the missing June breaks it).
-- Jasper CHAN Cheuk Yin qualifies February-April and dips in May — exactly
+- Derek YIP Shing Chi qualifies February-April and dips in May — exactly
   the boundary case.
 - Andy WU Yik Ham and James WONG Wang Hei post identical August totals for
   the Top-N tie-break.
@@ -63,7 +63,7 @@ PERSONAS: dict[str, dict[str, tuple[int, int]]] = {
     # July starts at (2, 14) = 16 Points so the punishment assigned before
     # the corrected re-import freezes at 16.
     "Jason FONG Pak Hin": {**{m: (3, 15) for m in MONTHS}, "2026-07": (2, 14)},
-    "Jasper CHAN Cheuk Yin": {
+    "Derek YIP Shing Chi": {
         "2026-01": (1, 4),
         "2026-02": (2, 10),
         "2026-03": (2, 14),
@@ -296,7 +296,7 @@ _PUNISHMENT_PLAN = [
     PunishmentAssignment("Jason FONG Pak Hin", "2026-03", "2026-04-10", "2026-04-01T09:00:00+00:00"),
     PunishmentAssignment("Jason FONG Pak Hin", "2026-04", "2026-05-10", "2026-05-01T09:00:00+00:00"),
     PunishmentAssignment("Jason FONG Pak Hin", "2026-05", "2026-09-30", "2026-06-01T09:00:00+00:00"),
-    PunishmentAssignment("Jasper CHAN Cheuk Yin", "2026-04", "2026-05-31", "2026-05-01T09:00:00+00:00"),
+    PunishmentAssignment("Derek YIP Shing Chi", "2026-04", "2026-05-31", "2026-05-01T09:00:00+00:00"),
     # Assigned before the removal below, so the Removed boarder's profile
     # still shows their discipline record (pre-removal visibility).
     PunishmentAssignment("Navas YUEN Hiu Nok", "2026-01", "2026-02-10", "2026-02-01T09:00:00+00:00"),
@@ -312,34 +312,34 @@ _TRANSITIONS = [
         "Jason FONG Pak Hin", "2026-03", "voided",
         "2026-04-05T09:00:00+00:00", "Excused - boarding duty clash",
     ),
-    PunishmentMove("Jasper CHAN Cheuk Yin", "2026-04", "submitted", "2026-05-20T09:00:00+00:00"),
+    PunishmentMove("Derek YIP Shing Chi", "2026-04", "submitted", "2026-05-20T09:00:00+00:00"),
 ]
 
 # I-Point Entries carry across months and are independent of Monthly Log
 # imports, so a June entry sits alongside months that have no report. Jason
-# and Jasper hold multi-entry balances; Navas keeps a frozen entry after the
+# and Derek hold multi-entry balances; Navas keeps a frozen entry after the
 # removal; the last boarder is known only through I-Points, proving the
 # Match-Key fallback and the Boarder Name datalist union.
 _IPOINT_PLAN = [
     IPointSeed("Jason FONG Pak Hin", 3, "2026-01-15", "Used phone after lights-out", "2026-01-15T21:10:00+00:00"),
     IPointSeed("Jason FONG Pak Hin", 2, "2026-02-20", "Disruptive in study hall", "2026-02-20T19:45:00+00:00"),
     IPointSeed("Jason FONG Pak Hin", 5, "2026-07-05", "Left dorm without signing out", "2026-07-05T22:30:00+00:00"),
-    IPointSeed("Jasper CHAN Cheuk Yin", 2, "2026-03-02", "Skipped assigned duty", "2026-03-02T18:00:00+00:00"),
-    IPointSeed("Jasper CHAN Cheuk Yin", 1, "2026-03-18", "Back-chat to duty staff", "2026-03-18T20:15:00+00:00"),
-    IPointSeed("Jasper CHAN Cheuk Yin", 4, "2026-04-10", "Repeated late return", "2026-04-10T23:05:00+00:00"),
+    IPointSeed("Derek YIP Shing Chi", 2, "2026-03-02", "Skipped assigned duty", "2026-03-02T18:00:00+00:00"),
+    IPointSeed("Derek YIP Shing Chi", 1, "2026-03-18", "Back-chat to duty staff", "2026-03-18T20:15:00+00:00"),
+    IPointSeed("Derek YIP Shing Chi", 4, "2026-04-10", "Repeated late return", "2026-04-10T23:05:00+00:00"),
     IPointSeed("Elvis WONG Yat Shun", 6, "2026-08-21", "Bullying incident", "2026-08-21T17:20:00+00:00"),
     IPointSeed("Melvin YEUNG Cheng Ye Melvin", 1, "2026-05-09", "Untidy bed space", "2026-05-09T08:30:00+00:00"),
     IPointSeed("Navas YUEN Hiu Nok", 5, "2026-01-08", "Property damage", "2026-01-08T16:40:00+00:00"),
     IPointSeed("Theo LAM Chi Hang", 3, "2026-06-12", "Unapproved guest in room", "2026-06-12T21:55:00+00:00"),
 ]
 
-# Four Boarders clear the tier at the 2026-08 close (Jason 10, Jasper 5,
+# Four Boarders clear the tier at the 2026-08 close (Jason 10, Derek 5,
 # Elvis 5, Navas 5). Jason's pending is left for the
-# grouped-pending demo; Jasper is an active Confiscation past its release due,
+# grouped-pending demo; Derek is an active Confiscation past its release due,
 # Elvis is released, and Navas — Removed — is confirmed then voided, proving a
 # Removed Boarder's frozen identity still supports the lifecycle (story 44).
 _CONFISCATION_PLAN = [
-    ConfiscationSeed("Jasper CHAN Cheuk Yin", "2026-09-02T09:00:00+00:00"),
+    ConfiscationSeed("Derek YIP Shing Chi", "2026-09-02T09:00:00+00:00"),
     ConfiscationSeed("Elvis WONG Yat Shun", "2026-09-03T09:00:00+00:00", release_at="2026-09-05T09:00:00+00:00"),
     ConfiscationSeed(
         "Navas YUEN Hiu Nok",

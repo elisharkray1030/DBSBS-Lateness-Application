@@ -19,6 +19,8 @@ data/*.db
 data/raw/
 /namelist.csv
 /data/namelist.csv
+/NameList.csv
+/data/NameList.csv
 
 # Monthly Log Archive (imported Monthly Logs and per-month Master List
 # snapshots kept for backup / rebuild)

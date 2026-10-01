@@ -22,7 +22,7 @@ A `git clone` brings the application code only. Some things the app expects are 
 
 | File / folder | Needed? | What it is |
 | --- | --- | --- |
-| `namelist.csv` | Yes for the default start | The seed Master List (at least `Name` and `Bed` columns). Put it in the project root. Without it the default start refuses to run; use `--no-seed` to skip it and import boarders in the app instead. |
+| `namelist.csv` | Yes for the default start | The seed Master List (a `Bed` column plus either a `Name` column or the roster's `Surname` / `Given Names` / `Common Name` columns). Put it in the project root. Without it the default start refuses to run; use `--no-seed` to skip it and import boarders in the app instead. |
 | `.env` | Created for you | Holds the per-host `SECRET_KEY`. The launcher generates it on first start. To make it yourself, copy `.env.example` to `.env` and set `SECRET_KEY`. |
 | `shared/backups/` | Only for backups | Backup output. Created automatically by `run.cmd backup`. |
 | `shared/restore/` | Only for restores | Stage a `lateness-*` backup folder here before `run.cmd restore`. |
@@ -205,7 +205,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ### Data and Import rules
 
-- **Master List (`namelist.csv`)** needs at least `Name` and `Bed` columns. It seeds an empty Master List on the first `init-db`; after that, manage the list in the Boarders tab.
+- **Master List (`namelist.csv`)** needs a `Bed` column and a name: either an explicit `Name` column (the app's export shape) or the roster's `Surname` / `Given Names` / `Common Name` columns, which the importer composes into `Common Surname Given` (e.g. `Jason FONG Pak Hin`). It seeds an empty Master List on the first `init-db`; after that, manage the list in the Boarders tab.
 - **Monthly Log CSV** needs at least `Name` and `Transaction Time` columns. `Transaction Time` must be strict `HH:MM` or `HH:MM:SS` (24-hour); anything else is rejected with the offending rows surfaced, never silently dropped.
 - Imports are capped at 16 MB (`MAX_CONTENT_LENGTH`); an over-cap Import is rejected with a staff-readable error and nothing is stored.
 - A month report is saved only when the Import matched at least one known boarder with a parseable time. Otherwise the Import is rejected with a specific reason and the database is left untouched.
