@@ -71,13 +71,46 @@ Staff should bookmark a name, not an IP that can move.
 
 ## 5. Open the firewall port
 
+The rule only applies to the **Private** network profile, so first confirm the
+office Wi-Fi adapter is classified as Private:
+
 ```powershell
-New-NetFirewallRule -DisplayName "Lateness app" -Direction Inbound `
-  -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private
+Get-NetConnectionProfile
 ```
 
-Keep it scoped to the **Private** (office) profile. Do not expose the app
-off-campus.
+If it shows `NetworkCategory : Public`, correct it on the trusted office network
+(admin PowerShell):
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
+```
+
+Then allow the port (admin PowerShell). Use the app's `PORT` (default `8000`):
+
+```powershell
+New-NetFirewallRule -DisplayName "Lateness app (TCP 8000)" -Direction Inbound `
+  -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private `
+  -RemoteAddress LocalSubnet
+```
+
+`-RemoteAddress LocalSubnet` limits access to the office subnet. Keep it scoped
+to the **Private** profile and do not expose the app off-campus. If you changed
+`PORT`, use that port in `-LocalPort` and in the rule name.
+
+> This is the native-host path. On the Docker path the `run.ps1` launcher has a
+> `firewall` command that creates the same rule for you (`.\run.cmd firewall`).
+
+Verify from a client PC:
+
+```powershell
+Test-NetConnection lateness-host -Port 8000
+```
+
+`TcpTestSucceeded : True` means the port is open. To undo the rule:
+
+```powershell
+Remove-NetFirewallRule -DisplayName "Lateness app*"
+```
 
 ## 6. Keep the host awake
 
