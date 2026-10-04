@@ -1152,13 +1152,13 @@
         }
 
         /* Printed sheet: A3 portrait pinned rather than browser/printer
-           defaults, with a zero page margin for a borderless sheet. This
-           supersedes the A4 single-sheet layout (spec #164): the larger
-           sheet buys legibility, not a tighter fit. A printer's unprintable
-           edge may still clip a few millimetres from the very border. */
+           defaults, with a one-inch page margin so content clears the
+           printer's own unprintable edge. This supersedes the A4
+           single-sheet layout (spec #164): the larger sheet buys legibility,
+           not a tighter fit. */
         @page {
             size: A3 portrait;
-            margin: 0;
+            margin: 1in;
         }
 
         @media print {
@@ -1249,7 +1249,7 @@
                shares one comfortable size; a large roster flows to further
                A3 sheets via the repeating header and unsplit rows rather
                than shrinking the type. Row separator lines are dropped for
-               the borderless sheet. */
+               a clean sheet. */
             th,
             td {
                 font-size: 16px;

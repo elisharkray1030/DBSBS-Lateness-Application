@@ -3065,15 +3065,15 @@ class TestMonthlyReportA3Print:
             month=self.MONTH,
         )
 
-    def test_stylesheet_pins_a3_borderless_page(self, fresh_client):
+    def test_stylesheet_pins_a3_page_with_printer_margin(self, fresh_client):
         # @page is not DOM-measurable, so lock the sheet contract in the
-        # served stylesheet itself: A3 portrait and a zero page margin for
-        # the borderless sheet.
+        # served stylesheet itself: A3 portrait with a one-inch margin that
+        # clears the printer's unprintable edge.
         css = fresh_client.get("/static/app.css").get_data(as_text=True)
         assert "size: A3 portrait" in css
         page_rule = css[css.index("@page"):]
         page_rule = page_rule[:page_rule.index("}")]
-        assert "margin: 0" in page_rule
+        assert "margin: 1in" in page_rule
 
     def test_pinned_roster_prints_legibly_with_graceful_overflow(
         self, fresh_client, browser_page
@@ -3113,8 +3113,7 @@ class TestMonthlyReportA3Print:
         assert fit["rowBreak"] == "avoid"
         # Legibility floor: the sheet is never bought by shrinking type.
         assert fit["typePx"] >= self.MIN_PRINT_TYPE_PX
-        # Full-bleed borderless sheet: fixed full-width columns and no
-        # row separator lines.
+        # Full-width sheet: fixed columns and no row separator lines.
         assert fit["tableLayout"] == "fixed"
         assert fit["cellBorderBottom"] == "0px"
 
