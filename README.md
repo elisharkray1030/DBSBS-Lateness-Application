@@ -63,16 +63,42 @@ The launcher checks Docker, generates a per-host `SECRET_KEY` in `.env` if missi
 ### 4. Make it reachable on the office network
 
 1. **Give the host a stable address.** On the router, reserve a DHCP lease for the host (or set a static IP), and give the PC a friendly name such as `lateness-host` so staff bookmark a name, not an IP.
-2. **Open the firewall port** (admin PowerShell, scoped to the **Private**/office profile):
+2. **Confirm the office network is Private.** The firewall rule below only applies to the **Private** profile, so a network Windows labels **Public** is silently ignored. On the host, check:
 
    ```powershell
-   New-NetFirewallRule -DisplayName "Lateness app" -Direction Inbound `
-     -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private
+   Get-NetConnectionProfile
    ```
 
-3. **Keep the host awake.** Settings → System → Power & sleep → set **Sleep** to **Never** while plugged in. Disable hybrid sleep / fast startup if staff must reach the app at any hour.
-4. **Keep Docker running across reboots.** Set Docker Desktop to start on login and enable **auto-logon** (or leave the host logged in). Docker Desktop runs inside a signed-in user session, so the app is only up while that user is logged on.
-5. **Confirm from another PC:** `http://lateness-host:8000/` (or `http://<host-ip>:8000/`).
+   The office Wi-Fi adapter must show `NetworkCategory : Private`. If it shows `Public`, set it back (admin PowerShell, only on the trusted office network):
+
+   ```powershell
+   Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
+   ```
+
+3. **Open the firewall port.** From the host's project folder, the launcher does it for you:
+
+   ```powershell
+   .\run.cmd firewall
+   ```
+
+   It prompts for admin (UAC), is safe to run more than once, and uses the port from `APP_PORT` (default `8000`). To do it by hand in an admin PowerShell instead:
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Lateness app (TCP 8000)" -Direction Inbound `
+     -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private -RemoteAddress LocalSubnet
+   ```
+
+   If you changed `APP_PORT`, use that port in `-LocalPort` and in the rule name. `-RemoteAddress LocalSubnet` limits access to the office subnet; drop it only if staff PCs sit on a different subnet.
+
+4. **Keep the host awake.** Settings → System → Power & sleep → set **Sleep** to **Never** while plugged in. Disable hybrid sleep / fast startup if staff must reach the app at any hour.
+5. **Keep Docker running across reboots.** Set Docker Desktop to start on login and enable **auto-logon** (or leave the host logged in). Docker Desktop runs inside a signed-in user session, so the app is only up while that user is logged on.
+6. **Confirm from another PC.** On a client PC:
+
+   ```powershell
+   Test-NetConnection lateness-host -Port 8000
+   ```
+
+   `TcpTestSucceeded : True` means the port is open; then open `http://lateness-host:8000/` (or `http://<host-ip>:8000/`).
 
 > **Trust boundary:** the app is plain HTTP with no login. Any device on the office LAN can view and change the data, so keep it on the trusted LAN and do not expose it off-campus.
 
@@ -169,7 +195,7 @@ The launcher rebuilds the image on every start, so no extra flag is needed. Afte
 - **Changes do not persist after a restart** — confirm the container has the `lateness-data` volume mounted (`docker volume ls`). Data lives in a named volume, not a folder in the repo.
 - **The app is unreachable on port 8000** — another process may already hold the port. Set `APP_PORT` in `.env` to a free port (and allow that port through the firewall), then retry.
 - **The launcher reports Docker is not running** — start Docker Desktop and retry.
-- **Other office PCs cannot reach the app** — confirm the firewall rule (step 4), that `BIND_ADDR` is not `127.0.0.1`, and that you are using the host's LAN address.
+- **Reachable on the host but not from other PCs** — run `.\run.cmd firewall` on the host (or check the rule with `Get-NetFirewallRule -DisplayName "Lateness app*"`); confirm the office Wi-Fi is classified **Private** with `Get-NetConnectionProfile` (a **Public** profile ignores the rule); confirm `BIND_ADDR` is not `127.0.0.1`; confirm the port matches `APP_PORT`; and confirm you are using the host's LAN address. From a client, `Test-NetConnection lateness-host -Port 8000` must report `TcpTestSucceeded : True`.
 - **Backups are not appearing on the NAS** — confirm the scheduled task ran while the host user was logged on, and that the task's account can write to the share. Test the `robocopy` line by hand from the host.
 
 ## Alternative: native Windows host (waitress + NSSM)

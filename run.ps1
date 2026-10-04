@@ -17,6 +17,7 @@
   .\run.ps1 restore -Backup lateness-20260910-120000
   .\run.ps1 seed            # load deterministic demo data (destructive)
   .\run.ps1 reset           # stop and delete all live data
+  .\run.ps1 firewall        # allow other office PCs through Windows Firewall
 
   (run.cmd accepts --local/--no-seed/--yes style and normalises them.)
 #>
@@ -194,6 +195,75 @@ function Test-PortInUse([string]$Port) {
     }
 }
 
+function Get-EffectivePort {
+    if ($env:APP_PORT) { return $env:APP_PORT }
+    $fromEnv = Get-EnvValue 'APP_PORT'
+    if ($fromEnv) { return $fromEnv }
+    return '8000'
+}
+
+function Get-FirewallRuleName([string]$Port) {
+    return "Lateness app (TCP $Port)"
+}
+
+function Get-FirewallCommand([string]$Port) {
+    $name = Get-FirewallRuleName $Port
+    return "New-NetFirewallRule -DisplayName `"$name`" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Private -RemoteAddress LocalSubnet"
+}
+
+function Test-FirewallAvailable {
+    return [bool](Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue)
+}
+
+function Test-FirewallRule([string]$Port) {
+    if (-not (Test-FirewallAvailable)) { return $false }
+    return [bool](Get-NetFirewallRule -DisplayName (Get-FirewallRuleName $Port) -ErrorAction SilentlyContinue)
+}
+
+function Test-IsAdmin {
+    return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Ensure-FirewallRule {
+    if (-not (Test-FirewallAvailable)) {
+        Write-Warn "Windows Firewall cmdlets are unavailable on this host; skipping."
+        return
+    }
+    $port = Get-EffectivePort
+    if (Test-FirewallRule $port) {
+        Write-Info "Firewall rule already allows inbound TCP $port on the private profile."
+        return
+    }
+    if (-not (Test-IsAdmin)) {
+        Write-Info "Administrator rights are needed to create the firewall rule; prompting (UAC)..."
+        try {
+            Start-Process -FilePath 'powershell' -Verb RunAs -Wait -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, 'firewall'
+            ) | Out-Null
+        }
+        catch {
+            Write-Verbose "Elevation was declined or failed; falling back to the manual command."
+        }
+        if (Test-FirewallRule $port) {
+            Write-Info "Firewall rule created: inbound TCP $port, private profile, local subnet."
+            return
+        }
+        Write-Warn "Could not create the firewall rule automatically. Run this in an elevated PowerShell:"
+        Write-Host ("  " + (Get-FirewallCommand $port))
+        return
+    }
+    try {
+        New-NetFirewallRule -DisplayName (Get-FirewallRuleName $port) -Direction Inbound `
+            -Action Allow -Protocol TCP -LocalPort $port -Profile Private -RemoteAddress LocalSubnet | Out-Null
+    }
+    catch {
+        Write-Err "Could not create the firewall rule: $($_.Exception.Message)"
+        Write-Host ("  " + (Get-FirewallCommand $port))
+        return
+    }
+    Write-Info "Firewall rule created: inbound TCP $port, private profile, local subnet."
+}
+
 function Get-RestoreFolder {
     $root = Join-Path $PSScriptRoot 'shared\restore'
     if (-not (Test-Path -LiteralPath $root)) { return $null }
@@ -248,9 +318,7 @@ function Start-App {
             if ($fromEnv) { $bindAddr = $fromEnv } else { $bindAddr = '0.0.0.0' }
         }
     }
-    $port = $env:APP_PORT
-    if (-not $port) { $port = Get-EnvValue 'APP_PORT' }
-    if (-not $port) { $port = '8000' }
+    $port = Get-EffectivePort
     Invoke-Compose $upArgs @('up', '-d', '--build')
     if (Test-PortInUse $port) {
         Write-Warn "Port $port is already in use; if start fails, set APP_PORT in .env to another port."
@@ -261,7 +329,11 @@ function Start-App {
         if ($bindAddr -eq '0.0.0.0') {
             $ip = Get-HostIPv4
             if ($ip) { Write-Info "On the office network: http://${ip}:$port" }
-            Write-Info "For a stable URL, reserve this PC's IP, allow inbound TCP $port through Windows Firewall, and keep the PC awake."
+            if ((Test-FirewallAvailable) -and (-not (Test-FirewallRule $port))) {
+                Write-Warn "No firewall rule allows inbound TCP $port, so other PCs may not connect."
+                Write-Info "Allow the office LAN with: .\run.ps1 firewall"
+            }
+            Write-Info "For a stable URL, reserve this PC's IP and keep the PC awake."
         }
         Start-Process $url
     }
@@ -356,9 +428,10 @@ function Invoke-Action([string]$Name) {
         'restore' { Restore-Backup }
         'seed' { Seed-Demo }
         'reset' { Reset-App }
+        'firewall' { Ensure-FirewallRule }
         'help' { Get-Help $PSCommandPath -Detailed }
         default {
-            Write-Err "Unknown command '$Name'. Use: up, down, logs, status, backup, restore, seed, reset."
+            Write-Err "Unknown command '$Name'. Use: up, down, logs, status, backup, restore, seed, reset, firewall."
             exit 2
         }
     }
