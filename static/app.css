@@ -1151,11 +1151,14 @@
             }
         }
 
-        /* Monthly Report single-page sheet (spec #164): pinned portrait
-           size and margins rather than browser/printer defaults. */
+        /* Printed sheet: A3 portrait pinned rather than browser/printer
+           defaults, with a zero page margin for a borderless sheet. This
+           supersedes the A4 single-sheet layout (spec #164): the larger
+           sheet buys legibility, not a tighter fit. A printer's unprintable
+           edge may still clip a few millimetres from the very border. */
         @page {
-            size: A4 portrait;
-            margin: 10mm 8mm;
+            size: A3 portrait;
+            margin: 0;
         }
 
         @media print {
@@ -1203,11 +1206,11 @@
             }
 
             .print-brand img {
-                height: 16px;
+                height: 28px;
             }
 
             .print-brand span {
-                font-size: 12px;
+                font-size: 16px;
                 font-weight: 700;
                 color: var(--navy);
             }
@@ -1233,7 +1236,7 @@
             }
 
             #month-detail-title {
-                font-size: 12px;
+                font-size: 16px;
                 margin: 0;
             }
 
@@ -1241,11 +1244,27 @@
                 margin-top: 0;
             }
 
-            /* Single-page Monthly Report fit: condensed but legible print
-               type with a 10px floor (never shrunk below readability),
-               tighter rows for vertical economy, a repeating table header,
-               and rows that never split so future overflow degrades
-               gracefully instead of tearing a Boarder across sheets. */
+            /* Legibility-first print scale: the report is no longer
+               condensed to squeeze onto one A4 sheet. Every printable table
+               shares one comfortable size; a large roster flows to further
+               A3 sheets via the repeating header and unsplit rows rather
+               than shrinking the type. Row separator lines are dropped for
+               the borderless sheet. */
+            th,
+            td {
+                font-size: 16px;
+                line-height: 1.3;
+                padding: 8px 12px;
+                border-bottom: none;
+            }
+
+            /* Full-bleed report: fixed layout stretches the columns evenly
+               across the whole sheet. */
+            #month-detail .month-report-table {
+                width: 100%;
+                table-layout: fixed;
+            }
+
             #month-detail thead {
                 display: table-header-group;
             }
@@ -1253,13 +1272,6 @@
             #month-detail tr {
                 break-inside: avoid;
                 page-break-inside: avoid;
-            }
-
-            #month-detail th,
-            #month-detail td {
-                font-size: 10px;
-                line-height: 1.05;
-                padding: 1px 4px;
             }
 
             .table-scroll {

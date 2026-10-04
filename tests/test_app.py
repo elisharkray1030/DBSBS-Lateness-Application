@@ -3022,25 +3022,23 @@ class TestPrintOutputsActiveView:
         assert chrome["headerBackground"] == "rgb(255, 255, 255)"
 
 
-class TestMonthlyReportSinglePagePrint:
-    """Single-page Monthly Report print guarantee (spec #164, ticket #165).
+class TestMonthlyReportA3Print:
+    """A3 Monthly Report print contract (revision of spec #164, ticket #165).
 
-    All three tests render through the existing month-detail helpers and
-    assert externally observable print behaviour — never individual CSS
-    rules. The pinned roster is the capacity-bound real size (~71
+    The old single-A4-sheet fit is superseded: A3 buys legibility, and a
+    full roster flows onto further A3 sheets instead of shrinking. These
+    tests assert externally observable print behaviour — never individual
+    CSS rules. The pinned roster is the capacity-bound real size (~71
     Boarders); graceful overflow (repeating header, unsplit rows) covers
     any hypothetical larger roster.
     """
 
     MONTH = "2026-07"
-    # Pinned roster size: the capacity-bound real roster the single-page
-    # guarantee holds at.
+    # Pinned roster size: the capacity-bound real roster.
     PINNED_ROSTER_SIZE = 71
-    # A4 portrait at 96 CSS px/in with the pinned 10mm top/bottom page
-    # margins: (297 - 2*10) / 25.4 * 96.
-    PRINTABLE_HEIGHT_PX = 1047
-    # Condensed print type never drops below this floor for the fit.
-    MIN_PRINT_TYPE_PX = 10
+    # The shared A3 print scale sets 16px; the floor guards the report
+    # against a future re-condensation below readability.
+    MIN_PRINT_TYPE_PX = 15
 
     def _pinned_rows(self):
         """Builds the deterministic pinned roster in shared bed order."""
@@ -3067,7 +3065,19 @@ class TestMonthlyReportSinglePagePrint:
             month=self.MONTH,
         )
 
-    def test_pinned_roster_fits_one_portrait_sheet(self, fresh_client, browser_page):
+    def test_stylesheet_pins_a3_borderless_page(self, fresh_client):
+        # @page is not DOM-measurable, so lock the sheet contract in the
+        # served stylesheet itself: A3 portrait and a zero page margin for
+        # the borderless sheet.
+        css = fresh_client.get("/static/app.css").get_data(as_text=True)
+        assert "size: A3 portrait" in css
+        page_rule = css[css.index("@page"):]
+        page_rule = page_rule[:page_rule.index("}")]
+        assert "margin: 0" in page_rule
+
+    def test_pinned_roster_prints_legibly_with_graceful_overflow(
+        self, fresh_client, browser_page
+    ):
         page = browser_page
         self._open_pinned_report(fresh_client, page)
         page.emulate_media(media="print")
@@ -3082,30 +3092,31 @@ class TestMonthlyReportSinglePagePrint:
 
         fit = page.evaluate(
             """() => {
-                const detail = document.getElementById('month-detail');
+                const table = document.getElementById('month-detail-table');
                 const thead = document.querySelector('#month-detail thead');
                 const firstRow = document.querySelector('#month-detail-body tr');
                 const cell = document.querySelector('#month-detail td');
                 return {
-                    detailHeight: detail.getBoundingClientRect().height,
-                    bodyHeight: document.body.scrollHeight,
                     rowCount: document.querySelectorAll('#month-detail-body tr').length,
                     headerDisplay: getComputedStyle(thead).display,
                     rowBreak: getComputedStyle(firstRow).breakInside,
                     typePx: parseFloat(getComputedStyle(cell).fontSize),
+                    tableLayout: getComputedStyle(table).tableLayout,
+                    cellBorderBottom: getComputedStyle(cell).borderBottomWidth,
                 };
             }"""
         )
         assert fit["rowCount"] == self.PINNED_ROSTER_SIZE
-        assert fit["detailHeight"] <= self.PRINTABLE_HEIGHT_PX
-        assert fit["bodyHeight"] <= self.PRINTABLE_HEIGHT_PX
-        # Graceful-overflow guards: the header repeats and rows never
-        # split if a future roster ever flows past one page.
+        # Graceful overflow: a large roster flows to further A3 sheets
+        # with a repeating header and rows that never split.
         assert fit["headerDisplay"] == "table-header-group"
         assert fit["rowBreak"] == "avoid"
-        # Legibility floor: the fit is never bought by shrinking type
-        # below readability.
+        # Legibility floor: the sheet is never bought by shrinking type.
         assert fit["typePx"] >= self.MIN_PRINT_TYPE_PX
+        # Full-bleed borderless sheet: fixed full-width columns and no
+        # row separator lines.
+        assert fit["tableLayout"] == "fixed"
+        assert fit["cellBorderBottom"] == "0px"
 
     def test_printed_report_matches_month_csv_in_bed_order(self, fresh_client, browser_page):
         specs = [
@@ -3153,7 +3164,7 @@ class TestMonthlyReportSinglePagePrint:
         assert [row[0] for row in printed] == [row[0] for row in csv_body]
         assert printed == csv_body
 
-    def test_print_media_keeps_condensed_late_cue(self, fresh_client, browser_page):
+    def test_print_media_keeps_late_cue(self, fresh_client, browser_page):
         page = browser_page
         open_seeded_month_detail(
             fresh_client,
