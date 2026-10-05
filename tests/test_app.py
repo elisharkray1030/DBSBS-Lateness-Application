@@ -3704,7 +3704,7 @@ class TestTransitionFeedbackLivesOnPage:
         assert "show_all=1" in location
         assert "message=" not in location
 
-    def test_rejected_transition_renders_inline_error_on_punishments(self):
+    def test_rejected_transition_flashes_error_on_punishments(self):
         response = self._post_transition({"to": "phone_held"})
 
         page = client.get(response.headers["Location"])
