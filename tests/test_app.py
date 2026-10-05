@@ -99,7 +99,7 @@ def clear_master_list():
     """Empties the Master List directly.
 
     The Import route refuses a CSV that yields no Boarders, so tests that only
-    want the empty-roster state clear the list through storage instead.
+    want the empty Master List state clear the list through storage instead.
     """
     with app_module.connect() as conn:
         storage.replace_boarders(conn, [])
@@ -980,7 +980,28 @@ class TestBoarderBulkImport:
         html = resp.get_data(as_text=True)
         assert "1 Boarder on the list." in html
 
-    def test_import_empty_csv_is_refused_and_keeps_roster(self, fresh_client):
+    def test_import_duplicate_names_reports_deduped_count(self, fresh_client):
+        # Duplicate Match Keys resolve last-row-wins, so the confirmation
+        # reports the resulting list, not the raw parsed-row count.
+        resp = post_csrf(
+            fresh_client,
+            "/boarders/import",
+            data={
+                "boarder_csv": (
+                    io.BytesIO(b"Name,Bed\nCarol,601C\nCarol,602C\n"),
+                    "roster.csv",
+                ),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "1 Boarder on the list." in html
+        with app_module.connect() as conn:
+            assert len(storage.list_boarders(conn)) == 1
+
+    def test_import_empty_csv_is_refused_and_keeps_master_list(self, fresh_client):
         resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
@@ -997,7 +1018,7 @@ class TestBoarderBulkImport:
                 ("BOB", "601B"),
             ]
 
-    def test_import_all_skipped_rows_is_refused_and_keeps_roster(self, fresh_client):
+    def test_import_all_skipped_rows_is_refused_and_keeps_master_list(self, fresh_client):
         resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
@@ -1025,6 +1046,25 @@ class TestBoarderBulkImport:
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "Could not read 'broken.csv' as CSV." in unescape(html)
+        with app_module.connect() as conn:
+            assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
+                ("ALICE", "601A"),
+                ("BOB", "601B"),
+            ]
+
+    def test_import_renamed_spreadsheet_is_refused_not_500(self, fresh_client):
+        # A renamed .xlsx opens as a ZIP, so its bytes can be valid UTF-8 while
+        # carrying no Bed/name columns; the zero-Boarder refusal is the guard.
+        resp = post_csrf(fresh_client, 
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"PK\x03\x04\nnot,a,master,list\n"), "sheet.xlsx"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+        html = unescape(resp.get_data(as_text=True))
+        assert "No boarders found in 'sheet.xlsx'." in html
         with app_module.connect() as conn:
             assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
                 ("ALICE", "601A"),
@@ -1257,6 +1297,13 @@ class TestBoarderClear:
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert 'action="/boarders/clear"' in html
         assert "Clear Master List" in html
+
+    def test_clear_button_is_disabled_when_master_list_empty(self, fresh_client):
+        clear_master_list()
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        form = re.search(r'<form action="/boarders/clear".*?</form>', html, re.S)
+        assert form is not None
+        assert "disabled" in form.group(0)
 
     def test_clear_routes_through_the_confirm_modal(self, fresh_client, browser_page):
         html = fresh_client.get("/boarders").get_data(as_text=True)

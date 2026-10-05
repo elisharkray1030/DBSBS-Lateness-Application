@@ -284,7 +284,7 @@ Important behavior:
 - Both Import surfaces confirm their outcome: the Monthly Log Import flashes a
   saved-month message on success and renders an exact rejection otherwise, and
   the Master List Import flashes `Master List replaced from '<file>'.` with the
-  Resulting Boarder count. A Master List CSV that yields no Boarders, or cannot
+  resulting Boarder count. A Master List CSV that yields no Boarders, or cannot
   be decoded as UTF-8 CSV, is refused with an actionable error and leaves the
   list untouched; the Boarders surface consumes its flash so the confirmation
   renders on the redirect target.
