@@ -289,8 +289,9 @@ Important behavior:
   Master List CSV that yields no Boarders, or cannot be decoded as UTF-8 CSV,
   is refused with an actionable error and leaves the list untouched. The
   Boarders surface consumes its flash so the banner renders on the redirect
-  target, and a failed Import never re-renders its POST target (so refresh
-  cannot resubmit).
+  target; a failed Import redirects rather than re-rendering its POST target
+  (so refresh cannot resubmit), except the 413 oversize rejection, which still
+  re-renders the panel inline.
 - `POST /boarders/clear` empties the Master List on explicit confirmation —
   the deliberate counterpart to refusing a zero-Boarder Import. Removing or
   clearing a Boarder leaves Boarder History and Punishments as frozen snapshots

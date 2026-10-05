@@ -285,12 +285,12 @@ def _boarder_count_phrase(count: int) -> str:
 
 
 def _boarders_error_redirect(message: str):
-    """Flashes a Master List Import failure and returns to the Boarders tab.
+    """Flashes a Master List action failure and returns to the Boarders tab.
 
-    Imports follow the app-wide POST-redirect-GET convention for both
-    outcomes, so a failed Import leaves the staff on the tab with a one-shot
-    banner instead of re-rendering the POST target (and re-submitting on
-    refresh).
+    Master List mutations follow the app-wide POST-redirect-GET convention for
+    both outcomes, so a failed action leaves the staff on the tab with a
+    one-shot banner instead of re-rendering the POST target (and re-submitting
+    on refresh).
     """
     flash(message, "error")
     return redirect('/boarders')
