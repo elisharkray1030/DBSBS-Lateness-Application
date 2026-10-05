@@ -662,6 +662,22 @@
         boarderCancelButton.addEventListener('click', discardBoarderEdits);
     }
 
+    // Clearing the Master List is destructive but keeps history: route the
+    // native submit through the shared confirm dialog first. Only present on
+    // the Current view of the Boarders tab.
+    const clearMasterListForm = document.getElementById('clear-master-list-form');
+    if (clearMasterListForm) {
+        clearMasterListForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            showConfirmModal({
+                title: 'Clear Master List?',
+                message: 'Every boarder will be dropped from the Master List. Their history and punishments are kept, and future Imports will no longer match them.',
+                confirmLabel: 'Clear',
+                onConfirm: () => clearMasterListForm.submit()
+            });
+        });
+    }
+
     // Entry rows only exist on /ipoints; this returns false everywhere else.
     // A row whose own Save or Remove is in flight is excluded so it does not
     // warn about itself, while any other dirty row still does.

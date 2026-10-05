@@ -1,3 +1,4 @@
+import csv
 import io
 import logging
 import os
@@ -245,6 +246,36 @@ def _oversize_message(path: str, limit: str) -> str:
         f"Error: This request exceeds the {limit} limit. "
         "Nothing was changed."
     )
+
+
+def _unreadable_csv_message(filename: "str | None") -> str:
+    """Words the failure for a file that cannot be decoded as CSV.
+
+    Shared by both Import surfaces so a non-UTF8 upload (for example a
+    spreadsheet renamed to ``.csv``) fails with one clear message instead
+    of an unhandled decode error.
+    """
+    name = filename or "the file"
+    return (
+        f"Error: Could not read '{name}' as CSV. Import it as a "
+        "UTF-8 encoded CSV. Nothing was changed."
+    )
+
+
+def _empty_master_list_message(filename: "str | None") -> str:
+    """Words the refusal for a Master List CSV that yields no Boarders."""
+    name = filename or "the file"
+    return (
+        f"Error: No boarders found in '{name}'. The Master List is "
+        "unchanged — check the CSV has a Bed column and a name column "
+        "('Name', or Surname / Given Names / Common Name)."
+    )
+
+
+def _boarder_count_phrase(count: int) -> str:
+    """Words how many Boarders an Import left on the Master List."""
+    noun = "Boarder" if count == 1 else "Boarders"
+    return f"{count} {noun} on the list."
 
 
 def _db_path() -> str:
@@ -732,7 +763,16 @@ def home():
                     try:
                         with connect() as conn:
                             master_list = storage.boarder_master_list(conn)
-                            outcome = ingest_log(log_stream, month_label, master_list, conn)
+                            try:
+                                outcome = ingest_log(
+                                    log_stream, month_label, master_list, conn
+                                )
+                            except (UnicodeDecodeError, csv.Error) as exc:
+                                current_app.logger.warning(
+                                    "Could not read Monthly Log %s for month %s: %s",
+                                    file.filename, month_label, exc,
+                                )
+                                return _unreadable_csv_message(file.filename)
                     finally:
                         log_stream.detach()
 
@@ -957,9 +997,27 @@ def import_boarders():
         with connect() as conn:
             log_stream = io.TextIOWrapper(io.BytesIO(payload), encoding='utf-8-sig')
             try:
-                rows = parse_namelist_stream(log_stream)
+                try:
+                    rows = parse_namelist_stream(log_stream)
+                except (UnicodeDecodeError, csv.Error) as exc:
+                    current_app.logger.warning(
+                        "Could not read Master List import from %s: %s",
+                        file.filename, exc,
+                    )
+                    return _render_boarders(
+                        error=_unreadable_csv_message(file.filename)
+                    )
             finally:
                 log_stream.detach()
+
+            if not rows:
+                current_app.logger.warning(
+                    "Rejected Master List import from %s: no boarders found",
+                    file.filename,
+                )
+                return _render_boarders(
+                    error=_empty_master_list_message(file.filename)
+                )
 
             try:
                 storage.replace_boarders(conn, rows)
@@ -970,6 +1028,11 @@ def import_boarders():
                 )
                 return _render_boarders(error=f"Error: {exc}")
         current_app.logger.info("Replaced Master List from %s", file.filename)
+        flash(
+            f"Master List replaced from '{file.filename}'. "
+            f"{_boarder_count_phrase(len(rows))}",
+            "success",
+        )
         return redirect('/boarders')
 
     return _mutate_with_retry(
@@ -977,6 +1040,30 @@ def import_boarders():
         attempt,
         lambda exc: _render_boarders(error=busy_message(exc.action)),
         "Master List import hit sustained contention",
+    )
+
+
+@bp.route('/boarders/clear', methods=['POST'])
+def clear_boarders():
+    """Empties the Master List on explicit confirmation.
+
+    The sanctioned counterpart to refusing a zero-Boarder Import: history and
+    Punishments are frozen snapshots (ADR 0001), so clearing the list only
+    stops future Imports matching these Boarders.
+    """
+
+    def attempt():
+        with connect() as conn:
+            storage.replace_boarders(conn, [])
+        current_app.logger.info("Cleared the Master List")
+        flash("Master List cleared.", "success")
+        return redirect('/boarders')
+
+    return _mutate_with_retry(
+        "clear the Master List",
+        attempt,
+        lambda exc: _render_boarders(error=busy_message(exc.action)),
+        "Master List clear hit sustained contention",
     )
 
 
@@ -1006,6 +1093,9 @@ def _boarder_bed_taken(bed, exclude_id=None):
 
 
 def _render_boarders(error=None, message=None):
+    flash_message, flash_error = _consume_flashes()
+    message = message or flash_message
+    error = error or flash_error
     boarders_view = 'all-time' if request.args.get('view') == 'all-time' else 'current'
     all_time_query = request.args.get('q', '').strip()
     with connect(read_only=True) as conn:

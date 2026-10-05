@@ -242,6 +242,10 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"/></svg>
                 Download Master List (CSV)
             </a>
+            <form action="/boarders/clear" method="POST" id="clear-master-list-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-danger btn-sm" {% if not boarders %}disabled{% endif %}>Clear Master List</button>
+            </form>
         </div>
         <div id="boarder-edit-actions" class="boarder-edit-actions" hidden>
             <button id="boarder-save" type="button" class="btn btn-primary btn-sm" disabled>Save</button>
