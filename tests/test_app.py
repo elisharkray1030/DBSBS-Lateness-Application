@@ -496,10 +496,14 @@ class TestImportMonthPicker:
             "report_month": "March 2026",
             "log_file": (io.BytesIO(b"Name,Transaction Time\nALICE,07:42\n"), "log.csv"),
         }
-        response = post_csrf(client, "/", data=data, content_type="multipart/form-data")
+        response = post_csrf(
+            client, "/", data=data, content_type="multipart/form-data",
+            follow_redirects=True,
+        )
 
         assert response.status_code == 200
         html = response.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "Invalid month label" in html
         assert "YYYY-MM" in html
 
@@ -701,9 +705,11 @@ class TestImportUsesDbBoarders:
                 "log_file": (io.BytesIO(b"Name,Transaction Time\nBOB,07:42\n"), "log.csv"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "Unmatched names in the log: BOB" in html
 
 
@@ -955,7 +961,7 @@ class TestBoarderBulkImport:
             fresh_client,
             "/boarders/import",
             data={
-                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "roster.csv"),
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "master-list.csv"),
             },
             content_type="multipart/form-data",
             follow_redirects=True,
@@ -963,7 +969,7 @@ class TestBoarderBulkImport:
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert 'class="banner banner-success"' in html
-        assert "Master List replaced from 'roster.csv'." in unescape(html)
+        assert "Master List replaced from 'master-list.csv'." in unescape(html)
         assert "2 Boarders on the list." in html
 
     def test_import_single_boarder_uses_singular_confirmation(self, fresh_client):
@@ -971,7 +977,7 @@ class TestBoarderBulkImport:
             fresh_client,
             "/boarders/import",
             data={
-                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\n"), "roster.csv"),
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\n"), "master-list.csv"),
             },
             content_type="multipart/form-data",
             follow_redirects=True,
@@ -989,7 +995,7 @@ class TestBoarderBulkImport:
             data={
                 "boarder_csv": (
                     io.BytesIO(b"Name,Bed\nCarol,601C\nCarol,602C\n"),
-                    "roster.csv",
+                    "master-list.csv",
                 ),
             },
             content_type="multipart/form-data",
@@ -1008,9 +1014,11 @@ class TestBoarderBulkImport:
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "No boarders found in 'empty.csv'." in unescape(html)
         with app_module.connect() as conn:
             assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
@@ -1025,9 +1033,11 @@ class TestBoarderBulkImport:
                 "boarder_csv": (io.BytesIO(b"Name,Bed\n,bad\nNoBed,\n"), "skipped.csv"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "No boarders found in 'skipped.csv'." in unescape(html)
         with app_module.connect() as conn:
             assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
@@ -1042,9 +1052,11 @@ class TestBoarderBulkImport:
                 "boarder_csv": (io.BytesIO(b"\xff\xfeName,Bed\nCarol,601C\n"), "broken.csv"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "Could not read 'broken.csv' as CSV." in unescape(html)
         with app_module.connect() as conn:
             assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
@@ -1061,9 +1073,11 @@ class TestBoarderBulkImport:
                 "boarder_csv": (io.BytesIO(b"PK\x03\x04\nnot,a,master,list\n"), "sheet.xlsx"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
         assert resp.status_code == 200
         html = unescape(resp.get_data(as_text=True))
+        assert 'class="banner banner-error"' in html
         assert "No boarders found in 'sheet.xlsx'." in html
         with app_module.connect() as conn:
             assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
@@ -1104,10 +1118,13 @@ class TestBoarderBulkImport:
         assert [(b.display_name, b.bed) for b in boarders] == [("carol", "602C")]
 
     def test_import_rejects_missing_file(self, fresh_client):
-        resp = post_csrf(fresh_client, "/boarders/import", data={})
+        resp = post_csrf(
+            fresh_client, "/boarders/import", data={}, follow_redirects=True
+        )
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
-        assert "file" in html.lower()
+        assert 'class="banner banner-error"' in html
+        assert "No CSV file selected." in html
 
     def test_empty_roster_empty_state_points_at_tab(self, fresh_client):
         clear_master_list()
@@ -1131,9 +1148,11 @@ class TestBoarderBulkImport:
                 "log_file": (io.BytesIO(b"Name,Transaction Time\nZED,07:42\n"), "log.csv"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "master list is missing or empty" in html
 
     def test_import_roster_used_by_ingestion(self, fresh_client):
@@ -1166,10 +1185,12 @@ class TestBoarderBulkImportDuplicateBed:
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601A\nDana,601A\n"), "roster.csv"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
 
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "assigned to both" in html
         assert "601A" in html
         with app_module.connect() as conn:
@@ -1189,9 +1210,11 @@ class TestBoarderBulkImportDuplicateBed:
                 ),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
 
         assert resp.status_code == 200
+        assert 'class="banner banner-error"' in resp.get_data(as_text=True)
         with app_module.connect() as conn:
             boarders = storage.list_boarders(conn)
         assert [(b.normalized_name, b.bed) for b in boarders] == [
@@ -1213,9 +1236,11 @@ class TestBoarderBulkImportDuplicateBed:
                 "boarder_csv": (io.BytesIO(b"Name,Bed\nZed,601C\nWye,601C\n"), "roster.csv"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
 
         assert resp.status_code == 200
+        assert 'class="banner banner-error"' in resp.get_data(as_text=True)
         with app_module.connect() as conn:
             boarders = storage.list_boarders(conn)
         assert [(b.normalized_name, b.bed) for b in boarders] == [
@@ -1336,12 +1361,31 @@ class TestBoarderClear:
         page.locator("#confirmModal .btn-danger").click()
         assert page.evaluate("() => window.__clearSubmitted") is True
 
+    def test_clear_is_disabled_while_editing(self, fresh_client, browser_page):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        clear_button = page.locator("#clear-master-list-form button")
+        assert clear_button.is_enabled()
+
+        # A dirty edit row must not be silently dropped by Clear.
+        page.locator("#boarder-edit").click()
+        assert clear_button.is_disabled()
+
+        # Discarding the edits restores Clear.
+        page.locator("#boarder-cancel").click()
+        assert clear_button.is_enabled()
+
 
 LOG_CSV = "Name,Transaction Time\nALICE,07:45\n"
 
 
 class TestImportPostRedirectGet:
-    def _import(self, client, month="2026-07", body=LOG_CSV, filename="log.csv"):
+    def _import(
+        self, client, month="2026-07", body=LOG_CSV, filename="log.csv",
+        follow_redirects=False,
+    ):
         return post_csrf(client, 
             "/",
             data={
@@ -1349,6 +1393,7 @@ class TestImportPostRedirectGet:
                 "log_file": (io.BytesIO(body.encode("utf-8")), filename),
             },
             content_type="multipart/form-data",
+            follow_redirects=follow_redirects,
         )
 
     def test_successful_import_redirects_with_month_query(self, fresh_client):
@@ -1393,11 +1438,13 @@ class TestImportPostRedirectGet:
         assert len(months) == 1
         assert months[0].month == "2026-07"
 
-    def test_rejected_import_renders_inline_without_redirect(self, fresh_client):
-        resp = self._import(fresh_client, body="")
+    def test_rejected_import_flashes_error_and_redirects(self, fresh_client):
+        resp = self._import(fresh_client, body="", follow_redirects=True)
 
         assert resp.status_code == 200
-        assert "Error" in resp.get_data(as_text=True)
+        html = unescape(resp.get_data(as_text=True))
+        assert 'class="banner banner-error"' in html
+        assert "Error" in html
         with app_module.connect() as conn:
             assert storage.list_months(conn) == []
 
@@ -1413,21 +1460,23 @@ class TestImportPostRedirectGet:
                 ),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
 
         assert resp.status_code == 200
         html = unescape(resp.get_data(as_text=True))
+        assert 'class="banner banner-error"' in html
         assert "Could not read 'broken.csv' as CSV." in html
         with app_module.connect() as conn:
             assert storage.list_months(conn) == []
 
-    def test_missing_month_label_renders_inline_without_redirect(self, fresh_client):
-        resp = self._import(fresh_client, month="")
+    def test_missing_month_label_flashes_error_and_redirects(self, fresh_client):
+        resp = self._import(fresh_client, month="", follow_redirects=True)
 
         assert resp.status_code == 200
-        assert "Please enter a valid month label for this report." in resp.get_data(
-            as_text=True
-        )
+        html = unescape(resp.get_data(as_text=True))
+        assert 'class="banner banner-error"' in html
+        assert "Please enter a valid month label for this report." in html
         with app_module.connect() as conn:
             assert storage.list_months(conn) == []
 
@@ -1451,6 +1500,68 @@ class TestImportPostRedirectGet:
         assert len(months) == 1
 
 
+class TestImportConfirmationParity:
+    """Both Import surfaces confirm success and failure with a flashed banner
+    on the redirect target, per the app-wide POST-redirect-GET convention."""
+
+    def test_monthly_log_success_banner(self, fresh_client):
+        resp = post_csrf(
+            fresh_client,
+            "/",
+            data={
+                "report_month": "2026-07",
+                "log_file": (io.BytesIO(LOG_CSV.encode("utf-8")), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        html = fresh_client.get(resp.headers["Location"]).get_data(as_text=True)
+        assert 'class="banner banner-success"' in html
+        assert "Monthly report saved for '2026-07'." in unescape(html)
+
+    def test_monthly_log_failure_banner(self, fresh_client):
+        resp = post_csrf(
+            fresh_client,
+            "/",
+            data={
+                "report_month": "2026-07",
+                "log_file": (io.BytesIO(b""), "log.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        html = fresh_client.get(resp.headers["Location"]).get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
+
+    def test_master_list_success_banner(self, fresh_client):
+        resp = post_csrf(
+            fresh_client,
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nZed,601Z\n"), "master-list.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        html = fresh_client.get(resp.headers["Location"]).get_data(as_text=True)
+        assert 'class="banner banner-success"' in html
+        assert "Master List replaced from 'master-list.csv'." in unescape(html)
+
+    def test_master_list_failure_banner(self, fresh_client):
+        resp = post_csrf(
+            fresh_client,
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 302
+        html = fresh_client.get(resp.headers["Location"]).get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
+        assert "No boarders found in 'empty.csv'." in unescape(html)
+
+
 class TestImportCopyAlignment:
     def test_file_picker_label_uses_monthly_log_term(self):
         html = home_html()
@@ -1466,10 +1577,12 @@ class TestImportCopyAlignment:
                 "log_file": (io.BytesIO(b""), ""),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
 
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "Error: No Monthly Log selected." in html
         assert "No file selected" not in html
 
@@ -1481,10 +1594,12 @@ class TestImportCopyAlignment:
                 "log_file": (io.BytesIO(b"Name,Transaction Time\n"), "log.csv"),
             },
             content_type="multipart/form-data",
+            follow_redirects=True,
         )
 
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
+        assert 'class="banner banner-error"' in html
         assert "The Monthly Log is empty or has no data rows." in html
         assert "uploaded log file" not in html
 

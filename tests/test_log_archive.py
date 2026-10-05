@@ -67,7 +67,7 @@ def test_rejected_import_archives_nothing(archive_client):
 
     response = _import(client, "2026-04", body)
 
-    assert response.status_code == 200
+    assert response.status_code == 302
     assert not (archive_dir / "2026-04.csv").exists()
 
 

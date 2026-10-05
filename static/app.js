@@ -461,6 +461,17 @@
     const boarderCancelButton = document.getElementById('boarder-cancel');
     const boarderEditError = document.getElementById('boarder-edit-error');
 
+    // The Clear control shares the boarder controls' disabled lifecycle: a
+    // dirty edit row should not be silently dropped by a Clear.
+    const clearMasterListForm = document.getElementById('clear-master-list-form');
+    const clearMasterListButton = clearMasterListForm
+        ? clearMasterListForm.querySelector('button')
+        : null;
+
+    function boarderRowCount() {
+        return document.querySelectorAll('#boarders-table tbody tr').length;
+    }
+
     function boarderIsDirty(row) {
         const name = row.querySelector('.boarder-edit-name').value.trim();
         const bed = row.querySelector('.boarder-edit-bed').value.trim();
@@ -478,6 +489,9 @@
         boarderOriginals = new Map();
         boarderEditActions.hidden = true;
         boarderEditButton.disabled = false;
+        if (clearMasterListButton) {
+            clearMasterListButton.disabled = boarderRowCount() === 0;
+        }
         boarderEditError.hidden = true;
         boarderEditError.textContent = '';
     }
@@ -509,6 +523,7 @@
         boardersEditing = true;
         boarderOriginals = new Map();
         boarderEditButton.disabled = true;
+        if (clearMasterListButton) clearMasterListButton.disabled = true;
         boarderEditActions.hidden = false;
         rows.forEach(row => {
             const bed = row.querySelector('.boarder-bed').textContent.trim();
@@ -665,7 +680,6 @@
     // Clearing the Master List is destructive but keeps history: route the
     // native submit through the shared confirm dialog first. Only present on
     // the Current view of the Boarders tab.
-    const clearMasterListForm = document.getElementById('clear-master-list-form');
     if (clearMasterListForm) {
         clearMasterListForm.addEventListener('submit', function(event) {
             event.preventDefault();
