@@ -64,6 +64,10 @@ _Avoid_: upload, generate
 Drop a boarder from the master list. The boarder's Boarder History and Punishments persist as frozen snapshots (per ADR 0001) and are not affected. Future Monthly Log imports will no longer match a removed boarder.
 _Avoid_: delete, archive, deactivate
 
+**Clear**:
+Empty the Master List in one action. Each dropped boarder's Boarder History and Punishments persist as frozen snapshots (per ADR 0001) and are not affected, and future Monthly Log imports will no longer match them. The bulk counterpart to Remove; the deliberate way to empty the Master List.
+_Avoid_: reset, wipe
+
 ## Discipline
 
 **Points**:

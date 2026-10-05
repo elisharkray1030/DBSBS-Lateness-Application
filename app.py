@@ -248,6 +248,12 @@ def _oversize_message(path: str, limit: str) -> str:
     )
 
 
+# A file that is not UTF-8 CSV fails while its stream is iterated: an
+# undecodable byte raises UnicodeDecodeError, and malformed quoting can raise
+# csv.Error. Both Import surfaces refuse such a file with the same message.
+_CSV_READ_ERRORS = (UnicodeDecodeError, csv.Error)
+
+
 def _unreadable_csv_message(filename: "str | None") -> str:
     """Words the failure for a file that cannot be decoded as CSV.
 
@@ -767,7 +773,7 @@ def home():
                                 outcome = ingest_log(
                                     log_stream, month_label, master_list, conn
                                 )
-                            except (UnicodeDecodeError, csv.Error) as exc:
+                            except _CSV_READ_ERRORS as exc:
                                 current_app.logger.warning(
                                     "Could not read Monthly Log %s for month %s: %s",
                                     file.filename, month_label, exc,
@@ -999,7 +1005,7 @@ def import_boarders():
             try:
                 try:
                     rows = parse_namelist_stream(log_stream)
-                except (UnicodeDecodeError, csv.Error) as exc:
+                except _CSV_READ_ERRORS as exc:
                     current_app.logger.warning(
                         "Could not read Master List import from %s: %s",
                         file.filename, exc,
@@ -1028,9 +1034,12 @@ def import_boarders():
                 )
                 return _render_boarders(error=f"Error: {exc}")
         current_app.logger.info("Replaced Master List from %s", file.filename)
+        # replace_boarders resolves duplicate Match Keys last-row-wins, so the
+        # confirmation counts the resulting list, not the raw parsed rows.
+        count = len({boarder.normalized_name for boarder in rows})
         flash(
             f"Master List replaced from '{file.filename}'. "
-            f"{_boarder_count_phrase(len(rows))}",
+            f"{_boarder_count_phrase(count)}",
             "success",
         )
         return redirect('/boarders')
