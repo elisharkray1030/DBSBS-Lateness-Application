@@ -71,42 +71,58 @@ Staff should bookmark a name, not an IP that can move.
 
 ## 5. Open the firewall port
 
-The rule only applies to the **Private** network profile, so first confirm the
-office Wi-Fi adapter is classified as Private:
+The host may sit on a **Domain** network (an AD-joined school PC, e.g. with a
+`staff.dbs.local` suffix), a **Private** workgroup network, or **Public**. The
+rule below uses `-Profile Any`, so it applies whatever the active profile is —
+Domain included. **Do not reclassify a domain NIC.** To see which profile is
+active:
 
 ```powershell
 Get-NetConnectionProfile
-```
-
-If it shows `NetworkCategory : Public`, correct it on the trusted office network
-(admin PowerShell):
-
-```powershell
-Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
 ```
 
 Then allow the port (admin PowerShell). Use the app's `PORT` (default `8000`):
 
 ```powershell
 New-NetFirewallRule -DisplayName "Lateness app (TCP 8000)" -Direction Inbound `
-  -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private `
+  -Protocol TCP -LocalPort 8000 -Action Allow -Profile Any `
   -RemoteAddress LocalSubnet
 ```
 
-`-RemoteAddress LocalSubnet` limits access to the office subnet. Keep it scoped
-to the **Private** profile and do not expose the app off-campus. If you changed
-`PORT`, use that port in `-LocalPort` and in the rule name.
+`-RemoteAddress LocalSubnet` limits access to the office subnet, so you are not
+exposing the app off-campus. If you changed `PORT`, use that port in `-LocalPort`
+and in the rule name. For a tighter rule, list the staff PCs' IPs instead of
+`LocalSubnet` (e.g. `-RemoteAddress 192.168.13.50,192.168.13.51`); hostnames and
+`ip:port` are not accepted.
 
-> This is the native-host path. On the Docker path the `run.ps1` launcher has a
-> `firewall` command that creates the same rule for you (`.\run.cmd firewall`).
+> **Workgroup host only:** if Windows classifies the network as **Public** and
+> you want to scope the rule to one profile, set it to Private and use
+> `-Profile Private`:
+>
+> ```powershell
+> Set-NetConnectionProfile -InterfaceAlias "<adapter>" -NetworkCategory Private
+> ```
+>
+> Do not do this on a domain-joined PC.
 
-Verify from a client PC:
+### Use the launcher instead (Docker path)
+
+On the Docker path the `run.ps1` launcher creates the same rule for you — it is
+port-aware and idempotent, and asks for admin (UAC):
 
 ```powershell
-Test-NetConnection lateness-host -Port 8000
+.\run.cmd firewall
 ```
 
-`TcpTestSucceeded : True` means the port is open. To undo the rule:
+Verify from a client PC using the host's name **or IP** — prefer the IP if the
+name does not resolve:
+
+```powershell
+Test-NetConnection <host-ip> -Port 8000
+```
+
+`TcpTestSucceeded : True` means the port is open. Ignore `PingSucceeded:` — this
+rule allows TCP 8000, not ICMP. To undo the rule:
 
 ```powershell
 Remove-NetFirewallRule -DisplayName "Lateness app*"
