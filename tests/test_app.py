@@ -95,6 +95,16 @@ def home_html(test_client=None):
     return response.get_data(as_text=True)
 
 
+def clear_master_list():
+    """Empties the Master List directly.
+
+    The Import route refuses a CSV that yields no Boarders, so tests that only
+    want the empty-roster state clear the list through storage instead.
+    """
+    with app_module.connect() as conn:
+        storage.replace_boarders(conn, [])
+
+
 _STATIC_DIR = static_dir()
 
 
@@ -940,7 +950,37 @@ class TestBoarderBulkImport:
         assert "Dana" in html
         assert "ALICE" not in html
 
-    def test_import_empty_csv_replaces_roster_with_empty(self, fresh_client):
+    def test_import_csv_flashes_success_confirmation(self, fresh_client):
+        resp = post_csrf(
+            fresh_client,
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\nDana,601D\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert 'class="banner banner-success"' in html
+        assert "Master List replaced from 'roster.csv'." in unescape(html)
+        assert "2 Boarders on the list." in html
+
+    def test_import_single_boarder_uses_singular_confirmation(self, fresh_client):
+        resp = post_csrf(
+            fresh_client,
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"Name,Bed\nCarol,601C\n"), "roster.csv"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "1 Boarder on the list." in html
+
+    def test_import_empty_csv_is_refused_and_keeps_roster(self, fresh_client):
         resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
@@ -948,11 +988,16 @@ class TestBoarderBulkImport:
             },
             content_type="multipart/form-data",
         )
-        assert resp.status_code == 302
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "No boarders found in 'empty.csv'." in unescape(html)
         with app_module.connect() as conn:
-            assert storage.list_boarders(conn) == []
+            assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
+                ("ALICE", "601A"),
+                ("BOB", "601B"),
+            ]
 
-    def test_import_all_skipped_rows_replaces_roster_with_empty(self, fresh_client):
+    def test_import_all_skipped_rows_is_refused_and_keeps_roster(self, fresh_client):
         resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
@@ -960,9 +1005,31 @@ class TestBoarderBulkImport:
             },
             content_type="multipart/form-data",
         )
-        assert resp.status_code == 302
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "No boarders found in 'skipped.csv'." in unescape(html)
         with app_module.connect() as conn:
-            assert storage.list_boarders(conn) == []
+            assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
+                ("ALICE", "601A"),
+                ("BOB", "601B"),
+            ]
+
+    def test_import_non_utf8_csv_shows_error_not_500(self, fresh_client):
+        resp = post_csrf(fresh_client, 
+            "/boarders/import",
+            data={
+                "boarder_csv": (io.BytesIO(b"\xff\xfeName,Bed\nCarol,601C\n"), "broken.csv"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "Could not read 'broken.csv' as CSV." in unescape(html)
+        with app_module.connect() as conn:
+            assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
+                ("ALICE", "601A"),
+                ("BOB", "601B"),
+            ]
 
     def test_import_exact_duplicate_names_collapse_last_wins(self, fresh_client):
         resp = post_csrf(fresh_client, 
@@ -1003,38 +1070,20 @@ class TestBoarderBulkImport:
         assert "file" in html.lower()
 
     def test_empty_roster_empty_state_points_at_tab(self, fresh_client):
-        post_csrf(fresh_client, 
-            "/boarders/import",
-            data={
-                "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
-            },
-            content_type="multipart/form-data",
-        )
+        clear_master_list()
         html = fresh_client.get("/boarders").get_data(as_text=True)
         assert "Add a boarder" in html
         assert "namelist.csv" not in html
 
     def test_empty_roster_empty_state_names_the_master_list(self, fresh_client):
-        post_csrf(fresh_client, 
-            "/boarders/import",
-            data={
-                "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
-            },
-            content_type="multipart/form-data",
-        )
+        clear_master_list()
         html = fresh_client.get("/boarders").get_data(as_text=True)
         # Same sentence the client injects when the last boarder is removed
         # live, so both renderings stay glossary-clean.
         assert "Add a boarder here, or import a CSV to replace it." in html
 
     def test_empty_roster_rejects_monthly_log_import(self, fresh_client):
-        post_csrf(fresh_client, 
-            "/boarders/import",
-            data={
-                "boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv"),
-            },
-            content_type="multipart/form-data",
-        )
+        clear_master_list()
         resp = post_csrf(fresh_client, 
             "/",
             data={
@@ -1174,6 +1223,73 @@ class TestBoarderExport:
         assert rows == [["Name", "Bed"], ["Carol", "601C"]]
 
 
+class TestBoarderClear:
+    def test_clear_empties_the_master_list_and_flashes(self, fresh_client):
+        resp = post_csrf(
+            fresh_client,
+            "/boarders/clear",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert 'class="banner banner-success"' in html
+        assert "Master List cleared." in html
+        with app_module.connect() as conn:
+            assert storage.list_boarders(conn) == []
+
+    def test_clear_keeps_boarder_history(self, fresh_client):
+        with app_module.connect() as conn:
+            storage.save_month(
+                conn,
+                [record("ALICE", "601A", frequency=2, total_minutes=5, total_points=7)],
+                "2026-03",
+            )
+            before = storage.get_month_report(conn, "2026-03")
+        assert before, "expected the seeded month before clearing"
+        post_csrf(fresh_client, "/boarders/clear")
+        with app_module.connect() as conn:
+            assert storage.list_boarders(conn) == []
+            # History is a frozen snapshot (ADR 0001): clearing the Master List
+            # must not touch it.
+            assert storage.get_month_report(conn, "2026-03") == before
+
+    def test_clear_form_ships_on_the_current_boarders_view(self, fresh_client):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+        assert 'action="/boarders/clear"' in html
+        assert "Clear Master List" in html
+
+    def test_clear_routes_through_the_confirm_modal(self, fresh_client, browser_page):
+        html = fresh_client.get("/boarders").get_data(as_text=True)
+
+        page = browser_page
+        page.set_content(html)
+        page.evaluate(
+            """() => {
+                window.__clearSubmitted = false;
+                const form = document.getElementById('clear-master-list-form');
+                form.submit = () => { window.__clearSubmitted = true; };
+            }"""
+        )
+
+        page.locator("#clear-master-list-form button").click()
+        page.wait_for_selector("#confirmModal.show")
+        assert page.locator("#confirm-modal-title").text_content() == "Clear Master List?"
+        assert "Every boarder will be dropped" in page.locator(
+            "#confirm-modal-message"
+        ).text_content()
+
+        # Cancelling leaves the form unsubmitted.
+        page.locator("#confirmModal .btn-neutral").click()
+        assert page.evaluate("() => window.__clearSubmitted") is False
+
+        # Confirming submits the form (the native submit is stubbed, so this
+        # asserts the wiring without navigating).
+        page.locator("#clear-master-list-form button").click()
+        page.wait_for_selector("#confirmModal.show")
+        page.locator("#confirmModal .btn-danger").click()
+        assert page.evaluate("() => window.__clearSubmitted") is True
+
+
 LOG_CSV = "Name,Transaction Time\nALICE,07:45\n"
 
 
@@ -1235,6 +1351,26 @@ class TestImportPostRedirectGet:
 
         assert resp.status_code == 200
         assert "Error" in resp.get_data(as_text=True)
+        with app_module.connect() as conn:
+            assert storage.list_months(conn) == []
+
+    def test_non_utf8_log_renders_error_not_500(self, fresh_client):
+        resp = post_csrf(
+            fresh_client,
+            "/",
+            data={
+                "report_month": "2026-07",
+                "log_file": (
+                    io.BytesIO(b"\xff\xfeName,Transaction Time\nALICE,07:45\n"),
+                    "broken.csv",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+
+        assert resp.status_code == 200
+        html = unescape(resp.get_data(as_text=True))
+        assert "Could not read 'broken.csv' as CSV." in html
         with app_module.connect() as conn:
             assert storage.list_months(conn) == []
 
@@ -4568,11 +4704,7 @@ class TestUiTidinessHoldsEverywhere:
         icon = '<use href="#icon-inbox"/>'
         # The app auto-seeds the Master List, so clear it to reach the
         # boarders empty state.
-        post_csrf(fresh_client, 
-            "/boarders/import",
-            data={"boarder_csv": (io.BytesIO(b"Name,Bed\n"), "empty.csv")},
-            content_type="multipart/form-data",
-        )
+        clear_master_list()
         boarders = panel_html(fresh_client.get("/boarders").get_data(as_text=True), "boarders")
         punishments = panel_html(
             fresh_client.get("/punishments").get_data(as_text=True), "punishments"
