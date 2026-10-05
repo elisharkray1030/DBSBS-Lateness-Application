@@ -1,7 +1,7 @@
 # CSRF session secret and per-session tokens
 
 Every state-changing request — Monthly Log Import building a Monthly Report,
-Master List add/import/edit/Remove, Monthly Report deletion, Punishment
+Master List add/import/edit/Remove/Clear, Monthly Report deletion, Punishment
 assignment and transition — carries a per-session token validated before any
 stored data is touched. The session secret comes from the environment with no
 built-in fallback: startup aborts with a clear message when it is unset or

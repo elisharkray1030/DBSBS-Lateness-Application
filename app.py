@@ -284,6 +284,24 @@ def _boarder_count_phrase(count: int) -> str:
     return f"{count} {noun} on the list."
 
 
+def _boarders_error_redirect(message: str):
+    """Flashes a Master List Import failure and returns to the Boarders tab.
+
+    Imports follow the app-wide POST-redirect-GET convention for both
+    outcomes, so a failed Import leaves the staff on the tab with a one-shot
+    banner instead of re-rendering the POST target (and re-submitting on
+    refresh).
+    """
+    flash(message, "error")
+    return redirect('/boarders')
+
+
+def _monthly_log_error_redirect(message: str):
+    """Flashes a Monthly Log Import failure and returns to the Reports tab."""
+    flash(message, "error")
+    return redirect('/')
+
+
 def _db_path() -> str:
     """Resolves the database location for the current application."""
     return _resolve_setting("DB_PATH", _DEFAULT_DB_PATH)
@@ -754,11 +772,14 @@ def home():
             month_label = request.form.get('report_month', '').strip()
 
             if not file or file.filename == '':
-                error = "Error: No Monthly Log selected."
                 current_app.logger.info("Monthly Log import with no file selected")
+                return _monthly_log_error_redirect("Error: No Monthly Log selected.")
             elif not month_label:
-                error = "Please enter a valid month label for this report. Example: '2026-03'."
                 current_app.logger.info("Monthly Log import with no month label")
+                return _monthly_log_error_redirect(
+                    "Please enter a valid month label for this report. "
+                    "Example: '2026-03'."
+                )
             else:
                 # Buffer the request body before retrying: each attempt re-reads
                 # these bytes on a fresh connection.
@@ -811,9 +832,9 @@ def home():
                     query = urlencode({"month": month_label})
                     return redirect(f"/?{query}")
 
-                # Deliberately not _mutate_with_retry: the busy outcome feeds
-                # the shared error variable and falls through to the page
-                # render below instead of returning a response directly.
+                # Deliberately not _mutate_with_retry: the busy outcome becomes
+                # a flashed error on the redirect target, like every other
+                # Import failure.
                 try:
                     result = with_lock_retry("import the Monthly Log", attempt)
                 except DatabaseBusy as exc:
@@ -821,12 +842,10 @@ def home():
                         "Monthly Log import for month %s hit sustained contention",
                         month_label,
                     )
-                    error = busy_message(exc.action)
-                else:
-                    if isinstance(result, str):
-                        error = result
-                    else:
-                        return result
+                    return _monthly_log_error_redirect(busy_message(exc.action))
+                if isinstance(result, str):
+                    return _monthly_log_error_redirect(result)
+                return result
 
     # Find-a-Boarder search submits as a native GET form; every search
     # renders its results (or the neutral no-matches empty state) directly.
@@ -872,7 +891,8 @@ def home():
 
 @bp.route('/boarders')
 def boarders():
-    return _render_boarders()
+    message, error = _consume_flashes()
+    return _render_boarders(error=error, message=message)
 
 
 def _validate_boarder(display_name, bed, exclude_id=None):
@@ -994,7 +1014,7 @@ def import_boarders():
     file = request.files.get('boarder_csv')
     if not file or file.filename == '':
         current_app.logger.info("Master List import with no file selected")
-        return _render_boarders(error="Error: No CSV file selected.")
+        return _boarders_error_redirect("Error: No CSV file selected.")
     # Buffer the request body before retrying: each attempt re-reads these bytes on
     # a fresh connection, since the request stream is single-shot.
     payload = file.read()
@@ -1010,8 +1030,8 @@ def import_boarders():
                         "Could not read Master List import from %s: %s",
                         file.filename, exc,
                     )
-                    return _render_boarders(
-                        error=_unreadable_csv_message(file.filename)
+                    return _boarders_error_redirect(
+                        _unreadable_csv_message(file.filename)
                     )
             finally:
                 log_stream.detach()
@@ -1021,8 +1041,8 @@ def import_boarders():
                     "Rejected Master List import from %s: no boarders found",
                     file.filename,
                 )
-                return _render_boarders(
-                    error=_empty_master_list_message(file.filename)
+                return _boarders_error_redirect(
+                    _empty_master_list_message(file.filename)
                 )
 
             try:
@@ -1032,7 +1052,7 @@ def import_boarders():
                     "Rejected Master List import from %s: %s",
                     file.filename, exc,
                 )
-                return _render_boarders(error=f"Error: {exc}")
+                return _boarders_error_redirect(f"Error: {exc}")
         current_app.logger.info("Replaced Master List from %s", file.filename)
         # replace_boarders resolves duplicate Match Keys last-row-wins, so the
         # confirmation counts the resulting list, not the raw parsed rows.
@@ -1047,7 +1067,7 @@ def import_boarders():
     return _mutate_with_retry(
         "import the Master List",
         attempt,
-        lambda exc: _render_boarders(error=busy_message(exc.action)),
+        lambda exc: _boarders_error_redirect(busy_message(exc.action)),
         "Master List import hit sustained contention",
     )
 
@@ -1071,7 +1091,7 @@ def clear_boarders():
     return _mutate_with_retry(
         "clear the Master List",
         attempt,
-        lambda exc: _render_boarders(error=busy_message(exc.action)),
+        lambda exc: _boarders_error_redirect(busy_message(exc.action)),
         "Master List clear hit sustained contention",
     )
 
@@ -1102,9 +1122,6 @@ def _boarder_bed_taken(bed, exclude_id=None):
 
 
 def _render_boarders(error=None, message=None):
-    flash_message, flash_error = _consume_flashes()
-    message = message or flash_message
-    error = error or flash_error
     boarders_view = 'all-time' if request.args.get('view') == 'all-time' else 'current'
     all_time_query = request.args.get('q', '').strip()
     with connect(read_only=True) as conn:

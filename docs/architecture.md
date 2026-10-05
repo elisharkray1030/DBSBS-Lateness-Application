@@ -281,13 +281,16 @@ Important behavior:
   CSV that assigns one Bed to two different boarders shows an actionable error
   and leaves the existing list untouched, while duplicate normalized names
   still resolve last-row-wins.
-- Both Import surfaces confirm their outcome: the Monthly Log Import flashes a
-  saved-month message on success and renders an exact rejection otherwise, and
-  the Master List Import flashes `Master List replaced from '<file>'.` with the
-  resulting Boarder count. A Master List CSV that yields no Boarders, or cannot
-  be decoded as UTF-8 CSV, is refused with an actionable error and leaves the
-  list untouched; the Boarders surface consumes its flash so the confirmation
-  renders on the redirect target.
+- Both Import surfaces confirm their outcome with a flash on the redirect
+  target, matching the app-wide POST-redirect-GET convention for success and
+  failure alike. The Monthly Log Import flashes a saved-month message on
+  success and the exact rejection otherwise; the Master List Import flashes
+  `Master List replaced from '<file>'.` with the resulting Boarder count. A
+  Master List CSV that yields no Boarders, or cannot be decoded as UTF-8 CSV,
+  is refused with an actionable error and leaves the list untouched. The
+  Boarders surface consumes its flash so the banner renders on the redirect
+  target, and a failed Import never re-renders its POST target (so refresh
+  cannot resubmit).
 - `POST /boarders/clear` empties the Master List on explicit confirmation —
   the deliberate counterpart to refusing a zero-Boarder Import. Removing or
   clearing a Boarder leaves Boarder History and Punishments as frozen snapshots
