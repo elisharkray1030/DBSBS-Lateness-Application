@@ -1178,7 +1178,7 @@ class TestBoarderBulkImport:
 
 
 class TestBoarderBulkImportDuplicateBed:
-    def test_duplicate_bed_import_shows_inline_error_and_keeps_roster(self, fresh_client):
+    def test_duplicate_bed_import_flashes_error_and_keeps_master_list(self, fresh_client):
         resp = post_csrf(fresh_client, 
             "/boarders/import",
             data={
