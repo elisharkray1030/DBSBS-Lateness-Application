@@ -57,19 +57,33 @@ class TestLoadNamelistRows:
 class TestParseNamelistStream:
     def test_parses_stream_preserving_case(self):
         stream = io.StringIO("Name,Bed\nAlice,101\nbob smith,102\n")
-        assert parse_namelist_stream(stream) == [
+        _, rows = parse_namelist_stream(stream)
+        assert rows == [
             Boarder(normalized_name="ALICE", display_name="Alice", bed="101"),
             Boarder(normalized_name="BOB SMITH", display_name="bob smith", bed="102"),
         ]
 
     def test_skips_rows_with_missing_name_or_bed(self):
         stream = io.StringIO("Name,Bed\nAlice,101\n,bad\nNoBed,\n")
-        assert parse_namelist_stream(stream) == [
+        _, rows = parse_namelist_stream(stream)
+        assert rows == [
+            Boarder(normalized_name="ALICE", display_name="Alice", bed="101")
+        ]
+
+    def test_reports_rows_read_and_skipped_count(self):
+        stream = io.StringIO("Name,Bed\nAlice,101\n,bad\nNoBed,\n")
+        diagnostics, rows = parse_namelist_stream(stream)
+        assert diagnostics.rows_read == 3
+        assert diagnostics.skipped_rows == 2
+        assert rows == [
             Boarder(normalized_name="ALICE", display_name="Alice", bed="101")
         ]
 
     def test_empty_stream_returns_empty_list(self):
-        assert parse_namelist_stream(io.StringIO("Name,Bed\n")) == []
+        diagnostics, rows = parse_namelist_stream(io.StringIO("Name,Bed\n"))
+        assert diagnostics.rows_read == 0
+        assert diagnostics.skipped_rows == 0
+        assert rows == []
 
     def test_composes_display_name_from_school_roster_columns(self):
         stream = io.StringIO(
@@ -77,7 +91,8 @@ class TestParseNamelistStream:
             "GradeForm,Boarding Until\n"
             "7G,MO,Haoxuan,Louis,x,2026070590,701D,G7,#Name?\n"
         )
-        assert parse_namelist_stream(stream) == [
+        _, rows = parse_namelist_stream(stream)
+        assert rows == [
             Boarder(
                 normalized_name="LOUIS MO HAOXUAN",
                 display_name="Louis MO Haoxuan",
@@ -90,13 +105,15 @@ class TestParseNamelistStream:
             "Name,Surname,Given Names,Common Name,Bed\n"
             "Alice Smith,SMITH,Alice,Ali,101\n"
         )
-        assert parse_namelist_stream(stream) == [
+        _, rows = parse_namelist_stream(stream)
+        assert rows == [
             Boarder(normalized_name="ALICE SMITH", display_name="Alice Smith", bed="101")
         ]
 
     def test_roster_columns_omit_missing_name_parts(self):
         stream = io.StringIO("Surname,Given Names,Common Name,Bed\nMO,Haoxuan,,701D\n")
-        assert parse_namelist_stream(stream) == [
+        _, rows = parse_namelist_stream(stream)
+        assert rows == [
             Boarder(normalized_name="MO HAOXUAN", display_name="MO Haoxuan", bed="701D")
         ]
 
@@ -104,7 +121,8 @@ class TestParseNamelistStream:
         stream = io.StringIO(
             "Surname,Given Names,Common Name,Bed\nMO,Haoxuan,Louis,\n,,,701E\n"
         )
-        assert parse_namelist_stream(stream) == []
+        _, rows = parse_namelist_stream(stream)
+        assert rows == []
 
 
 class TestNormalizeName:

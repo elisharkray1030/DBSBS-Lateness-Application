@@ -971,6 +971,7 @@ class TestBoarderBulkImport:
         assert 'class="banner banner-success"' in html
         assert "Master List replaced from 'master-list.csv'." in unescape(html)
         assert "2 Boarders on the list." in html
+        assert "skipped" not in html
 
     def test_import_single_boarder_uses_singular_confirmation(self, fresh_client):
         resp = post_csrf(
@@ -985,6 +986,32 @@ class TestBoarderBulkImport:
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert "1 Boarder on the list." in html
+
+    def test_import_skipped_rows_flashes_skipped_count(self, fresh_client):
+        # Rows missing a name or Bed are dropped; the confirmation must say how
+        # many, not silently report only the surviving Boarders.
+        resp = post_csrf(
+            fresh_client,
+            "/boarders/import",
+            data={
+                "boarder_csv": (
+                    io.BytesIO(b"Name,Bed\nCarol,601C\n,bad\nNoBed,\n"),
+                    "master-list.csv",
+                ),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        html = unescape(resp.get_data(as_text=True))
+        assert 'class="banner banner-success"' in html
+        assert "Master List replaced from 'master-list.csv'." in html
+        assert "1 Boarder on the list." in html
+        assert "2 of 3 rows skipped (missing name or Bed)." in html
+        with app_module.connect() as conn:
+            assert [(b.normalized_name, b.bed) for b in storage.list_boarders(conn)] == [
+                ("CAROL", "601C"),
+            ]
 
     def test_import_duplicate_names_reports_deduped_count(self, fresh_client):
         # Duplicate Match Keys resolve last-row-wins, so the confirmation

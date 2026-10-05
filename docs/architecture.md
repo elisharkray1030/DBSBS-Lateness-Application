@@ -285,7 +285,8 @@ Important behavior:
   target, matching the app-wide POST-redirect-GET convention for success and
   failure alike. The Monthly Log Import flashes a saved-month message on
   success and the exact rejection otherwise; the Master List Import flashes
-  `Master List replaced from '<file>'.` with the resulting Boarder count. A
+  `Master List replaced from '<file>'.` with the resulting Boarder count, plus how
+  many of the file's rows were skipped for a missing name or Bed when any were. A
   Master List CSV that yields no Boarders, or cannot be decoded as UTF-8 CSV,
   is refused with an actionable error and leaves the list untouched. The
   Boarders surface consumes its flash so the banner renders on the redirect

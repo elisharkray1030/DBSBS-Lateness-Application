@@ -52,6 +52,8 @@ live from stored data on each visit.
 The **Boarders** tab is the Master List: view, add, edit, or remove boarders, import a CSV
 Master List, or download the current one. Removing a boarder keeps their history and
 punishments as frozen snapshots; future Imports simply stop matching them. A successful
-import confirms with the boarder count; an empty or unreadable CSV is refused and leaves
-the list untouched. **Clear Master List** empties the whole list behind a confirmation —
+import confirms with the Boarder count and, when it drops rows missing a name or Bed,
+how many of the file's rows were skipped; an empty or unreadable CSV is refused and
+leaves the list untouched. **Clear Master List** empties the whole list behind a
+confirmation —
 again keeping history and punishments — and is the deliberate way to start over.
