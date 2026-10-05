@@ -150,33 +150,53 @@ def _namelist_display_name(row):
     return ' '.join(part for part in (common, surname, given) if part)
 
 
+@dataclass
+class NamelistDiagnostics:
+    """Diagnostics collected while parsing a Master List CSV.
+
+    rows_read counts the data rows the reader yielded; skipped_rows counts the
+    rows dropped for a missing name or Bed, so len(rows) + skipped_rows
+    always equals rows_read.
+    """
+
+    rows_read: int
+    skipped_rows: int
+
+
 def parse_namelist_stream(namelist_stream):
-    """Parses a namelist stream into Boarder rows.
+    """Parses a namelist stream into diagnostics and Boarder rows.
 
     Accepts either a 'Name' column (the app's export shape) or the school
     roster columns 'Surname' / 'Given Names' / 'Common Name'. Preserves the
     display case of names so the master list can be shown as entered while
-    still matching logs case-insensitively via the normalized name.
+    still matching logs case-insensitively via the normalized name. Returns
+    (diagnostics, rows) so callers can report the rows skipped for a missing
+    name or Bed.
     """
     rows = []
+    rows_read = 0
+    skipped_rows = 0
     reader = csv.DictReader(namelist_stream)
     for row in reader:
+        rows_read += 1
         display_name = _namelist_display_name(row)
         bed = (row.get('Bed') or '').strip()
 
         # Skip rows with missing name or bed information.
         if not display_name or not bed:
+            skipped_rows += 1
             continue
 
         rows.append(Boarder(normalized_name=normalize_name(display_name), display_name=display_name, bed=bed))
-    return rows
+    return NamelistDiagnostics(rows_read=rows_read, skipped_rows=skipped_rows), rows
 
 
 def load_namelist_rows(namelist_filename):
     """Loads valid boarders as Boarder rows, or None."""
     try:
         with open(namelist_filename, mode='r', encoding='utf-8-sig') as file:
-            return parse_namelist_stream(file)
+            _, rows = parse_namelist_stream(file)
+            return rows
     except FileNotFoundError:
         return None
 

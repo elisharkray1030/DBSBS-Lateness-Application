@@ -284,6 +284,15 @@ def _boarder_count_phrase(count: int) -> str:
     return f"{count} {noun} on the list."
 
 
+def _skipped_rows_phrase(skipped: int, total: int) -> str:
+    """Words the rows a Master List Import dropped for a missing name or Bed.
+
+    Only rendered when at least one row was skipped, so a successful Import
+    that keeps at least one Boarder always has total >= 2 and takes the plural.
+    """
+    return f"{skipped} of {total} rows skipped (missing name or Bed)."
+
+
 def _boarders_error_redirect(message: str):
     """Flashes a Master List action failure and returns to the Boarders tab.
 
@@ -1024,7 +1033,7 @@ def import_boarders():
             log_stream = io.TextIOWrapper(io.BytesIO(payload), encoding='utf-8-sig')
             try:
                 try:
-                    rows = parse_namelist_stream(log_stream)
+                    diagnostics, rows = parse_namelist_stream(log_stream)
                 except _CSV_READ_ERRORS as exc:
                     current_app.logger.warning(
                         "Could not read Master List import from %s: %s",
@@ -1057,11 +1066,15 @@ def import_boarders():
         # replace_boarders resolves duplicate Match Keys last-row-wins, so the
         # confirmation counts the resulting list, not the raw parsed rows.
         count = len({boarder.normalized_name for boarder in rows})
-        flash(
+        message = (
             f"Master List replaced from '{file.filename}'. "
-            f"{_boarder_count_phrase(count)}",
-            "success",
+            f"{_boarder_count_phrase(count)}"
         )
+        if diagnostics.skipped_rows:
+            message += (
+                f" {_skipped_rows_phrase(diagnostics.skipped_rows, diagnostics.rows_read)}"
+            )
+        flash(message, "success")
         return redirect('/boarders')
 
     return _mutate_with_retry(
