@@ -1,4 +1,4 @@
-"""NAS viability — connection lock-wait, journal policy (#141) and
+"""Single-host lock handling — connection lock-wait, journal policy (#141) and
 read-only readers (#142).
 
 Effective database settings asserted through the app's central connection

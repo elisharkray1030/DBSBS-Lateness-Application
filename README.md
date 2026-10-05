@@ -53,7 +53,7 @@ I-Points, and browse the Statistics and Boarders tabs. See
 | --- | --- |
 | [docs/usage.md](docs/usage.md) | Day-to-day use: imports, reports, punishments, I-Points, statistics |
 | [docs/architecture.md](docs/architecture.md) | How the app works: modules, seams, invariants |
-| [docs/deployment/windows-host.md](docs/deployment/windows-host.md) | Host setup: stable address, firewall detail, keep-awake, native (NSSM) host |
+| [docs/deployment/windows-host.md](docs/deployment/windows-host.md) | Host setup: stable address, firewall detail, keep-awake |
 | [docs/deployment/backup-and-restore.md](docs/deployment/backup-and-restore.md) | Backups, scheduling, restore drill |
 | [docs/deployment/nas-share.md](docs/deployment/nas-share.md) | Preparing the NAS share |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Developer setup, tests, conventions |
@@ -85,7 +85,6 @@ I-Points, and browse the Statistics and Boarders tabs. See
 | `LOG_ARCHIVE_DIR` | Monthly Log Archive folder. | `data/logs` |
 | `MAX_CONTENT_LENGTH` | Request size cap for Imports, in bytes. | `16777216` (16 MB) |
 | `LOG_LEVEL` | Application log level. | `INFO` |
-| `PORT` | Listen port for `serve.py` only. | `8000` |
 | `BIND_ADDR` | Docker host bind address. | `0.0.0.0` (the office LAN); set `127.0.0.1` for loopback only |
 | `APP_PORT` | Docker host port. | `8000` |
 | `BACKUP_KEEP` | Timestamped backups to keep in `shared/backups`. | `7` |

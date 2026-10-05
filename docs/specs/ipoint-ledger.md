@@ -1,6 +1,6 @@
 # Spec — I-Points ledger, Redemption, and Phone Confiscation
 
-Status: ready-for-agent (I-Point Adjustments retired — see below)
+Status: shipped (I-Point Adjustments retired — see below)
 
 > **Retired in Slice 1 (#214).** The I-Point Adjustment capability this spec
 > describes was retired. Adjustment user stories, the `ipoint_adjustments`

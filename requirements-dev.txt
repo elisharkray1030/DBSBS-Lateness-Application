@@ -1,5 +1,4 @@
 -r requirements.txt
 pytest
 mypy==2.3.1
-types-waitress
 playwright

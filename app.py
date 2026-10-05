@@ -90,10 +90,11 @@ WATCHLIST_MIN_STREAK_MONTHS = 3
 TOP_BOARDERS_DEFAULT_LIMIT = 10
 
 
-# Shared office-LAN deployment: every staff PC runs against one NAS-hosted
-# database file, so every connection waits on locks instead of failing
-# instantly. WAL stays off — its shared-memory sidecar is unreliable across
-# hosts on SMB — so the default rollback journal is retained deliberately.
+# Single-host deployment (ADR 0004): one process serves every staff PC, so
+# concurrent threads can still contend for the SQLite write lock. Every
+# connection waits on locks instead of failing instantly, and WAL stays off —
+# its shared-memory sidecar is unnecessary here, so the default rollback
+# journal is retained deliberately.
 NAS_BUSY_TIMEOUT_S = 30.0
 
 
@@ -264,7 +265,7 @@ def _log_archive_dir() -> str:
 def _write_bytes_atomically(destination: Path, payload: bytes) -> None:
     """Writes bytes so readers only ever see the complete file.
 
-    A unique staging file per call means concurrent writers (waitress serves
+    A unique staging file per call means concurrent writers (the server serves
     requests threaded) never share a path and clobber each other's bytes;
     ``os.replace`` then swaps it in atomically on the same filesystem.
     """

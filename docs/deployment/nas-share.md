@@ -29,17 +29,18 @@ is logged on, which is exactly how the backup task should run.
 
 ## 4. Verify the first backup
 
-From the host:
+Take a backup on the host and mirror it to the share:
 
 ```powershell
 cd C:\lateness-app
-.\.venv\Scripts\python.exe backup_db.py --dest "\\NAS\lateness-backups"
+.\run.cmd backup
+robocopy "C:\lateness-app\shared\backups" "\\NAS\lateness-backups" /MIR
 ```
 
 Confirm a `lateness-<timestamp>\` folder appears containing
 `lateness_history.db` and `logs\` (the archived Monthly Logs paired with their
 `namelist-<YYYY-MM>.csv` Master List snapshots). Then check again after the
-scheduled task has fired at least once.
+mirror task has fired at least once.
 
 ## 5. Retention and capacity
 

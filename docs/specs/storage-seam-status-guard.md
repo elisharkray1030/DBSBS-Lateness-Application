@@ -1,5 +1,7 @@
 # Spec — Storage-seam guard: reject unknown Punishment transition statuses
 
+Status: shipped
+
 ## Problem Statement
 
 The persistence seam that moves a Punishment through its lifecycle maps the requested status to a timestamp column via a fixed dictionary. A status outside that map (e.g. a typo, a tampered form, or a future caller that bypasses the domain layer) falls through to an unhandled `KeyError` and surfaces as a generic 500 to staff. Today the domain layer happens to validate every status before the seam is reached, so the crash is unreachable through the UI — but the seam itself is unguarded, and defense-in-depth says the last writer should never corrupt the request into a bare crash.

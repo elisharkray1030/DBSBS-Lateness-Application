@@ -28,68 +28,54 @@ copies accordingly.
 
 ```powershell
 cd C:\lateness-app
-.\.venv\Scripts\python.exe backup_db.py --dest "\\NAS\lateness-backups"
+.\run.cmd backup
 ```
 
-Defaults come from the host environment: `DB_PATH` and `LOG_ARCHIVE_DIR`.
-`--keep` sets how many timestamped folders to retain (default 7); older folders
-are deleted after a successful run. The script refuses to run if the database is
-missing.
+Under Docker the launcher writes to `shared\backups` on the host. The
+`backup_db.py` script reads `DB_PATH` and `LOG_ARCHIVE_DIR` from the container
+environment; `--keep` sets how many timestamped folders to retain (default 7;
+the launcher passes `BACKUP_KEEP`). Older folders are deleted after a successful
+run. The script refuses to run if the database is missing.
 
-## Schedule it (Task Scheduler)
+## Mirror to the NAS (Task Scheduler)
 
-Use a **UNC path** for the destination, not a mapped drive letter: a task that
-runs whether or not the user is logged on has no drive mappings. Replace
-`NAS`, `share`, and the paths with your own.
+The launcher writes backups to the host's `shared\backups` folder; mirror that
+to the NAS on a schedule. Use a **UNC path** for the destination, not a mapped
+drive letter: a task that runs whether or not the user is logged on has no drive
+mappings. Replace `NAS`, `share`, and the paths with your own.
 
 ```powershell
-schtasks /Create /TN "Lateness backup" /SC DAILY /ST 21:00 /RU SYSTEM ^
-  /TR "\"C:\lateness-app\.venv\Scripts\python.exe\" \"C:\lateness-app\backup_db.py\" --dest \"\\NAS\lateness-backups\""
+schtasks /Create /TN "Lateness backup mirror" /SC DAILY /ST 21:00 /RU SYSTEM ^
+  /TR "robocopy \"C:\lateness-app\shared\backups\" \"\\NAS\lateness-backups\" /MIR"
 ```
 
 SYSTEM must have write access to the share; grant it on the NAS, or run the
 task as a dedicated account that does. Confirm the first folder appears on the
 NAS before trusting the schedule, and check it again after a reboot.
 
-Run it again when the machine starts, so a host rebooted after hours is
-snapshotted without waiting for the next evening:
-
-```powershell
-schtasks /Create /TN "Lateness backup (startup)" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\lateness-app\.venv\Scripts\python.exe\" \"C:\lateness-app\backup_db.py\" --dest \"\\NAS\lateness-backups\""
-```
-
 ## Restore (database)
 
-`restore_db.py` automates steps 2-3 below (with the app stopped): it swaps in the
-backup's `lateness_history.db` atomically, clears any stale SQLite journal, and
-copies `logs\*.csv` back into `LOG_ARCHIVE_DIR`.
+Under Docker, `run.cmd restore` (or `./run.sh restore`) replaces the live
+database on the `lateness-data` volume from a folder under `shared\restore`,
+after stopping the app. Copy a `lateness-*` folder from `shared\backups` (or
+from the NAS) into `shared\restore` first.
 
 ```powershell
-cd C:\lateness-app
-.\.venv\Scripts\python.exe restore_db.py --from "\\NAS\lateness-backups\lateness-20260910-120000" --force
+.\run.cmd restore
 ```
 
-Under Docker, `run.cmd restore` (or `./run.sh restore`) does the same against the
-`lateness-data` volume, taking the folder from `shared\restore`. `restore_db.py`
-refuses to overwrite an existing database unless `--force` is passed.
-
-The manual equivalent:
-
-1. Stop the service: `nssm stop LatenessApp`.
-2. Copy the chosen `lateness_history.db` from the backup folder over the live
-   database file (`DB_PATH`, default `C:\lateness-app\lateness_history.db`).
-3. Copy the backup's `logs\` folder over `LOG_ARCHIVE_DIR` so future backups
-   keep the archived Monthly Logs and Master List snapshots.
-4. Start the service: `nssm start LatenessApp`. Open the app and confirm a known
-   month and its totals.
+`restore_db.py` swaps in the backup's `lateness_history.db` atomically, clears
+any stale SQLite journal, and copies `logs\*.csv` back into `LOG_ARCHIVE_DIR`.
+It refuses to overwrite an existing database unless `--force` is passed (the
+launcher passes it after the YES confirmation).
 
 ## Rebuild (database lost, archive kept)
 
-1. Stop the service and start from a fresh database. `serve.py` re-runs
-   `init-db`, which seeds the Master List from `NAMELIST_PATH`. Copy the newest
-   `logs\namelist-<YYYY-MM>.csv` over that path first, so the rebuild starts
-   from the roster of the latest month you hold.
+1. Start from a fresh database: `.\run.cmd reset` deletes the volume, then
+   `.\run.cmd up --no-seed`. `init-db` seeds the Master List from
+   `NAMELIST_PATH`. Copy the newest `logs\namelist-<YYYY-MM>.csv` from a backup
+   over that path first, so the rebuild starts from the roster of the latest
+   month you hold.
 2. Re-import each `logs\<YYYY-MM>.csv` on the Import page, using the month in
    the filename. Each Import also rewrites its `namelist-<YYYY-MM>.csv`
    snapshot.

@@ -1,4 +1,4 @@
-"""NAS viability — bounded mutation retry (#143).
+"""Bounded mutation retry (#143).
 
 Mutations tolerate brief lock contention via bounded retry with backoff;
 sustained contention surfaces a clean staff-facing error with the database

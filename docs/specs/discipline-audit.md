@@ -1,6 +1,6 @@
 # Spec — Shared Discipline Audit and vocabulary across Punishments and I-Points
 
-Status: ready-for-agent
+Status: shipped (see [ADR 0010](../adr/0010-shared-discipline-audit.md))
 
 ## Problem Statement
 

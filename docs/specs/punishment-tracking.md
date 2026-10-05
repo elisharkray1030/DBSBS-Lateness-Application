@@ -1,6 +1,6 @@
 # Spec — Punishment tracking for the Lateness Dashboard
 
-Status: ready-for-agent
+Status: shipped
 
 ## Problem Statement
 

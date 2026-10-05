@@ -2,9 +2,9 @@
 
 One designated, always-on host runs the application. The SQLite database and
 the Monthly Log Archive live on **that host's local disk**; staff on other PCs
-reach the app over the office LAN through a browser. On Windows the app is
-served by waitress (`serve.py`); in Docker it is served by gunicorn. The NAS is
-a **backup target only** — it never holds the live database.
+reach the app over the office LAN through a browser. The app runs in Docker
+Desktop (`run.cmd`/`run.sh`), served by gunicorn inside the container. The
+NAS is a **backup target only** — it never holds the live database.
 
 ## Context
 
@@ -33,6 +33,10 @@ across the network.
 - **Host location: NAS vs dedicated PC.** The NAS lacks compute to run the app,
   so the host is a designated always-on staff PC (a dedicated mini-PC would be
   equivalent and is preferred if one becomes available).
-- **Windows entrypoint: waitress vs Docker Desktop.** gunicorn is Unix-only;
-  waitress is a pure-Python WSGI server that runs natively on Windows without
-  the WSL2 and licensing overhead of Docker Desktop on a staff PC.
+- **Windows entrypoint: Docker Desktop (chosen).** The staff host runs the app
+  in Docker Desktop via the `run.cmd`/`run.sh` launcher. It costs the WSL2 and
+  licensing overhead of Docker Desktop on a staff PC, but gives one uniform,
+  reproducible deployment across Windows, Linux, and macOS, with backups and
+  restores handled by the same launcher. A native waitress/NSSM entrypoint
+  (`serve.py`) was considered and has been retired — the host has always been
+  deployed this way, so the fallback was dead weight.

@@ -1,10 +1,10 @@
 # Spec — CSRF protection for the Lateness Dashboard
 
-Status: ready-for-agent
+Status: shipped (see [ADR 0003](../adr/0003-csrf-session-secret.md))
 
 ## Problem Statement
 
-The app lifts the parked "Trust" item from `docs/specs/punishment-tracking.md:75`. The deployment is now a shared, office-LAN multi-writer setup: every colleague runs the app on their own PC against one SQLite database on the NAS. POST routes accept form data and mutate the database (`/`, `/assign/...`, `/punishment/.../transition`, boarder CRUD) with no CSRF token, and the session secret falls back to a hard-coded default. Because staff now use real browsers against a shared server-less deployment on the office network, cross-site request forgery is a live concern: a staff member browsing the web on the same machine could be tricked into submitting a mutation form.
+The app lifts the parked "Trust" item from `docs/specs/punishment-tracking.md:75`. The deployment is a shared, office-LAN setup: one designated host runs the app and every colleague reaches it over the LAN from a browser (ADR 0004), against that host's local SQLite database. POST routes accept form data and mutate the database (`/`, `/assign/...`, `/punishment/.../transition`, boarder CRUD) with no CSRF token, and the session secret falls back to a hard-coded default. Because staff use real browsers against a shared host on the office network, cross-site request forgery is a live concern: a staff member browsing the web on the same machine could be tricked into submitting a mutation form.
 
 ## Solution
 
