@@ -64,6 +64,11 @@ CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs these on every pu
 ## Conventions
 
 - **Commits:** `type: subject (#issue)` — `feat:`, `fix:`, `refactor:`, `docs:`, and so on, matching the existing history.
+- **Test names:** name a test for the observable outcome, not the transport. Use
+  `…_flashes_error…` (or “redirects with a flashed banner”) when a mutation redirects
+  and shows the banner on the target; use `…_is_rejected_inline…` / `…_renders_inline…`
+  only when the same page re-renders with no redirect. Don’t use “inline” for a
+  redirecting mutation.
 - **Branches and PRs:** branch off `dev`, then open a pull request into `main`.
 - **Invariants:** don't break the ones in [docs/architecture.md](docs/architecture.md).
 
