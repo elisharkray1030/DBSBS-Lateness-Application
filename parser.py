@@ -4,7 +4,7 @@ import math
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 import storage
 from records import Boarder, BoarderRecord, UnparsedTimeRow, sort_boarder_records, boarder_sort_key, normalize_name
@@ -134,17 +134,17 @@ def parse_time_seconds(value):
     return (hours * 3600) + (minutes * 60) + seconds
 
 
-def _parse_transaction_date(value):
-    """Normalize the log's slash-separated date without assuming locale order."""
-    match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", (value or "").strip())
-    if match is None:
+def _parse_transaction_date(value: str) -> date | None:
+    """Parse the access-control log's day/month/year transaction date."""
+    try:
+        return datetime.strptime((value or "").strip(), "%d/%m/%Y").date()
+    except ValueError:
         return None
-    first, second, year = (int(part) for part in match.groups())
-    valid_month_day = 1 <= first <= 12 and 1 <= second <= 31
-    valid_day_month = 1 <= first <= 31 and 1 <= second <= 12
-    if not (valid_month_day or valid_day_month):
-        return None
-    return first, second, year
+
+
+def _record_lateness(boarder: BoarderRecord, minutes_late: int) -> None:
+    boarder.frequency += 1
+    boarder.total_minutes += minutes_late
 
 
 def _namelist_display_name(row):
@@ -269,7 +269,7 @@ def parse_log_stream(log_stream, master_list):
         "Transaction Date",
         "Transaction Type",
     }.issubset(csv_reader.fieldnames or [])
-    latest_outs_by_day: dict[tuple[str, tuple[int, int, int]], int] = {}
+    latest_outs_by_day: dict[tuple[str, date], int] = {}
 
     for row in csv_reader:
         rows_read += 1
@@ -311,13 +311,12 @@ def parse_log_stream(log_stream, master_list):
             # format. Production access-control logs use the date/type path above.
             minutes_late = math.ceil((current_seconds - START_SECONDS) / 60)
 
-            boarders[name].frequency += 1
-            boarders[name].total_minutes += minutes_late
+            _record_lateness(boarders[name], minutes_late)
 
     for (name, _transaction_date), latest_seconds in latest_outs_by_day.items():
-        boarders[name].frequency += 1
-        boarders[name].total_minutes += math.ceil(
-            (latest_seconds - EXPECTED_BY_SECONDS) / 60
+        _record_lateness(
+            boarders[name],
+            math.ceil((latest_seconds - EXPECTED_BY_SECONDS) / 60),
         )
 
     for record in boarders.values():
