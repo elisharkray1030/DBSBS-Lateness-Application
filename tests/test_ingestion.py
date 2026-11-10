@@ -24,6 +24,24 @@ def ingest(text, month="2026-03", master=MASTER, conn=None):
     return ingest_log(io.StringIO(text), month, master, conn)
 
 
+def access_control_row(
+    transaction_date,
+    transaction_time,
+    transaction_type,
+    name="Alice",
+    *,
+    other_name="G11T",
+    staff_code="418",
+    bed="101",
+    card_id="7A60CB1C",
+):
+    return (
+        f"{transaction_date},{transaction_time},{transaction_type},"
+        f"DBS,3M/F Main Entrance,{name},{other_name},{staff_code},"
+        f"Boarders,{bed},{card_id},\n"
+    )
+
+
 class TestIngestLog:
     def test_fully_matched_log_saves(self, conn):
         outcome = ingest(
@@ -123,10 +141,8 @@ class TestIngestLog:
         hours before 10am), which is the entire lateness window. Strict HH:MM
         parsing silently recorded zero lateness while still saving the report.
         """
-        text = (
-            ACCESS_CONTROL_HEADER
-            + "5/4/2026,7:41:04,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+        text = ACCESS_CONTROL_HEADER + access_control_row(
+            "5/4/2026", "7:41:04", "Invalid Time Zone [Out]"
         )
         outcome = ingest(text, conn=conn)
 
@@ -139,12 +155,9 @@ class TestIngestLog:
     def test_repeated_access_control_swipes_use_latest_out_once_per_day(self, conn):
         text = (
             ACCESS_CONTROL_HEADER
-            + "5/4/2026,7:50:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
-            "5/4/2026,7:48:00,Invalid Time Zone [In],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
-            "5/4/2026,7:45:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+            + access_control_row("5/4/2026", "7:50:00", "Invalid Time Zone [Out]")
+            + access_control_row("5/4/2026", "7:48:00", "Invalid Time Zone [In]")
+            + access_control_row("5/4/2026", "7:45:00", "Invalid Time Zone [Out]")
         )
 
         outcome = ingest(text, conn=conn)
@@ -158,12 +171,9 @@ class TestIngestLog:
     def test_access_control_lateness_is_per_boarder_per_day_and_uses_cutoff(self, conn):
         text = (
             ACCESS_CONTROL_HEADER
-            + "5/5/2026,7:41:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
-            "5/4/2026,7:50:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
-            "5/4/2026,7:45:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+            + access_control_row("5/5/2026", "7:41:00", "Invalid Time Zone [Out]")
+            + access_control_row("5/4/2026", "7:50:00", "Invalid Time Zone [Out]")
+            + access_control_row("5/4/2026", "7:45:00", "Invalid Time Zone [Out]")
         )
 
         outcome = ingest(text, conn=conn)
@@ -176,8 +186,7 @@ class TestIngestLog:
     def test_access_control_in_swipe_does_not_record_lateness(self, conn):
         text = (
             ACCESS_CONTROL_HEADER
-            + "5/4/2026,7:50:00,Invalid Time Zone [In],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+            + access_control_row("5/4/2026", "7:50:00", "Invalid Time Zone [In]")
         )
 
         outcome = ingest(text, conn=conn)
@@ -190,8 +199,7 @@ class TestIngestLog:
     def test_access_control_out_at_0800_is_late_from_0740(self, conn):
         text = (
             ACCESS_CONTROL_HEADER
-            + "5/4/2026,8:00:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
-            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+            + access_control_row("5/4/2026", "8:00:00", "Invalid Time Zone [Out]")
         )
 
         outcome = ingest(text, conn=conn)
@@ -209,10 +217,15 @@ class TestIngestLog:
         """
         key = normalize_name("CHAVEZ MOCAN, Lucas")
         master = {key: Boarder(key, "CHAVEZ MOCAN, Lucas", "607B")}
-        text = (
-            ACCESS_CONTROL_HEADER
-            + "5/4/2026,7:51:27,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
-            "CHAVEZ MOCAN Lucas,G12T,419,Boarders,607B,E56407B7,\n"
+        text = ACCESS_CONTROL_HEADER + access_control_row(
+            "5/4/2026",
+            "7:51:27",
+            "Invalid Time Zone [Out]",
+            "CHAVEZ MOCAN Lucas",
+            other_name="G12T",
+            staff_code="419",
+            bed="607B",
+            card_id="E56407B7",
         )
         outcome = ingest(text, master=master, conn=conn)
 
