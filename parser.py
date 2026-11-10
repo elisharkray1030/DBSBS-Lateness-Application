@@ -119,6 +119,14 @@ class RejectedOutcome:
     diagnostics: ParseDiagnostics
 
 
+@dataclass(frozen=True)
+class _BoarderDay:
+    """The daily aggregation key for one Boarder's Monthly Log rows."""
+
+    name: str
+    transaction_date: date
+
+
 def parse_time_seconds(value):
     """Parse a strict HH:MM or HH:MM:SS (24-hour) time into seconds, or None."""
     if not TIME_PATTERN.match(value):
@@ -269,7 +277,7 @@ def parse_log_stream(log_stream, master_list):
         "Transaction Date",
         "Transaction Type",
     }.issubset(csv_reader.fieldnames or [])
-    latest_outs_by_day: dict[tuple[str, date], int] = {}
+    latest_outs_by_day: dict[_BoarderDay, int] = {}
 
     for row in csv_reader:
         rows_read += 1
@@ -301,7 +309,7 @@ def parse_log_stream(log_stream, master_list):
             if transaction_date is None:
                 continue
             if START_SECONDS <= current_seconds <= END_SECONDS:
-                day_key = (name, transaction_date)
+                day_key = _BoarderDay(name, transaction_date)
                 latest_outs_by_day[day_key] = max(
                     current_seconds,
                     latest_outs_by_day.get(day_key, current_seconds),
@@ -313,9 +321,9 @@ def parse_log_stream(log_stream, master_list):
 
             _record_lateness(boarders[name], minutes_late)
 
-    for (name, _transaction_date), latest_seconds in latest_outs_by_day.items():
+    for boarder_day, latest_seconds in latest_outs_by_day.items():
         _record_lateness(
-            boarders[name],
+            boarders[boarder_day.name],
             math.ceil((latest_seconds - EXPECTED_OUT_SECONDS) / 60),
         )
 
