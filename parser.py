@@ -11,7 +11,7 @@ from records import Boarder, BoarderRecord, UnparsedTimeRow, sort_boarder_record
 
 START_SECONDS = (7 * 3600) + (41 * 60)
 END_SECONDS = (8 * 3600) + (0 * 60)
-EXPECTED_BY_SECONDS = (7 * 3600) + (40 * 60)
+EXPECTED_OUT_SECONDS = (7 * 3600) + (40 * 60)
 
 # Access-control logs emit one-digit hours before 10am (e.g. '7:41:04'),
 # which covers the whole lateness window; range checks still apply below.
@@ -316,7 +316,7 @@ def parse_log_stream(log_stream, master_list):
     for (name, _transaction_date), latest_seconds in latest_outs_by_day.items():
         _record_lateness(
             boarders[name],
-            math.ceil((latest_seconds - EXPECTED_BY_SECONDS) / 60),
+            math.ceil((latest_seconds - EXPECTED_OUT_SECONDS) / 60),
         )
 
     for record in boarders.values():
