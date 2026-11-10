@@ -124,9 +124,8 @@ class TestIngestLog:
         parsing silently recorded zero lateness while still saving the report.
         """
         text = (
-            "Transaction Date,Transaction Time,Transaction Type,Panel,Door,Name,"
-            "Other Name,Staff Code,Department,Position,Card ID,Transaction Log\n"
-            "5/4/2026,7:41:04,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            ACCESS_CONTROL_HEADER
+            + "5/4/2026,7:41:04,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
             "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
         )
         outcome = ingest(text, conn=conn)
@@ -211,9 +210,8 @@ class TestIngestLog:
         key = normalize_name("CHAVEZ MOCAN, Lucas")
         master = {key: Boarder(key, "CHAVEZ MOCAN, Lucas", "607B")}
         text = (
-            "Transaction Date,Transaction Time,Transaction Type,Panel,Door,Name,"
-            "Other Name,Staff Code,Department,Position,Card ID,Transaction Log\n"
-            "5/4/2026,7:51:27,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            ACCESS_CONTROL_HEADER
+            + "5/4/2026,7:51:27,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
             "CHAVEZ MOCAN Lucas,G12T,419,Boarders,607B,E56407B7,\n"
         )
         outcome = ingest(text, master=master, conn=conn)
