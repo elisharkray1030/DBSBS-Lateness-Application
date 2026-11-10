@@ -123,7 +123,7 @@ class RejectedOutcome:
 class _BoarderDay:
     """The daily aggregation key for one Boarder's Monthly Log rows."""
 
-    name: str
+    match_key: str
     transaction_date: date
 
 
@@ -323,7 +323,7 @@ def parse_log_stream(log_stream, master_list):
 
     for boarder_day, latest_seconds in latest_outs_by_day.items():
         _record_lateness(
-            boarders[boarder_day.name],
+            boarders[boarder_day.match_key],
             math.ceil((latest_seconds - EXPECTED_OUT_SECONDS) / 60),
         )
 
