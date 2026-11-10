@@ -11,10 +11,12 @@ from records import Boarder, BoarderRecord, UnparsedTimeRow, sort_boarder_record
 
 START_SECONDS = (7 * 3600) + (41 * 60)
 END_SECONDS = (8 * 3600) + (0 * 60)
+EXPECTED_BY_SECONDS = (7 * 3600) + (40 * 60)
 
 # Access-control logs emit one-digit hours before 10am (e.g. '7:41:04'),
 # which covers the whole lateness window; range checks still apply below.
 TIME_PATTERN = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?$")
+OUT_TRANSACTION_PATTERN = re.compile(r"(?:\bOUT|\[OUT\])\s*$", re.IGNORECASE)
 
 MONTH_LABEL_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
@@ -130,6 +132,19 @@ def parse_time_seconds(value):
         return None
 
     return (hours * 3600) + (minutes * 60) + seconds
+
+
+def _parse_transaction_date(value):
+    """Normalize the log's slash-separated date without assuming locale order."""
+    match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", (value or "").strip())
+    if match is None:
+        return None
+    first, second, year = (int(part) for part in match.groups())
+    valid_month_day = 1 <= first <= 12 and 1 <= second <= 31
+    valid_day_month = 1 <= first <= 31 and 1 <= second <= 12
+    if not (valid_month_day or valid_day_month):
+        return None
+    return first, second, year
 
 
 def _namelist_display_name(row):
@@ -250,6 +265,11 @@ def parse_log_stream(log_stream, master_list):
     has_parseable_data = False
 
     csv_reader = csv.DictReader(log_stream)
+    access_control_log = {
+        "Transaction Date",
+        "Transaction Type",
+    }.issubset(csv_reader.fieldnames or [])
+    latest_outs_by_day: dict[tuple[str, tuple[int, int, int]], int] = {}
 
     for row in csv_reader:
         rows_read += 1
@@ -272,12 +292,33 @@ def parse_log_stream(log_stream, master_list):
 
         has_parseable_data = True
 
-        if START_SECONDS < current_seconds <= END_SECONDS:
-            seconds_late = current_seconds - START_SECONDS
-            minutes_late = math.ceil(seconds_late / 60)
+        if access_control_log:
+            if not OUT_TRANSACTION_PATTERN.search(row.get("Transaction Type") or ""):
+                continue
+            transaction_date = _parse_transaction_date(
+                row.get("Transaction Date", "")
+            )
+            if transaction_date is None:
+                continue
+            if START_SECONDS <= current_seconds <= END_SECONDS:
+                day_key = (name, transaction_date)
+                latest_outs_by_day[day_key] = max(
+                    current_seconds,
+                    latest_outs_by_day.get(day_key, current_seconds),
+                )
+        elif START_SECONDS < current_seconds <= END_SECONDS:
+            # Keep accepting the historical two-column Name/Transaction Time
+            # format. Production access-control logs use the date/type path above.
+            minutes_late = math.ceil((current_seconds - START_SECONDS) / 60)
 
             boarders[name].frequency += 1
             boarders[name].total_minutes += minutes_late
+
+    for (name, _transaction_date), latest_seconds in latest_outs_by_day.items():
+        boarders[name].frequency += 1
+        boarders[name].total_minutes += math.ceil(
+            (latest_seconds - EXPECTED_BY_SECONDS) / 60
+        )
 
     for record in boarders.values():
         record.total_points = record.frequency + record.total_minutes
