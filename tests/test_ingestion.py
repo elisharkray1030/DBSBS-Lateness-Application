@@ -14,6 +14,10 @@ MASTER = {
     "CAROL": Boarder("CAROL", "Carol", "103"),
 }
 LOG_HEADER = "Name,Transaction Time\n"
+ACCESS_CONTROL_HEADER = (
+    "Transaction Date,Transaction Time,Transaction Type,Panel,Door,Name,"
+    "Other Name,Staff Code,Department,Position,Card ID,Transaction Log\n"
+)
 
 
 def ingest(text, month="2026-03", master=MASTER, conn=None):
@@ -131,7 +135,72 @@ class TestIngestLog:
         assert outcome.diagnostics.unparseable_rows == []
         by_name = {r.name: r for r in outcome.boarders}
         assert by_name["ALICE"].frequency == 1
-        assert by_name["ALICE"].total_minutes == 1
+        assert by_name["ALICE"].total_minutes == 2
+
+    def test_repeated_access_control_swipes_use_latest_out_once_per_day(self, conn):
+        text = (
+            "Transaction Date,Transaction Time,Transaction Type,Panel,Door,Name,"
+            "Other Name,Staff Code,Department,Position,Card ID,Transaction Log\n"
+            "5/4/2026,7:50:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+            "5/4/2026,7:48:00,Invalid Time Zone [In],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+            "5/4/2026,7:45:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+        )
+
+        outcome = ingest(text, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 1
+        assert by_name["ALICE"].total_minutes == 10
+
+    def test_access_control_lateness_is_per_boarder_per_day_and_uses_cutoff(self, conn):
+        text = (
+            ACCESS_CONTROL_HEADER
+            + "5/5/2026,7:41:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+            "5/4/2026,7:50:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+            "5/4/2026,7:45:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+        )
+
+        outcome = ingest(text, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 2
+        assert by_name["ALICE"].total_minutes == 11
+
+    def test_access_control_in_swipe_does_not_record_lateness(self, conn):
+        text = (
+            ACCESS_CONTROL_HEADER
+            + "5/4/2026,7:50:00,Invalid Time Zone [In],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+        )
+
+        outcome = ingest(text, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 0
+        assert by_name["ALICE"].total_minutes == 0
+
+    def test_access_control_out_at_0800_is_late_from_0740(self, conn):
+        text = (
+            ACCESS_CONTROL_HEADER
+            + "5/4/2026,8:00:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
+        )
+
+        outcome = ingest(text, conn=conn)
+
+        assert isinstance(outcome, SavedOutcome)
+        by_name = {r.name: r for r in outcome.boarders}
+        assert by_name["ALICE"].frequency == 1
+        assert by_name["ALICE"].total_minutes == 20
 
     def test_comma_style_master_list_matches_log_names_without_punctuation(self, conn):
         """Regression: the master list enters some names in 'SURNAME, Given'
@@ -156,7 +225,7 @@ class TestIngestLog:
         assert by_name[key].display_name == "CHAVEZ MOCAN, Lucas"
         assert by_name[key].bed == "607B"
         assert by_name[key].frequency == 1
-        assert by_name[key].total_minutes == 11
+        assert by_name[key].total_minutes == 12
 
     def test_clean_month_with_zero_lateness_saves(self, conn):
         outcome = ingest(
@@ -415,4 +484,3 @@ class TestIngestLog:
         saved = storage.get_month_report(conn, "2026-03")
         assert {r.name for r in saved} == {"ALICE", "BOB", "CAROL"}
         assert {r.bed for r in saved} == {"101", "102", "103"}
-
