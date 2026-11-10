@@ -197,8 +197,8 @@ def _minutes_split(total_minutes: int, incidents: int) -> list[int]:
 
 
 def _late_time(minutes_late: int) -> str:
-    """One gate swipe inside the lateness window: 07:41 < t <= 08:00."""
-    seconds = 7 * 3600 + 41 * 60 + minutes_late * 60
+    """One OUT swipe in the lateness window, measured from the 07:40 target."""
+    seconds = 7 * 3600 + 40 * 60 + minutes_late * 60
     hours, remainder = divmod(seconds, 3600)
     minutes = remainder // 60
     return f"{hours}:{minutes:02d}:00"
@@ -232,7 +232,7 @@ def build_log_rows(month: str, overrides: dict[str, tuple[int, int]] | None = No
             rows.append([
                 f"{day}/{int(month[5:])}/2026",
                 _late_time(minutes_late),
-                "In",
+                "Out",
                 "DBS",
                 "3/F Staff Entrance",
                 spelling,
