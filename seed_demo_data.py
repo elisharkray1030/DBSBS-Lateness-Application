@@ -198,7 +198,7 @@ def _minutes_split(total_minutes: int, incidents: int) -> list[int]:
 
 def _late_time(minutes_late: int) -> str:
     """One OUT swipe in the lateness window, measured from the 07:40 target."""
-    seconds = 7 * 3600 + 40 * 60 + minutes_late * 60
+    seconds = parser_module.EXPECTED_OUT_SECONDS + minutes_late * 60
     hours, remainder = divmod(seconds, 3600)
     minutes = remainder // 60
     return f"{hours}:{minutes:02d}:00"
