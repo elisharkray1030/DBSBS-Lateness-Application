@@ -139,9 +139,8 @@ class TestIngestLog:
 
     def test_repeated_access_control_swipes_use_latest_out_once_per_day(self, conn):
         text = (
-            "Transaction Date,Transaction Time,Transaction Type,Panel,Door,Name,"
-            "Other Name,Staff Code,Department,Position,Card ID,Transaction Log\n"
-            "5/4/2026,7:50:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
+            ACCESS_CONTROL_HEADER
+            + "5/4/2026,7:50:00,Invalid Time Zone [Out],DBS,3M/F Main Entrance,"
             "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
             "5/4/2026,7:48:00,Invalid Time Zone [In],DBS,3M/F Main Entrance,"
             "Alice,G11T,418,Boarders,101,7A60CB1C,\n"
@@ -152,7 +151,8 @@ class TestIngestLog:
         outcome = ingest(text, conn=conn)
 
         assert isinstance(outcome, SavedOutcome)
-        by_name = {r.name: r for r in outcome.boarders}
+        saved = storage.get_month_report(conn, "2026-03")
+        by_name = {r.name: r for r in saved}
         assert by_name["ALICE"].frequency == 1
         assert by_name["ALICE"].total_minutes == 10
 
