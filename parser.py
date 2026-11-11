@@ -155,6 +155,10 @@ def _record_lateness(boarder: BoarderRecord, minutes_late: int) -> None:
     boarder.total_minutes += minutes_late
 
 
+def _minutes_late(transaction_seconds: int, expected_seconds: int) -> int:
+    return math.ceil((transaction_seconds - expected_seconds) / 60)
+
+
 def _namelist_display_name(row):
     """Reads a Boarder display name from a namelist row.
 
@@ -317,14 +321,14 @@ def parse_log_stream(log_stream, master_list):
         elif START_SECONDS < current_seconds <= END_SECONDS:
             # Keep accepting the historical two-column Name/Transaction Time
             # format. Production access-control logs use the date/type path above.
-            minutes_late = math.ceil((current_seconds - START_SECONDS) / 60)
+            minutes_late = _minutes_late(current_seconds, START_SECONDS)
 
             _record_lateness(boarders[name], minutes_late)
 
     for boarder_day, latest_seconds in latest_outs_by_day.items():
         _record_lateness(
             boarders[boarder_day.match_key],
-            math.ceil((latest_seconds - EXPECTED_OUT_SECONDS) / 60),
+            _minutes_late(latest_seconds, EXPECTED_OUT_SECONDS),
         )
 
     for record in boarders.values():
